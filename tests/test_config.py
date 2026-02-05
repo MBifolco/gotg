@@ -73,3 +73,58 @@ def test_load_model_config_missing_file(tmp_path):
     team.mkdir()
     with pytest.raises(FileNotFoundError):
         load_model_config(team)
+
+
+# --- edge cases ---
+
+def test_load_model_config_invalid_json(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text("{invalid json")
+    with pytest.raises(json.JSONDecodeError):
+        load_model_config(team)
+
+
+def test_load_iteration_invalid_json(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "iteration.json").write_text("")
+    with pytest.raises(json.JSONDecodeError):
+        load_iteration(team)
+
+
+def test_load_agents_empty_directory(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "agents").mkdir()
+    agents = load_agents(team)
+    assert agents == []
+
+
+def test_load_agents_preserves_all_fields(tmp_path):
+    """Extra fields in agent config should be preserved (forward compat)."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents_dir = team / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "agent-1.json").write_text(json.dumps({
+        "name": "agent-1",
+        "system_prompt": "hi",
+        "custom_field": "some value",
+    }))
+    agents = load_agents(team)
+    assert agents[0]["custom_field"] == "some value"
+
+
+def test_load_model_config_preserves_extra_fields(tmp_path):
+    """api_key and other future fields should be preserved."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "openai",
+        "base_url": "https://api.openai.com",
+        "model": "gpt-4o",
+        "api_key": "sk-test",
+    }))
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-test"

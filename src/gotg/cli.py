@@ -4,7 +4,7 @@ from pathlib import Path
 
 from gotg.agent import build_prompt
 from gotg.config import load_agents, load_iteration, load_model_config
-from gotg.conversation import append_message, read_log, render_message
+from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
 from gotg.scaffold import init_project
 
@@ -23,6 +23,7 @@ def run_conversation(
     model_config: dict,
 ) -> None:
     log_path = team_dir / "conversation.jsonl"
+    debug_path = team_dir / "debug.jsonl"
     history = read_log(log_path)
     max_turns = iteration["max_turns"]
     turn = len(history)
@@ -35,6 +36,11 @@ def run_conversation(
     while turn < max_turns:
         agent = agents[turn % len(agents)]
         prompt = build_prompt(agent, iteration, history)
+        append_debug(debug_path, {
+            "turn": turn,
+            "agent": agent["name"],
+            "messages": prompt,
+        })
         response = chat_completion(
             base_url=model_config["base_url"],
             model=model_config["model"],

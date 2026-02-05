@@ -36,7 +36,20 @@ gotg show
 - **Ollama** running locally (or any OpenAI-compatible API)
 - A pulled model (default: `qwen2.5-coder:7b`)
 
-For AMD GPUs, you may need:
+### Installing Ollama
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+Then pull a model and start the server:
+
+```bash
+ollama pull qwen2.5-coder:7b
+ollama serve
+```
+
+For AMD GPUs (RX 6000/7000 series), you may need:
 ```bash
 HSA_OVERRIDE_GFX_VERSION=10.3.0 ollama serve
 ```

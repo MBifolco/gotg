@@ -7,7 +7,7 @@ def chat_completion(
     messages: list[dict],
     api_key: str | None = None,
 ) -> str:
-    url = f"{base_url}/v1/chat/completions"
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

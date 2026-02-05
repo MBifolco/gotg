@@ -26,6 +26,12 @@ def append_message(path: Path, msg: dict) -> None:
         f.flush()
 
 
+def append_debug(path: Path, entry: dict) -> None:
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+        f.flush()
+
+
 def render_message(msg: dict) -> str:
     name = msg["from"]
     content = msg["content"]

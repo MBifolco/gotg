@@ -65,3 +65,77 @@ def test_render_message_different_agents_different_colors():
     assert "\033[" in r2
     # The agent name portion should differ (different color codes)
     assert r1 != r2
+
+
+# --- JSONL corruption / edge cases ---
+
+def test_read_log_skips_blank_lines_in_middle(log_path):
+    """Blank lines between messages shouldn't break parsing."""
+    lines = [
+        json.dumps({"from": "agent-1", "content": "one"}),
+        "",
+        "",
+        json.dumps({"from": "agent-2", "content": "two"}),
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    messages = read_log(log_path)
+    assert len(messages) == 2
+
+
+def test_read_log_file_missing_trailing_newline(log_path):
+    """File written without trailing newline should still parse."""
+    log_path.write_text(json.dumps({"from": "agent-1", "content": "no newline"}))
+    messages = read_log(log_path)
+    assert len(messages) == 1
+    assert messages[0]["content"] == "no newline"
+
+
+def test_read_log_whitespace_only_file(log_path):
+    log_path.write_text("  \n\t\n  \n")
+    assert read_log(log_path) == []
+
+
+def test_append_then_read_roundtrip_preserves_unicode(log_path):
+    """Unicode content survives write→read roundtrip."""
+    log_path.touch()
+    msg = {"from": "agent-1", "iteration": "iter-1", "content": "design with emojis and CJK chars"}
+    append_message(log_path, msg)
+    messages = read_log(log_path)
+    assert messages[0]["content"] == msg["content"]
+
+
+def test_append_message_with_newlines_in_content(log_path):
+    """Content containing newlines must not break JSONL (json.dumps escapes them)."""
+    log_path.touch()
+    msg = {"from": "agent-1", "iteration": "iter-1", "content": "line one\nline two\nline three"}
+    append_message(log_path, msg)
+    messages = read_log(log_path)
+    assert len(messages) == 1
+    assert "\n" in messages[0]["content"]
+
+
+def test_append_message_with_quotes_in_content(log_path):
+    """Quotes in content must be properly escaped."""
+    log_path.touch()
+    msg = {"from": "agent-1", "iteration": "iter-1", "content": 'He said "hello" and \'goodbye\''}
+    append_message(log_path, msg)
+    messages = read_log(log_path)
+    assert messages[0]["content"] == msg["content"]
+
+
+# --- render_message edge cases ---
+
+def test_render_message_unknown_agent_gets_default_color():
+    msg = {"from": "agent-99", "iteration": "iter-1", "content": "hello"}
+    rendered = render_message(msg)
+    assert "agent-99" in rendered
+    assert "hello" in rendered
+    assert "\033[" in rendered  # still has ANSI
+
+
+def test_render_message_multiline_content():
+    """Multi-line content should render without crashing."""
+    msg = {"from": "agent-1", "iteration": "iter-1", "content": "line 1\nline 2\nline 3"}
+    rendered = render_message(msg)
+    assert "line 1" in rendered
+    assert "line 3" in rendered
