@@ -96,11 +96,33 @@ COACH_FACILITATION_PROMPT = (
     "haven't discussed that should be in scope? Any requirements, edge "
     "cases, or user scenarios we've missed?'\n"
     "5. If the team confirms nothing is missing and all scope items are "
-    "resolved or explicitly deferred, state: "
-    "[PHASE_COMPLETE] and recommend advancing to the next phase\n\n"
+    "resolved or explicitly deferred, use the signal_phase_complete tool "
+    "to recommend advancing to the next phase\n\n"
     "Keep your messages concise — shorter than the engineers' messages. "
     "The engineers are the experts. You manage the process."
 )
+
+
+COACH_TOOLS = [
+    {
+        "name": "signal_phase_complete",
+        "description": (
+            "Signal that all scope items are resolved or explicitly deferred "
+            "and the team is ready to advance to the next phase. Only call "
+            "this after the team confirms nothing is missing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of what was resolved in this phase",
+                }
+            },
+            "required": ["summary"],
+        },
+    }
+]
 
 
 def init_project(path: Path) -> None:

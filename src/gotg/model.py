@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 
@@ -7,10 +9,11 @@ def chat_completion(
     messages: list[dict],
     api_key: str | None = None,
     provider: str = "ollama",
-) -> str:
+    tools: list[dict] | None = None,
+) -> str | dict:
     if provider == "anthropic":
-        return _anthropic_completion(base_url, model, messages, api_key)
-    return _openai_completion(base_url, model, messages, api_key)
+        return _anthropic_completion(base_url, model, messages, api_key, tools)
+    return _openai_completion(base_url, model, messages, api_key, tools)
 
 
 def _openai_completion(
@@ -18,20 +21,44 @@ def _openai_completion(
     model: str,
     messages: list[dict],
     api_key: str | None = None,
-) -> str:
+    tools: list[dict] | None = None,
+) -> str | dict:
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    resp = httpx.post(
-        url,
-        json={"model": model, "messages": messages},
-        headers=headers,
-        timeout=600.0,
-    )
+    body = {"model": model, "messages": messages}
+    if tools:
+        body["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t["input_schema"],
+                },
+            }
+            for t in tools
+        ]
+
+    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    data = resp.json()
+    message = data["choices"][0]["message"]
+
+    if tools:
+        content = message.get("content") or ""
+        tool_calls = [
+            {
+                "name": tc["function"]["name"],
+                "input": json.loads(tc["function"]["arguments"]),
+            }
+            for tc in message.get("tool_calls") or []
+        ]
+        return {"content": content, "tool_calls": tool_calls}
+
+    return message["content"]
 
 
 def _anthropic_completion(
@@ -39,7 +66,8 @@ def _anthropic_completion(
     model: str,
     messages: list[dict],
     api_key: str | None = None,
-) -> str:
+    tools: list[dict] | None = None,
+) -> str | dict:
     url = f"{base_url.rstrip('/')}/v1/messages"
     headers = {
         "x-api-key": api_key or "",
@@ -63,7 +91,21 @@ def _anthropic_completion(
     }
     if system:
         body["system"] = system
+    if tools:
+        body["tools"] = tools
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    data = resp.json()
+
+    if tools:
+        text_parts = []
+        tool_calls = []
+        for block in data.get("content", []):
+            if block["type"] == "text":
+                text_parts.append(block["text"])
+            elif block["type"] == "tool_use":
+                tool_calls.append({"name": block["name"], "input": block["input"]})
+        return {"content": "\n\n".join(text_parts), "tool_calls": tool_calls}
+
+    return data["content"][0]["text"]

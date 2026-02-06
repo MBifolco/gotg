@@ -129,8 +129,17 @@ def test_coach_facilitation_prompt_exists():
     from gotg.scaffold import COACH_FACILITATION_PROMPT
     assert isinstance(COACH_FACILITATION_PROMPT, str)
     assert len(COACH_FACILITATION_PROMPT) > 0
-    assert "PHASE_COMPLETE" in COACH_FACILITATION_PROMPT
+    assert "signal_phase_complete" in COACH_FACILITATION_PROMPT
     assert "technical opinions" in COACH_FACILITATION_PROMPT.lower()
+
+
+def test_coach_tools_exists():
+    from gotg.scaffold import COACH_TOOLS
+    assert isinstance(COACH_TOOLS, list)
+    assert len(COACH_TOOLS) == 1
+    tool = COACH_TOOLS[0]
+    assert tool["name"] == "signal_phase_complete"
+    assert "input_schema" in tool
 
 
 def test_phase_prompts_has_planning_key():

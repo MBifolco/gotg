@@ -12,7 +12,7 @@ from gotg.config import (
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
-from gotg.scaffold import init_project, COACH_GROOMING_PROMPT
+from gotg.scaffold import init_project, COACH_GROOMING_PROMPT, COACH_TOOLS
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -103,19 +103,22 @@ def run_conversation(
                 messages=coach_prompt,
                 api_key=model_config.get("api_key"),
                 provider=model_config.get("provider", "ollama"),
+                tools=COACH_TOOLS,
             )
+            coach_text = coach_response["content"]
+            coach_tool_calls = coach_response.get("tool_calls", [])
             coach_msg = {
                 "from": coach["name"],
                 "iteration": iteration["id"],
-                "content": coach_response,
+                "content": coach_text,
             }
             append_message(log_path, coach_msg)
             print(render_message(coach_msg))
             print()
             history.append(coach_msg)
 
-            # Early exit: coach signals phase is complete
-            if "[PHASE_COMPLETE]" in coach_response:
+            # Early exit: coach signals phase is complete via tool call
+            if any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
                 print("---")
                 print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
                 return

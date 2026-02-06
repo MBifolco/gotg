@@ -709,6 +709,13 @@ def _default_coach():
     return {"name": "coach", "role": "Agile Coach"}
 
 
+def _mock_chat_with_tools(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    """Mock chat_completion that handles tools parameter (returns dict for coach calls)."""
+    if tools:
+        return {"content": "response", "tool_calls": []}
+    return "response"
+
+
 def test_run_conversation_coach_injects_after_rotation(tmp_path):
     """Coach should speak after every full rotation of engineering agents."""
     iter_dir = _make_iter_dir(tmp_path)
@@ -718,8 +725,10 @@ def test_run_conversation_coach_injects_after_rotation(tmp_path):
     }
 
     call_log = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
         call_log.append("call")
+        if tools:
+            return {"content": "response", "tool_calls": []}
         return "response"
 
     with patch("gotg.cli.chat_completion", side_effect=mock_completion):
@@ -743,7 +752,7 @@ def test_run_conversation_coach_turns_not_counted(tmp_path):
         "status": "in-progress", "max_turns": 2,
     }
 
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -755,7 +764,7 @@ def test_run_conversation_coach_turns_not_counted(tmp_path):
 
 
 def test_run_conversation_coach_early_exit(tmp_path):
-    """Coach emitting [PHASE_COMPLETE] should end the conversation early."""
+    """Coach using signal_phase_complete tool should end the conversation early."""
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -763,12 +772,17 @@ def test_run_conversation_coach_early_exit(tmp_path):
     }
 
     call_count = 0
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
         nonlocal call_count
         call_count += 1
         # 3rd call is the coach (after agent-1, agent-2)
         if call_count == 3:
-            return "All agreed. [PHASE_COMPLETE] Recommend advancing."
+            return {
+                "content": "All items resolved. Recommend advancing.",
+                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Scope agreed."}}],
+            }
+        if tools:
+            return {"content": "response", "tool_calls": []}
         return "response"
 
     with patch("gotg.cli.chat_completion", side_effect=mock_completion):
@@ -779,7 +793,25 @@ def test_run_conversation_coach_early_exit(tmp_path):
     # Should stop after: agent-1, agent-2, coach (3 messages only)
     assert len(messages) == 3
     assert messages[2]["from"] == "coach"
-    assert "[PHASE_COMPLETE]" in messages[2]["content"]
+    assert "Recommend advancing" in messages[2]["content"]
+
+
+def test_run_conversation_coach_no_tool_call_continues(tmp_path):
+    """Coach returning empty tool_calls should NOT trigger early exit."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,
+    }
+
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # All 4 agent turns should complete (no early exit)
+    agent_msgs = [m for m in messages if m["from"] not in ("coach", "system")]
+    assert len(agent_msgs) == 4
 
 
 def test_run_conversation_no_coach_backward_compatible(tmp_path):
@@ -834,7 +866,7 @@ def test_run_conversation_three_agents_with_coach(tmp_path):
         "status": "in-progress", "max_turns": 6,
     }
 
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, agents, iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -858,7 +890,7 @@ def test_run_conversation_resumes_with_coach_history(tmp_path):
         "status": "in-progress", "max_turns": 4,  # 2 existing + 2 more
     }
 
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -907,7 +939,7 @@ def test_continue_excludes_coach_from_turn_count(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="response"):
+            with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
                 main()
 
     messages = read_log(log_path)
@@ -973,8 +1005,10 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
         captured_prompts.append(messages)
+        if tools:
+            return {"content": "response", "tool_calls": []}
         return "response"
 
     with patch("gotg.cli.chat_completion", side_effect=mock_completion):
