@@ -81,3 +81,30 @@ def test_default_system_prompt_mentions_pushback():
     from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
     prompt = DEFAULT_SYSTEM_PROMPT.lower()
     assert "agree" in prompt
+
+
+def test_default_system_prompt_mentions_phases():
+    """The base prompt should explain the phase system."""
+    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    prompt = DEFAULT_SYSTEM_PROMPT.lower()
+    assert "phases" in prompt
+    assert "grooming" in prompt
+    assert "planning" in prompt
+
+
+def test_phase_prompts_has_grooming_key():
+    from gotg.scaffold import PHASE_PROMPTS
+    assert "grooming" in PHASE_PROMPTS
+
+
+def test_grooming_prompt_mentions_scope():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["grooming"].lower()
+    assert "scope" in prompt
+    assert "requirements" in prompt
+
+
+def test_grooming_prompt_mentions_redirect():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["grooming"].lower()
+    assert "redirect" in prompt or "nail down the requirements" in prompt

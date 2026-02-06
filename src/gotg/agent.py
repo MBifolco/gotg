@@ -1,4 +1,4 @@
-from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+from gotg.scaffold import DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS
 
 
 def build_prompt(
@@ -36,6 +36,13 @@ def build_prompt(
     )
 
     system_parts.append(f"Current task: {task}")
+
+    phase = iteration.get("phase")
+    if phase:
+        phase_prompt = PHASE_PROMPTS.get(phase)
+        if phase_prompt:
+            system_parts.append(phase_prompt)
+
     system_content = "\n\n".join(system_parts)
 
     messages = [{"role": "system", "content": system_content}]

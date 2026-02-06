@@ -16,8 +16,35 @@ DEFAULT_SYSTEM_PROMPT = (
     "Your goal is to reach a solid conclusion on the design of the project "
     "before moving to implementation. Before you write any code you must reach "
     "consensus with your team on the design. Then summarize the "
-    "design decisions you have made and why."
+    "design decisions you have made and why.\n\n"
+    "Your team works in phases. Each phase has specific goals and constraints "
+    "that you must follow. When you see a system message announcing a phase "
+    "transition, adjust your approach to match the new phase's instructions. "
+    "The phases are: grooming (understand the problem and define scope), "
+    "planning (break scope into tasks), and pre-code-review (propose "
+    "implementation approaches)."
 )
+
+
+PHASE_PROMPTS = {
+    "grooming": (
+        "CURRENT PHASE: GROOMING\n\n"
+        "In this phase, focus on WHAT the system should do, not HOW to build it.\n\n"
+        "DO:\n"
+        "- Discuss scope, requirements, and user stories\n"
+        "- Identify edge cases and acceptance criteria\n"
+        "- Ask clarifying questions about requirements\n"
+        "- Challenge assumptions and identify ambiguities\n"
+        "- Discuss tradeoffs at a feature/behavior level\n\n"
+        "DO NOT:\n"
+        "- Write code or pseudocode\n"
+        "- Debate specific technologies, libraries, or frameworks\n"
+        "- Discuss implementation details like data structures or algorithms\n"
+        "- Design APIs, database schemas, or file formats\n\n"
+        "If a teammate drifts into implementation, redirect them: "
+        "\"Let's nail down the requirements first before we discuss how to build it.\""
+    ),
+}
 
 
 def init_project(path: Path) -> None:

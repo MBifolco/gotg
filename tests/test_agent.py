@@ -302,3 +302,43 @@ def test_build_prompt_participants_only_two_agents(iteration):
     messages = build_prompt(agent, iteration, [], participants)
     system = messages[0]["content"]
     assert "Your teammates are: agent-2 (Software Engineer)." in system
+
+
+# --- phase prompts ---
+
+def test_build_prompt_includes_grooming_phase_prompt():
+    """Iteration with phase=grooming should inject grooming instructions."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "grooming", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE: GROOMING" in system
+    assert "scope" in system.lower()
+    assert "DO NOT" in system
+
+
+def test_build_prompt_no_phase_prompt_for_planning():
+    """Planning phase has no prompt yet — no grooming instructions should appear."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE: GROOMING" not in system
+
+
+def test_build_prompt_no_phase_prompt_when_phase_missing():
+    """Iteration without phase field should not get phase prompt (backward compat)."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE" not in system
