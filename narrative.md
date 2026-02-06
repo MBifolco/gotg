@@ -1404,9 +1404,80 @@ Keep your messages concise — shorter than the engineers' messages. The enginee
 
 **Test plan:** Run the bookmark manager task (or equivalent complexity) with 3 agents + coach facilitation. Compare against the 15-turn run without facilitation. Key metrics: turns to reach same quality of consensus, accuracy of coach's agreement tracking, whether agents reference the coach's summaries, whether early exit signal fires at the right time.
 
+## 32. Phase System Iteration 4b Results: Coach-as-Facilitator Validated
+
+### The Test
+
+3 agents, 15 max turns, coach injecting after every full round. New task: CLI Pomodoro timer. Claude Code again chose a different task from previous runs. The conversation produced 30 lines total: 21 agent turns (7 full rounds), 7 coach turns, 1 system message, 1 `[PHASE_COMPLETE]` signal.
+
+### The Headline Result
+
+The unfacilitated bookmark manager run's `groomed.md` had open questions (date filtering unresolved). The facilitated pomodoro run's `groomed.md` has: "Open Questions: None - all core requirements resolved through discussion." The coach drove the conversation to full consensus — something the agents couldn't manage on their own in 15 turns.
+
+### Coach Behavior: Turn-by-Turn Analysis
+
+**Turn 4 (first injection, after round 1):** Summarized the initial question explosion, prioritized items, asked agents to align on persona first. The concern about premature injection was unfounded — this was immediately useful. The coach identified "the user persona question seems foundational" and directed agents there, preventing the scatter-shot exploration that consumed early turns in the unfacilitated run.
+
+**Turn 8 (after round 2):** Captured emerging agreements, framed three key decisions as explicit labeled options, asked for specific votes. This is exactly the work that agents were spending 3-4 turns doing themselves in the bookmark manager run.
+
+**Turn 12 (after round 3):** Marked Decision 2 (interruption handling) as resolved. Tracked three distinct positions on Decision 1 (configuration). Critically, redirected the conversation when it drifted: "The daemon vs. state-file debate is more of an implementation detail... you CAN decide on user experience philosophy now." This is grooming constraint enforcement that the mode-specific prompt alone couldn't achieve perfectly — the coach actively maintains the boundary between product decisions and implementation decisions.
+
+**Turn 16 (after round 4):** Locked in two decisions, identified auto-advancement as the new critical item, asked all three for brief positions: "Keep it brief — which option and why in 2-3 sentences." The coach is managing *turn efficiency*, not just tracking state.
+
+**Turn 20 (after round 5):** Identified agent-2 as the outlier on prompts vs skip commands. Asked the right coaching question: "Does @agent-3's `pomodoro skip` command address your concern? Or is there something about prompts that's essential to you?" This isn't tracking — it's *facilitation*. The coach found the minimum question needed to break the deadlock.
+
+**Turn 24 (after round 6):** Framed the final decision on task descriptions, then made an observation: "Option A contradicts your non-interruptive principle." The coach noticed a consistency issue the agents hadn't surfaced — one option conflicted with a design principle the team had already established. Still not a technical opinion, but active reasoning about the team's own stated values.
+
+**Turn 28 (after round 7):** `[PHASE_COMPLETE]` with full summary. Correct timing — every item was resolved, all three agents had explicitly confirmed alignment.
+
+### What the Agents Did NOT Do
+
+No agent built a vote tracking table. No agent spent a turn categorizing decisions as "must decide now" vs "can defer." No agent proposed a voting process or tallied consensus. They answered the coach's questions and focused on substance. The coach awareness paragraph in the engineering prompt worked — agents knew process was the coach's job and stayed in their lane.
+
+### Agent-2's Concession Pattern Improved
+
+In the unfacilitated run, agent-2 conceded with "RELUCTANTLY YES" — it felt grudging. In the facilitated run, agent-2 conceded on prompts vs skip commands with genuine reasoning: "You've both made good arguments... @agent-3's argument about not forcing you to stop working is valid." The coach's structured facilitation gave agent-2 a clear moment to evaluate the counterargument rather than feeling outvoted by momentum. Better facilitation produced more reasoned concessions.
+
+### Risk Scenario Assessment
+
+Checking against the predicted risks:
+
+- **Coach becomes a crutch:** Did NOT happen. Agents continued driving substantive discussion. No agent said "let's wait for the coach." The coach's injections were responsive, not directive — agents set the agenda, coach organized it.
+- **Coach gets state wrong:** Did NOT happen. Every coach summary accurately reflected the conversation state. No agent corrected a coach summary's characterization of agreements.
+- **Coach talks too much:** Borderline. Coach messages were shorter than most agent messages but still substantial. The structured format (LOCKED IN / UNRESOLVED / NEXT STEPS) was efficient but could be more concise in later rounds when fewer items are open.
+- **Agents ignore the coach:** Did NOT happen. Agents directly responded to coach's questions, referenced the coach's framing, and used the coach's decision labels (Option A, Option B, etc.) in their responses.
+
+### Quality of `groomed.md`
+
+The facilitated `groomed.md` is more specific than the unfacilitated one:
+
+- Six specific commands with descriptions (`start`, `continue`, `skip`, `cancel`, `status`, `log`)
+- Explicit notification requirements (cross-platform, what content to include, must work when terminal detached)
+- Discoverability requirement that emerged from discussion (override commands prominently documented, notifications hint at available commands, status shows context-appropriate actions)
+- Clean separation of "Agreed Requirements" from "Assumptions" from "Out of Scope" from "Implementation Details (for Planning Phase)"
+- Zero open questions
+
+### Scope Expansion Observation
+
+Agents DID introduce requirements beyond the original prompt — resilience (terminal closure survival), the skip/continue override mechanism, cycle completion behavior, discoverability, retroactive session logging. These emerged naturally through discussion.
+
+However, most scope expansion happened in the first three rounds (turns 1-12). After turn 16, when the coach signaled "we're close to completion," the conversation narrowed to resolving existing items rather than surfacing new ones. This is probably fine for this run — agents had already surfaced the important requirements by turn 12.
+
+**Potential concern:** The coach's convergence-driving behavior could suppress late-emerging requirements. If an agent realizes at turn 18 that nobody has discussed an important edge case, would the social pressure of "everyone agrees we're wrapping up" prevent them from raising it? The coach tracks convergence on *known* items but has no mechanism for asking "have we missed anything?"
+
+**Proposed prompt addition:** Before signaling `[PHASE_COMPLETE]`, the coach should ask: "Is there anything we haven't discussed that should be in scope? Any requirements, edge cases, or user scenarios we've missed?" One explicit prompt for scope expansion before closure. Lightweight change — one line in the prompt, one extra coach turn. Creates a moment where raising new concerns is socially sanctioned rather than feeling like holding up the group.
+
+### What This Validates
+
+The third riskiest hypothesis passed: **agents respond well to a non-technical facilitator, the coach accurately tracks convergence, and the `[PHASE_COMPLETE]` signal fires at the right time.** The facilitated conversation reached full consensus (no open questions) where the unfacilitated conversation left items unresolved. Agents stayed focused on substance while the coach handled process.
+
+Principle #19 confirmed: **Let the coach manage process, let the engineers manage substance** — with a dedicated facilitator, engineering agents produce zero process-management overhead and better-reasoned concessions.
+
+Principle #20: **Drive to closure, but check for completeness** — convergence tracking is powerful but can suppress late-emerging requirements. An explicit "what did we miss?" prompt before completion ensures scope quality without sacrificing efficiency.
+
 ---
 
-## Current State (Post-Coach-Artifact-Generation)
+## Current State (Post-Coach-Facilitation)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
@@ -1417,9 +1488,15 @@ Keep your messages concise — shorter than the engineers' messages. The enginee
 - `team.json` consolidating model config + agent definitions + coach config
 - `iteration.json` as list with `current` pointer, includes `phase` field
 - `gotg advance` command — moves phase forward, writes system transition message
-- **New:** Coach agent in `team.json` — separate from engineering agents, invoked at phase transitions
-- **New:** `gotg advance` from grooming invokes coach to produce `groomed.md`
-- **New:** Coach summarization prompt (`COACH_GROOMING_PROMPT`) — faithful capture without opinion injection
+- Coach agent in `team.json` — separate from engineering agents
+- `gotg advance` from grooming invokes coach to produce `groomed.md`
+- Coach summarization prompt (`COACH_GROOMING_PROMPT`)
+- **New:** Coach-as-facilitator — injects after every full agent rotation during conversations
+- **New:** Coach facilitation prompt (`COACH_FACILITATION_PROMPT`) — tracks agreements, lists unresolved items, drives toward decisions
+- **New:** `[PHASE_COMPLETE]` early exit signal — coach signals when all items resolved, system stops conversation and prompts PM
+- **New:** Coach awareness paragraph in engineering agent prompts — tells agents to let coach handle process management
+- **New:** Coach messages don't count toward `--max-turns`
+- **New:** Coach rendered in orange (256-color) in terminal output
 - Phase-aware system prompts — grooming mode constrains agents to scope/requirements
 - Base prompt explains phase system to all agents regardless of current phase
 - Phase sequence: grooming → planning → pre-code-review
@@ -1432,19 +1509,19 @@ Keep your messages concise — shorter than the engineers' messages. The enginee
 - Debug logging (prompts sent to models, per-iteration directory)
 - Conversation history tracking with commit-id filenames
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Eight conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent), CLI bookmark manager grooming (3-agent, 15-turn, with coach artifact)
+- Nine conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent, phase system test), CLI bookmark manager grooming (3-agent, 15-turn, unfacilitated with coach artifact), CLI pomodoro timer grooming (3-agent, coach-facilitated, `[PHASE_COMPLETE]` early exit)
 
 ### Implementation Plan Progress (Resequenced)
 - ✅ **Iteration 1: Directory restructure** — complete
 - ✅ **Iteration 2: Phase state and `gotg advance`** — complete
 - ✅ **Iteration 3: Grooming mode** — complete, core hypothesis validated
 - ✅ **Iteration 4: Agile Coach artifact generation** — complete, second hypothesis validated
-- ⬜ **Iteration 4b: Coach-as-facilitator** — **next, new riskiest hypothesis**
-- ⬜ **Iteration 5: Artifact injection and planning mode** — postponed (high confidence, low risk)
-- ⬜ **Iteration 6: `tasks.json` and human assignment** — postponed
-- ⬜ **Iteration 7: Pre-code review phase** — postponed
+- ✅ **Iteration 4b: Coach-as-facilitator** — complete, third hypothesis validated
+- ⬜ **Iteration 5: Artifact injection and planning mode** — next (high confidence, low risk)
+- ⬜ **Iteration 6: `tasks.json` and human assignment**
+- ⬜ **Iteration 7: Pre-code review phase**
 
-Iterations 5-7 are postponed, not canceled. They're mechanical wiring with high confidence of success. Iteration 4b is prioritized because it's a behavioral hypothesis — will agents respond well to a non-technical facilitator steering the conversation? — and the evidence from the 15-turn run strongly suggests it's needed.
+All three behavioral hypotheses have been validated (grooming constraints work, coach summarizes faithfully, coach facilitates effectively). Iterations 5-7 are mechanical wiring — connecting pieces that individually work.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -1453,31 +1530,39 @@ Iterations 5-7 are postponed, not canceled. They're mechanical wiring with high 
 - Consolidated messages fix attribution confusion — agents correctly track who said what
 - @Mentions activate conversation management behavior — agents direct questions to specific people, route topics, and create implicit accountability
 - Three-party conversations are better than two-party — PM input focuses discussion, engineers stress-test PM suggestions
-- **Three-agent conversations produce coalition formation, mediating voices, and emergent consensus mechanisms** (vote tables, explicit tallies)
+- Three-agent conversations produce coalition formation, mediating voices, and emergent consensus mechanisms
 - Agents will push back on the PM when they have good reasons — role hierarchy isn't needed for healthy team dynamics
 - Agents defer to PM on scope but continue contributing on engineering details — natural authority emerges without enforcement
 - Grooming mode constraints produce better output than unconstrained conversation
 - Agents self-correct when approaching constraint boundaries
 - Phase awareness changes agent orientation — agents structure work as handoffs
-- **The coach faithfully summarizes conversations it didn't participate in** — accurate agreement tracking, correct identification of unresolved items, implicit assumptions made explicit, no opinion injection
-- **Engineering agents spend significant turns on process management** (vote tallying, consensus tracking, decision categorization) — this is facilitation work that should be the coach's job
-- **12-15 turns is a good grooming range for medium-complexity features with 3 agents**
+- The coach faithfully summarizes conversations it didn't participate in
+- **With a facilitator, engineering agents produce zero process-management overhead** — no vote tables, no consensus tallying, no decision categorization
+- **Facilitated conversations reach full consensus where unfacilitated ones leave open questions**
+- **The coach accurately tracks convergence and signals `[PHASE_COMPLETE]` at the right time**
+- **Agents respond to coach facilitation naturally** — reference coach's framing, use decision labels, direct process questions to coach
+- **Coach facilitation produces better concession quality** — agents concede with genuine reasoning rather than feeling outvoted
+- **The coach actively maintains the grooming/implementation boundary** — redirects drift in ways the mode prompt alone cannot
+- **Convergence-driving behavior may suppress late-emerging requirements** — need explicit "what did we miss?" before `[PHASE_COMPLETE]`
+- 12-15 turns is a good grooming range for medium-complexity features with 3 agents
 - Prompt architecture is a first-class design concern, not an implementation detail
 - Small prompt conventions can activate large behavioral changes when they align with model training data
 
 ### Development Strategy
-- **Iteration 4b next** — coach-as-facilitator with in-conversation process management and early exit detection
-- Compare facilitated vs unfacilitated conversations on same task complexity
-- If facilitation works, iterations 5-7 (artifact injection, planning, pre-code review) follow as wiring
+- **Iteration 5 next** — artifact injection and planning mode (mechanical wiring, high confidence)
+- All behavioral hypotheses validated — remaining work is connecting proven pieces
+- Coach facilitation prompt needs one addition: "what did we miss?" before `[PHASE_COMPLETE]`
+- Coach could benefit from permission to stay silent if early injection is unhelpful (not yet observed as a problem)
 - Use gotg to build gotg
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
 - Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
-- Artifact injection into conversation at phase transitions (Iteration 5 — postponed, not canceled)
+- Coach "what did we miss?" prompt addition (next prompt refinement)
+- Coach option to stay silent on early turns (if premature injection becomes a problem)
 - Planning mode prompt (Iteration 5)
-- `tasks.json` generation and human assignment (Iteration 6 — postponed)
-- Pre-code review phase and prompt (Iteration 7 — postponed)
+- `tasks.json` generation and human assignment (Iteration 6)
+- Pre-code review phase and prompt (Iteration 7)
 - TUI chat interface (Textual — after phase system is validated with CLI)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
@@ -1511,3 +1596,4 @@ Iterations 5-7 are postponed, not canceled. They're mechanical wiring with high 
 17. **Separate observation from participation** — the Agile Coach reads conversations but doesn't argue; different roles need different relationships to the conversation
 18. **Constraints improve output quality** — agents given explicit boundaries about what NOT to discuss produce more thorough and thoughtful work within those boundaries
 19. **Let the coach manage process, let the engineers manage substance** — process overhead (vote tallying, consensus tracking, decision categorization) belongs to a dedicated facilitator, not to the engineers whose attention should be on the problem
+20. **Drive to closure, but check for completeness** — convergence tracking is powerful but can suppress late-emerging requirements; an explicit "what did we miss?" prompt before completion ensures scope quality without sacrificing efficiency
