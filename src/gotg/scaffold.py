@@ -43,7 +43,6 @@ def init_project(path: Path) -> None:
         (agents_dir / f"agent-{i}.json").write_text(json.dumps({
             "name": f"agent-{i}",
             "role": "Software Engineer",
-            "system_prompt": DEFAULT_SYSTEM_PROMPT,
         }, indent=2) + "\n")
 
     # Iteration config

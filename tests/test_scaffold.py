@@ -33,8 +33,8 @@ def test_init_creates_two_agent_configs(tmp_path):
     a2 = json.loads(agent_files[1].read_text())
     assert a1["name"] == "agent-1"
     assert a2["name"] == "agent-2"
-    assert "system_prompt" in a1
-    assert "system_prompt" in a2
+    assert a1["role"] == "Software Engineer"
+    assert "system_prompt" not in a1  # default comes from code, not config
 
 
 def test_init_creates_iteration_json(tmp_path):
@@ -66,9 +66,8 @@ def test_init_does_not_touch_existing_files(tmp_path):
     assert existing.read_text() == "print('hello')"
 
 
-def test_agent_prompts_mention_pushback(tmp_path):
-    """The system prompt should tell agents not to just agree."""
-    init_project(tmp_path)
-    a1 = json.loads((tmp_path / ".team" / "agents" / "agent-1.json").read_text())
-    prompt = a1["system_prompt"].lower()
-    assert "agree" in prompt  # "don't just agree to be agreeable"
+def test_default_system_prompt_mentions_pushback():
+    """The default system prompt should tell agents not to just agree."""
+    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    prompt = DEFAULT_SYSTEM_PROMPT.lower()
+    assert "agree" in prompt
