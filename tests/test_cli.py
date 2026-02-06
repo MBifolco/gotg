@@ -603,3 +603,101 @@ def test_advance_defaults_to_grooming_if_no_phase(tmp_path):
 
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "planning"
+
+
+# --- advance with coach ---
+
+def _add_coach_to_team_json(team_dir):
+    """Add coach config to an existing team.json."""
+    team_path = team_dir / "team.json"
+    team_config = json.loads(team_path.read_text())
+    team_config["coach"] = {"name": "coach", "role": "Agile Coach"}
+    team_path.write_text(json.dumps(team_config, indent=2))
+
+
+def test_advance_with_coach_produces_groomed_md(tmp_path):
+    """Advancing grooming→planning with coach should produce groomed.md."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    _add_coach_to_team_json(team)
+
+    # Add some conversation history for the coach to summarize
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "We need auth."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Agreed, JWT."})
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="## Summary\nAuth system design."):
+                main()
+
+    # groomed.md should exist with coach response
+    groomed = iter_dir / "groomed.md"
+    assert groomed.exists()
+    assert "Auth system design" in groomed.read_text()
+
+    # Phase should still advance
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "planning"
+
+    # System message should mention groomed.md
+    messages = read_log(log_path)
+    system_msgs = [m for m in messages if m["from"] == "system"]
+    assert any("groomed.md" in m["content"] for m in system_msgs)
+
+
+def test_advance_with_coach_prints_status(tmp_path, capsys):
+    """Coach invocation should print status messages."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    _add_coach_to_team_json(team)
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="summary"):
+                main()
+
+    output = capsys.readouterr().out
+    assert "Coach is summarizing" in output
+    assert "groomed" in output.lower()
+
+
+def test_advance_without_coach_skips_summary(tmp_path):
+    """No coach in team.json → advance works, no groomed.md produced."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    # _write_team_json does NOT include coach, so no coach
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # No groomed.md
+    assert not (iter_dir / "groomed.md").exists()
+
+    # Phase should still advance
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "planning"
+
+
+def test_advance_non_grooming_skips_coach(tmp_path):
+    """Advancing planning→pre-code-review should not invoke coach."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    _add_coach_to_team_json(team)
+
+    call_log = []
+    def mock_completion(*args, **kwargs):
+        call_log.append("called")
+        return "should not happen"
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+                main()
+
+    # Coach should NOT have been called
+    assert len(call_log) == 0
+
+    # No groomed.md
+    assert not (iter_dir / "groomed.md").exists()
+
+    # Phase should advance
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "pre-code-review"

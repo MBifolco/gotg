@@ -67,6 +67,11 @@ def load_agents(team_dir: Path) -> list[dict]:
     return team_config["agents"]
 
 
+def load_coach(team_dir: Path) -> dict | None:
+    team_config = json.loads((team_dir / "team.json").read_text())
+    return team_config.get("coach")
+
+
 def load_iteration(team_dir: Path) -> dict:
     data = json.loads((team_dir / "iteration.json").read_text())
     current_id = data["current"]

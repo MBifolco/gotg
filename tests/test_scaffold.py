@@ -108,3 +108,18 @@ def test_grooming_prompt_mentions_redirect():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["grooming"].lower()
     assert "redirect" in prompt or "nail down the requirements" in prompt
+
+
+def test_init_creates_team_json_coach_section(tmp_path):
+    init_project(tmp_path)
+    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+    coach = team_json["coach"]
+    assert coach["name"] == "coach"
+    assert coach["role"] == "Agile Coach"
+
+
+def test_coach_grooming_prompt_exists():
+    from gotg.scaffold import COACH_GROOMING_PROMPT
+    assert isinstance(COACH_GROOMING_PROMPT, str)
+    assert len(COACH_GROOMING_PROMPT) > 0
+    assert "scope" in COACH_GROOMING_PROMPT.lower() or "summary" in COACH_GROOMING_PROMPT.lower()

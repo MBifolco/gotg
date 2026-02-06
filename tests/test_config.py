@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from gotg.config import (
-    load_model_config, load_agents, load_iteration,
+    load_model_config, load_agents, load_coach, load_iteration,
     read_dotenv, ensure_dotenv_key,
     get_iteration_dir, get_current_iteration, save_model_config,
     save_iteration_phase, PHASE_ORDER,
@@ -390,3 +390,37 @@ def test_save_iteration_phase_missing_id_raises(team_dir):
 
 def test_phase_order_has_three_phases():
     assert PHASE_ORDER == ["grooming", "planning", "pre-code-review"]
+
+
+# --- load_coach ---
+
+def test_load_coach_returns_coach_config(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    # Add coach to team.json
+    team_config = json.loads((team / "team.json").read_text())
+    team_config["coach"] = {"name": "coach", "role": "Agile Coach"}
+    (team / "team.json").write_text(json.dumps(team_config, indent=2))
+    coach = load_coach(team)
+    assert coach["name"] == "coach"
+    assert coach["role"] == "Agile Coach"
+
+
+def test_load_coach_returns_none_when_missing(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    coach = load_coach(team)
+    assert coach is None
+
+
+def test_load_coach_preserves_fields(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    team_config = json.loads((team / "team.json").read_text())
+    team_config["coach"] = {"name": "coach", "role": "Agile Coach", "custom": "value"}
+    (team / "team.json").write_text(json.dumps(team_config, indent=2))
+    coach = load_coach(team)
+    assert coach["custom"] == "value"

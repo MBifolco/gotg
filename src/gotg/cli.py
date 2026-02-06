@@ -5,14 +5,14 @@ from pathlib import Path
 
 from gotg.agent import build_prompt
 from gotg.config import (
-    load_agents, load_model_config,
+    load_agents, load_coach, load_model_config,
     ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
     save_iteration_phase, PHASE_ORDER,
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
-from gotg.scaffold import init_project
+from gotg.scaffold import init_project, COACH_GROOMING_PROMPT
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -280,13 +280,46 @@ def cmd_advance(args):
         raise SystemExit(1)
 
     next_phase = PHASE_ORDER[idx + 1]
+
+    # Invoke coach on grooming → planning transition
+    coach_ran = False
+    if current_phase == "grooming" and next_phase == "planning":
+        coach = load_coach(team_dir)
+        if coach:
+            print("Coach is summarizing the grooming conversation...")
+            model_config = load_model_config(team_dir)
+            log_path = iter_dir / "conversation.jsonl"
+            history = read_log(log_path)
+            conversation_text = "\n\n".join(
+                f"[{m['from']}]: {m['content']}" for m in history
+            )
+            coach_messages = [
+                {"role": "system", "content": COACH_GROOMING_PROMPT},
+                {"role": "user", "content": conversation_text},
+            ]
+            summary = chat_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=coach_messages,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+            )
+            groomed_path = iter_dir / "groomed.md"
+            groomed_path.write_text(summary + "\n")
+            print(f"Wrote {groomed_path}")
+            coach_ran = True
+
     save_iteration_phase(team_dir, iteration["id"], next_phase)
 
     log_path = iter_dir / "conversation.jsonl"
+    if coach_ran:
+        transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Scope summary written to groomed.md ---"
+    else:
+        transition_content = f"--- Phase advanced: {current_phase} → {next_phase} ---"
     msg = {
         "from": "system",
         "iteration": iteration["id"],
-        "content": f"--- Phase advanced: {current_phase} → {next_phase} ---",
+        "content": transition_content,
     }
     append_message(log_path, msg)
     print(render_message(msg))

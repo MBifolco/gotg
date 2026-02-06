@@ -47,6 +47,26 @@ PHASE_PROMPTS = {
 }
 
 
+COACH_GROOMING_PROMPT = (
+    "You are an Agile Coach. You have just observed a grooming conversation "
+    "between software engineers. Your job is to produce a faithful scope "
+    "summary in markdown.\n\n"
+    "Capture exactly what the team discussed and agreed on. Do not add your "
+    "own technical opinions or suggestions.\n\n"
+    "Structure your summary with these sections:\n\n"
+    "## Summary\n"
+    "A 2-3 sentence overview of what the team is building.\n\n"
+    "## Agreed Requirements\n"
+    "Bullet list of requirements the team explicitly agreed on.\n\n"
+    "## Open Questions\n"
+    "Anything the team identified as unresolved or needing further discussion.\n\n"
+    "## Assumptions\n"
+    "Implicit or explicit assumptions the team is making.\n\n"
+    "## Out of Scope\n"
+    "Items the team explicitly deferred or excluded."
+)
+
+
 def init_project(path: Path) -> None:
     team_dir = path / ".team"
 
@@ -67,6 +87,10 @@ def init_project(path: Path) -> None:
             {"name": "agent-1", "role": "Software Engineer"},
             {"name": "agent-2", "role": "Software Engineer"},
         ],
+        "coach": {
+            "name": "coach",
+            "role": "Agile Coach",
+        },
     }, indent=2) + "\n")
 
     # iteration.json: list format with current pointer
