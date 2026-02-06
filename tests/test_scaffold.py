@@ -123,3 +123,11 @@ def test_coach_grooming_prompt_exists():
     assert isinstance(COACH_GROOMING_PROMPT, str)
     assert len(COACH_GROOMING_PROMPT) > 0
     assert "scope" in COACH_GROOMING_PROMPT.lower() or "summary" in COACH_GROOMING_PROMPT.lower()
+
+
+def test_coach_facilitation_prompt_exists():
+    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    assert isinstance(COACH_FACILITATION_PROMPT, str)
+    assert len(COACH_FACILITATION_PROMPT) > 0
+    assert "PHASE_COMPLETE" in COACH_FACILITATION_PROMPT
+    assert "technical opinions" in COACH_FACILITATION_PROMPT.lower()

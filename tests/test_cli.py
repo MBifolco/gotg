@@ -701,3 +701,216 @@ def test_advance_non_grooming_skips_coach(tmp_path):
     # Phase should advance
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "pre-code-review"
+
+
+# --- coach-as-facilitator (in-conversation) ---
+
+def _default_coach():
+    return {"name": "coach", "role": "Agile Coach"}
+
+
+def test_run_conversation_coach_injects_after_rotation(tmp_path):
+    """Coach should speak after every full rotation of engineering agents."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,
+    }
+
+    call_log = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        call_log.append("call")
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    senders = [m["from"] for m in messages]
+    # 4 agent turns with coach after each full rotation (every 2 agent turns)
+    # agent-1, agent-2, coach, agent-1, agent-2, coach
+    assert senders == ["agent-1", "agent-2", "coach", "agent-1", "agent-2", "coach"]
+    # 4 agent calls + 2 coach calls = 6 total
+    assert len(call_log) == 6
+
+
+def test_run_conversation_coach_turns_not_counted(tmp_path):
+    """Coach messages should not count toward max_turns."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 2,
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    agent_msgs = [m for m in messages if m["from"] not in ("coach", "system")]
+    coach_msgs = [m for m in messages if m["from"] == "coach"]
+    assert len(agent_msgs) == 2
+    assert len(coach_msgs) == 1  # coach after the single full rotation
+
+
+def test_run_conversation_coach_early_exit(tmp_path):
+    """Coach emitting [PHASE_COMPLETE] should end the conversation early."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 10,
+    }
+
+    call_count = 0
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        nonlocal call_count
+        call_count += 1
+        # 3rd call is the coach (after agent-1, agent-2)
+        if call_count == 3:
+            return "All agreed. [PHASE_COMPLETE] Recommend advancing."
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # Should stop after: agent-1, agent-2, coach (3 messages only)
+    assert len(messages) == 3
+    assert messages[2]["from"] == "coach"
+    assert "[PHASE_COMPLETE]" in messages[2]["content"]
+
+
+def test_run_conversation_no_coach_backward_compatible(tmp_path):
+    """Without coach, run_conversation should behave exactly as before."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config())  # no coach kwarg
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    senders = [m["from"] for m in messages]
+    assert senders == ["agent-1", "agent-2", "agent-1", "agent-2"]
+
+
+def test_run_conversation_coach_in_participants(tmp_path):
+    """Engineers should see the coach in their prompt's teammate list."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    captured_messages = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_messages.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    # First call is agent-1's prompt — system message should mention coach
+    system_msg = captured_messages[0][0]["content"]
+    assert "coach" in system_msg.lower()
+
+
+def test_run_conversation_three_agents_with_coach(tmp_path):
+    """Coach should inject after every 3-agent rotation."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = [
+        {"name": "alice", "role": "Software Engineer"},
+        {"name": "bob", "role": "Software Engineer"},
+        {"name": "carol", "role": "Software Engineer"},
+    ]
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 6,
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(iter_dir, agents, iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    senders = [m["from"] for m in messages]
+    # alice, bob, carol, coach, alice, bob, carol, coach
+    assert senders == ["alice", "bob", "carol", "coach", "alice", "bob", "carol", "coach"]
+
+
+def test_run_conversation_resumes_with_coach_history(tmp_path):
+    """Resuming with coach messages in log should not miscount turns."""
+    iter_dir = _make_iter_dir(tmp_path)
+    log_path = iter_dir / "conversation.jsonl"
+    # Pre-populate: agent-1, agent-2, coach (1 full rotation + coach)
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "reply"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "summary"})
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,  # 2 existing + 2 more
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(log_path)
+    senders = [m["from"] for m in messages]
+    # existing: agent-1, agent-2, coach; new: agent-1, agent-2, coach
+    assert senders == ["agent-1", "agent-2", "coach", "agent-1", "agent-2", "coach"]
+
+
+def test_cmd_run_loads_and_passes_coach(tmp_path):
+    """cmd_run should load coach from team.json and pass to run_conversation."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _add_coach_to_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    captured_kwargs = {}
+    original_run = run_conversation
+    def spy_run(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        kwargs["max_turns_override"] = 0  # don't actually run
+        return original_run(*args, **kwargs)
+
+    with patch("sys.argv", ["gotg", "run"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.run_conversation", side_effect=spy_run):
+                main()
+
+    assert captured_kwargs.get("coach") is not None
+    assert captured_kwargs["coach"]["name"] == "coach"
+
+
+def test_continue_excludes_coach_from_turn_count(tmp_path):
+    """continue --max-turns should not count coach messages as agent turns."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    _add_coach_to_team_json(team)
+    log_path = iter_dir / "conversation.jsonl"
+    # Pre-populate: agent-1, agent-2, coach (2 agent turns, 1 coach)
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "reply"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "summary"})
+
+    with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="response"):
+                main()
+
+    messages = read_log(log_path)
+    # Coach message should not have inflated the turn count
+    agent_msgs = [m for m in messages if m["from"] not in ("coach", "system")]
+    assert len(agent_msgs) == 4  # 2 existing + 2 new

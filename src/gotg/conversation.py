@@ -6,6 +6,7 @@ AGENT_COLORS = {
     "agent-2": "\033[33m",  # yellow
     "human": "\033[32m",    # green
     "system": "\033[35m",  # magenta
+    "coach": "\033[38;5;208m",  # orange
 }
 RESET = "\033[0m"
 BOLD = "\033[1m"

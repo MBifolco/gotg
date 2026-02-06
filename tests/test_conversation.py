@@ -157,3 +157,12 @@ def test_render_message_system_gets_magenta_color():
     assert "[system]" in rendered
     assert "Phase advanced" in rendered
     assert "\033[35m" in rendered  # magenta
+
+
+def test_render_message_coach_gets_distinct_color():
+    """Coach messages should render with a distinct color (not white default)."""
+    msg = {"from": "coach", "iteration": "iter-1", "content": "Team has agreed on X."}
+    rendered = render_message(msg)
+    assert "[coach]" in rendered
+    assert "Team has agreed on X." in rendered
+    assert "\033[37m" not in rendered  # not white default

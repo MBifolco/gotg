@@ -3,7 +3,7 @@ import os
 import sys
 from pathlib import Path
 
-from gotg.agent import build_prompt
+from gotg.agent import build_prompt, build_coach_prompt
 from gotg.config import (
     load_agents, load_coach, load_model_config,
     ensure_dotenv_key, read_dotenv,
@@ -28,31 +28,37 @@ def run_conversation(
     iteration: dict,
     model_config: dict,
     max_turns_override: int | None = None,
+    coach: dict | None = None,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
     history = read_log(log_path)
     max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
 
-    # Build participant list from agents + detect human in history
+    # Build participant list from agents + coach + detect human in history
     all_participants = [
         {"name": a["name"], "role": a.get("role", "Software Engineer")}
         for a in agents
     ]
+    if coach:
+        all_participants.append({"name": coach["name"], "role": coach.get("role", "Agile Coach")})
     if any(msg["from"] == "human" for msg in history):
         all_participants.append({"name": "human", "role": "Team Member"})
 
-    # Count only agent turns (human messages don't affect rotation)
-    turn = sum(1 for msg in history if msg["from"] != "human")
+    # Count only engineering agent turns (human/coach/system don't affect rotation)
+    turn = sum(1 for msg in history if msg["from"] not in ("human", "coach", "system"))
+    num_agents = len(agents)
 
     print(f"Starting conversation: {iteration['id']}")
     print(f"Task: {iteration['description']}")
     print(f"Phase: {iteration.get('phase', 'grooming')}")
+    if coach:
+        print(f"Coach: {coach['name']} (facilitating)")
     print(f"Turns: {turn}/{max_turns}")
     print("---")
 
     while turn < max_turns:
-        agent = agents[turn % len(agents)]
+        agent = agents[turn % num_agents]
         prompt = build_prompt(agent, iteration, history, all_participants)
         append_debug(debug_path, {
             "turn": turn,
@@ -78,6 +84,37 @@ def run_conversation(
 
         history.append(msg)
         turn += 1
+
+        # Coach injection: after every full rotation of engineering agents
+        if coach and turn % num_agents == 0:
+            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants)
+            append_debug(debug_path, {
+                "turn": f"coach-after-{turn}",
+                "agent": coach["name"],
+                "messages": coach_prompt,
+            })
+            coach_response = chat_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=coach_prompt,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+            )
+            coach_msg = {
+                "from": coach["name"],
+                "iteration": iteration["id"],
+                "content": coach_response,
+            }
+            append_message(log_path, coach_msg)
+            print(render_message(coach_msg))
+            print()
+            history.append(coach_msg)
+
+            # Early exit: coach signals phase is complete
+            if "[PHASE_COMPLETE]" in coach_response:
+                print("---")
+                print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
+                return
 
     print("---")
     print(f"Conversation complete ({turn} turns)")
@@ -105,12 +142,13 @@ def cmd_run(args):
 
     model_config = load_model_config(team_dir)
     agents = load_agents(team_dir)
+    coach = load_coach(team_dir)
 
     if len(agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach)
 
 
 PROVIDER_PRESETS = {
@@ -205,6 +243,7 @@ def cmd_continue(args):
 
     model_config = load_model_config(team_dir)
     agents = load_agents(team_dir)
+    coach = load_coach(team_dir)
 
     if len(agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
@@ -213,8 +252,8 @@ def cmd_continue(args):
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
 
-    # Count current agent turns (not human messages)
-    current_agent_turns = sum(1 for msg in history if msg["from"] != "human")
+    # Count current engineering agent turns (not human/coach/system)
+    current_agent_turns = sum(1 for msg in history if msg["from"] not in ("human", "coach", "system"))
 
     # Inject human message if provided
     if args.message:
@@ -233,7 +272,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach)
 
 
 def cmd_show(args):

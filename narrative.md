@@ -1200,35 +1200,251 @@ Agents get assigned tasks and write implementation proposals. Other agents revie
 
 **Sequencing notes:** Iterations 1-2 are structural and can be done fast. Iteration 3 is the one to spend time on — it's the core experiment that determines whether the rest of the pipeline is viable. Iteration 4 is the second critical test. If 3 and 4 work, 5-7 are mostly wiring. Implementation and code review phases (6-7 in the Scrum sequence) are not included here because they depend on agent tool access, which is deferred until the process layer is solid.
 
+## 29. Phase System Iteration 1: Directory Restructure — Complete
+
+Claude Code implemented the directory restructure. The flat `.team/` layout was replaced with nested iteration directories, `model.json` and individual agent configs were consolidated into `team.json`, and `iteration.json` became a list with a `current` pointer.
+
+### New File Structure (Verified)
+
+```
+.team/
+  team.json              → {"model": {...}, "agents": [...]}
+  iteration.json         → {"iterations": [{id, title, description, status, max_turns}], "current": "iter-1"}
+  iterations/
+    iter-1/
+      conversation.jsonl
+      debug.jsonl
+```
+
+### Test Run Results
+
+A full conversation was run with the new structure: two Sonnet agents + human PM discussing a REST API design for a todo app. All commands worked with the new paths — `init`, `run`, `continue`, `show`. Conversation landed in the correct iteration directory. The `team.json` format cleanly held both model config and agent definitions in one file.
+
+### Observations from the Test Conversation
+
+**The conversation was a natural grooming/planning hybrid — again.** Turns 1-5 covered scope (single vs multi-user, flat vs hierarchical, soft vs hard deletes). Turns 6-7 were detailed specifications (exact HTTP status codes, request validation rules, content-type handling). In the phase system, the PM's turn-5 message ("Good discussion. I want hard deletes and no user_id for v1. Let's finalize the design.") would be the natural `gotg advance` trigger — scope is approved, move to planning.
+
+**PM authority worked without role hierarchy.** The human said "I want hard deletes and no user_id for v1" — two clear scope decisions. Agent-1 immediately complied: "No `user_id` for v1 per your direction." Agent-2 accepted both decisions in its summary without re-litigating, but continued contributing technical details the PM didn't specify (validation rules, content-type handling, empty string semantics). The team deferred to PM on scope and continued doing their job on engineering details. This is exactly the dynamic the phase system should formalize.
+
+**Descriptive iteration ids matter.** The test used `iter-1` as the iteration id. When browsing `iterations/iter-1/` there's no indication of what this iteration was about without opening a file. The previous naming convention (`iter-1-todo-design`) was self-documenting. Worth maintaining descriptive ids as a convention even if the system doesn't enforce it.
+
+**The `team.json` schema accommodates future expansion.** Adding the coach agent later is just adding a `"coach": {...}` key alongside `"model"` and `"agents"`. No restructuring needed.
+
 ---
 
-## Current State (Post-Phase-Design)
+## 30. Phase System Iterations 2-3: Phase State and Grooming Mode — The Core Experiment
+
+### Iteration 2: Phase State Machine (Complete)
+
+Implementation was straightforward. `iteration.json` entries gained a `phase` field (defaulting to "grooming"). `gotg advance` moves to the next phase in the sequence (grooming → planning → pre-code-review), writes a system transition message to the conversation log, and errors gracefully if already at the last phase. System messages render in magenta in `gotg show`. Backward compatible — old iteration files without a `phase` field default to grooming.
+
+### Iteration 3: Grooming Mode — The Riskiest Hypothesis (Passed)
+
+This was the experiment that determined whether the entire phase system was viable. The question: can a prompt instruction actually constrain what Sonnet talks about?
+
+**Two prompt additions:**
+
+First, the base system prompt (seen by all agents regardless of phase) gained a paragraph explaining that the team works in phases: "Your team works in phases. Each phase has specific goals and constraints that you must follow. When you see a system message announcing a phase transition, adjust your approach to match the new phase's instructions." This gives agents context for *why* constraints exist, not just what they are.
+
+Second, when `phase` is "grooming," agents get appended instructions: focus on what the system should do, not how to build it. Discuss scope, requirements, user stories, edge cases. DO NOT write code, debate specific technologies, discuss implementation details, or design APIs/schemas. If a teammate drifts, redirect them.
+
+**The result was dramatic.**
+
+### Zero Implementation Detail Across 8 Turns
+
+In every previous run of the todo app task, agents were debating SQLite vs JSON, writing schema DDL, and proposing REST endpoint signatures by turn 2. In grooming mode, across 8 full turns, there was:
+
+- No mention of SQLite, JSON, TOML, YAML, or any storage technology
+- No database schemas
+- No code or pseudo-code
+- No API design (the Iteration 1 test run had full REST endpoint specs with HTTP status codes by turn 2)
+- No file format discussion
+- No mention of specific libraries or frameworks
+
+The constraint held completely. Not a single violation across 8 turns of conversation.
+
+### Self-Correction When Drifting
+
+The most striking behavior was agents catching *themselves* approaching implementation and pulling back. Agent-1 in turn 7 started discussing whether `list` output should go to stdout or stderr for Unix composability — then immediately self-corrected: "Actually, this is implementation detail - noting it but let's not go deeper now."
+
+This is the grooming prompt working at the metacognitive level. The agent didn't just avoid implementation — it recognized the boundary, flagged the thought as relevant-but-premature, and redirected itself. No teammate intervention was needed.
+
+### Better Requirements Than Any Previous Run
+
+Compare outputs. The previous run (no phase system, same task, same model) produced a REST API specification with endpoints, HTTP status codes, JSON response formats, and pagination parameters. Useful, but it's a technical artifact that skipped requirements entirely.
+
+The grooming-mode run produced:
+
+- Explicit decisions on 15+ behavioral questions: duplicate handling, text-matching ambiguity rules, confirmation prompt policy, completion semantics (one-way vs reversible), concurrent access failure modes, timestamp storage vs display
+- Edge cases no previous run considered: empty input handling, whitespace-only rejection, whitespace trimming, multi-line todo support, shell escaping of special characters, what error message to show when text matches multiple todos
+- A clear scope boundary with explicit "not in v1" items: priorities, due dates, tags, uncomplete command, pagination, multi-user, timestamp display, archival
+- Design principles that emerged from the discussion itself: "optimizes for the 99% case," "don't solve problems we don't have yet," "turns a failure into helpful guidance"
+
+This is a *better starting point for implementation* than anything the agents produced when allowed to jump straight into technical design. The requirements are more thorough, the scope is clearer, and the deferred items are explicitly documented rather than silently omitted.
+
+### Emergent Reasoning Quality
+
+Agent-2's handling of the multi-line question in turn 8 demonstrated genuine reasoning under the grooming constraint. Without the ability to jump to "just store it as a string with newlines," the agent had to think through the *user experience* implications:
+
+1. First position: allow multi-line internally, display truncated
+2. Second position: replace newlines with spaces on display
+3. Self-interruption: "Actually, wait. I'm overcomplicating this. Let me reconsider..."
+4. Final position: treat newlines as literal text, don't add special logic, don't document multi-line as a feature
+
+That's three position changes in a single turn, driven by thinking about user behavior rather than data structure convenience. The grooming constraint forced a different *kind* of thinking — user-centered rather than implementation-centered.
+
+### Phase Awareness in Agent Behavior
+
+The agents clearly understood they were in a phase with more phases to come. Agent-1 in turn 7: "I think we have a complete requirements picture and can move to the next phase." Agent-2's final summary in turn 8 was structured as a handoff document — organized into MUST HAVE and OUT OF SCOPE sections, exactly the kind of artifact the Agile Coach would need to produce `groomed.md`.
+
+The base prompt addition about phases working was important. Agents didn't just follow constraints — they understood the *process* and oriented their work toward producing a clean handoff to the next phase.
+
+### Conversation History as Test Infrastructure
+
+A process note: conversation logs are now being saved with commit ids in the filename (e.g., `conversation-2f204d7.jsonl`) and stored in a history directory in the repo. This creates a record of how prompt and protocol changes affect agent behavior over time. Each conversation log is a test artifact tied to a specific version of the code. This is the beginning of the evaluation infrastructure — not automated yet, but systematic.
+
+### What This Validates
+
+The riskiest hypothesis passed: **mode-specific prompts change agent behavior, not just superficially (avoiding code) but structurally (different quality of thinking, different types of questions, self-correction when drifting).** The phase system works as a mechanism for separating concerns in agent conversations.
+
+This means the rest of the implementation plan is viable. If grooming mode hadn't worked — if agents had ignored the constraints or produced lower-quality output — the entire phase architecture would have needed rethinking. Instead, it produced the best requirements discussion across all seven conversation logs.
+
+Principle #18: **Constraints improve output quality** — agents given explicit boundaries about what NOT to discuss produced more thorough and thoughtful work within those boundaries.
+
+## 31. Phase System Iteration 4: Agile Coach and the Case for Facilitation
+
+### Coach Artifact Generation (Complete — Second Hypothesis Validated)
+
+The coach was added to `team.json` as a top-level key separate from the `agents` list. On `gotg advance` from grooming → planning, the system invokes the coach with a single LLM call: the full conversation as input, a summarization prompt as the system message. The coach produces `groomed.md` in the iteration directory.
+
+The test run was significantly expanded: 3 agents, 15 turns, and a new task (CLI bookmark manager instead of the todo app used in previous runs). Claude Code chose the different task to get a fresh conversation — good experimental design, even if unintentional.
+
+### Coach Summary Quality
+
+The coach produced an excellent `groomed.md`. Comparing it against the 15-turn conversation:
+
+**Accurate capture of negotiated decisions.** The TSV format was debated across turns 7-12 between three agents with three different preferences (TSV, JSON Lines, pipe-delimited). TSV won through a 2/3 vote after agent-3 conceded their pipe-delimited position. The coach correctly reported this as agreed, including specific column order and escaping rules.
+
+**Correct identification of unresolved items.** Date filtering was the one item where agent-1 and agent-2 disagreed and agent-3 hadn't cast the tiebreaking vote. The coach didn't try to resolve this — it reported the state accurately in the "Open Questions" section.
+
+**Implicit assumptions made explicit.** The conversation implicitly assumed things like "URLs do not contain tab characters" and "fast capture is more important than complete metadata." The coach surfaced these in an "Assumptions" section. This is exactly the kind of value an observer produces that participants miss.
+
+**Clean separation of concerns.** The "Out of Scope" section distinguished between "Explicitly Excluded from MVP" (product decisions the team made) and "Implementation Details (Not Product Decisions)" (things the team correctly deferred). This matters for the planning phase — the first list is scope, the second is engineering freedom.
+
+**No opinion injection.** The coach didn't advocate for any position. It reported what happened. This validates the system prompt design: "Do not add your own technical opinions or suggestions."
+
+The second riskiest hypothesis passed: **a separate agent can faithfully summarize a conversation it didn't participate in, distinguishing between agreements, open questions, and assumptions.**
+
+### Three-Agent Dynamics: New Observations
+
+The 3-agent, 15-turn run revealed dynamics not visible in the 2-agent conversations:
+
+**Coalition formation.** Agent-1 and agent-3 aligned on "URL only required" and "multiple files via env var," outvoting agent-2's preference for required titles and namespaced tags. Agent-2 explicitly conceded with "RELUCTANTLY YES" and registered concerns for the record. That's how real team decisions work — majority rules, dissent is noted.
+
+**A mediating voice emerged.** Agent-3 introduced the "Unix philosophy" frame that reoriented the entire discussion. Instead of debating user Context A vs B vs C, the team converged on design constraints that resolved multiple questions at once. That contribution came from neither of the other agents — it needed a third perspective.
+
+**Agents invented their own consensus mechanism.** By turn 10, agents were building vote tallies and tracking tables without any prompt instruction to do so. The combination of three agents + grooming constraints + enough turns created conditions where formal decision-making emerged naturally.
+
+**15 turns was the right length for 3 agents.** The 8-turn, 2-agent todo conversation was thorough but ended with open questions. Here, 15 turns gave enough room to explore positions, disagree productively, build voting tables, and reach near-complete consensus. The one remaining open question (date filtering) would have resolved in 1-2 more turns. This suggests 12-15 turns is a good grooming range for medium-complexity features with 3 agents.
+
+### The Facilitation Problem: Why the Coach Should Be In the Conversation
+
+The most important observation from this run wasn't about the coach — it was about what happened *without* the coach present during the conversation. A significant portion of agent turns was spent on **process management** rather than thinking:
+
+Turn 9, agent-3: "Give me your votes on ALL NINE of these"
+Turn 10, agent-1: "Let me separate MUST-DECIDE-NOW from CAN-DEFER"
+Turn 11, agent-2 builds a vote tracking table
+Turn 12, agent-3: "We have 3/3 consensus on these six, pending on two"
+Turn 13, agent-1: "Give me your final votes on items 7-11"
+
+That's 3-4 turns where engineering agents are doing *facilitation work* — tallying votes, proposing voting structures, categorizing decisions by urgency. They're good at it, but it's not their job. They're spending engineering brain cycles on process.
+
+With a coach present in the conversation, a single injection after turn 8 or 9 could have compressed this:
+
+"I'm tracking the following: **Agreed (3/3):** URL only required, multiple files via env var, truncated URL display, title-fetch as separate command, no extensibility. **Needs vote:** File format (TSV vs JSON Lines vs pipe-delimited), duplicate URL behavior, date filtering. **Not yet discussed:** Delete command semantics, tag naming restrictions. Let's resolve file format first since multiple decisions depend on it. Each of you: state your preference and strongest single argument."
+
+That's 2-3 turns of process overhead compressed into one injection — and it's *better* facilitation because the coach tracks state authoritatively rather than three agents each maintaining their own incomplete picture.
+
+### Early Exit: The Coach as Convergence Detector
+
+The second insight: the coach could determine when grooming is actually *done*. Right now conversations run for a fixed turn count (`--max-turns`), and the PM watches and decides when to `gotg advance`. But the coach could detect convergence — when all items on its tracking list are either agreed or explicitly deferred.
+
+Instead of the PM watching 15 turns and deciding "that looks complete enough," the coach signals: "All scope questions are resolved or deferred. Recommending advance to planning." The PM reviews and approves.
+
+This converts the coach from a phase-transition observer to an active facilitator with a specific job fundamentally different from the engineering agents: no technical opinions, just convergence tracking and process management.
+
+### Design: Coach-as-Facilitator (Iteration 4b)
+
+**Invocation cadence:** The coach injects after every full round — after all engineering agents have spoken once. In a 3-agent team, that means coach speaks after every 3 agent turns. The coach's messages are appended to the conversation log with `"from": "coach"` but do NOT count as agent turns for `--max-turns` purposes.
+
+**Facilitation prompt:**
+
+"You are an Agile Coach facilitating this conversation. You do NOT contribute technical opinions or suggest solutions. Your job is to:
+1. Summarize what the team has agreed on so far
+2. List what remains unresolved
+3. Ask the team to address the most important unresolved item next
+4. If all scope items are resolved or explicitly deferred, state: [PHASE_COMPLETE] and recommend advancing to the next phase
+
+Keep your messages concise — shorter than the engineers' messages. The engineers are the experts. You manage the process."
+
+**Early exit mechanism:** After appending the coach's message to the log, the system checks for `[PHASE_COMPLETE]` in the response. If detected, the conversation stops and prints: "Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing." The PM decides. Simple, no automation of the decision — just a signal.
+
+**What the coach sees:** The same consolidated message format as engineering agents — all messages since its last turn. Its system prompt is the facilitation prompt, not the engineering prompt. It does NOT get the phase-specific grooming/planning instructions (those are for engineers). It gets its own role-specific instructions.
+
+**Log format:** Coach messages use `"from": "coach"` in the conversation log, distinct from `"system"` (phase transitions) and agent names. This means `gotg show` can render coach messages differently (perhaps a different color) and the coach's messages are clearly distinguished from system messages and engineering discussion.
+
+**Relationship to existing coach functionality:** The facilitation role (in-conversation) and the summarization role (at phase transition) are two different invocation patterns for the same agent config. The coach in `team.json` serves both. At `gotg advance`, the coach still produces `groomed.md` as before — but now it's been tracking agreements in real time, so the summary should be even more accurate than a cold read of the transcript.
+
+**Risk scenarios to watch for:**
+
+- **Coach becomes a crutch** — agents wait for the coach to summarize instead of driving discussion. If agents say "let's wait for the coach to tally," facilitation is making them passive.
+- **Coach gets state wrong** — marks something as agreed when there's a subtle disagreement. Bad state tracking is worse than no state tracking because agents trust it.
+- **Coach talks too much** — long summaries every round slow things down. Facilitation messages should be shorter than engineering messages.
+- **Agents ignore the coach** — keep doing their own process management. This means the coach adds tokens without reducing overhead.
+
+**Test plan:** Run the bookmark manager task (or equivalent complexity) with 3 agents + coach facilitation. Compare against the 15-turn run without facilitation. Key metrics: turns to reach same quality of consensus, accuracy of coach's agreement tracking, whether agents reference the coach's summaries, whether early exit signal fires at the right time.
+
+---
+
+## Current State (Post-Coach-Artifact-Generation)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
-- Four commands: `init`, `run`, `continue`, `show`
+- Six commands: `init`, `run`, `continue`, `show`, `model`, `advance`
 - `continue` command with human message injection (`-m`)
 - `--max-turns` override on both `run` and `continue`
-- Consolidated message format: all messages since agent's last turn in one `user` block with speaker labels
-- @mention convention in system prompt for directed communication
+- Nested iteration directory structure (`.team/iterations/<id>/`)
+- `team.json` consolidating model config + agent definitions + coach config
+- `iteration.json` as list with `current` pointer, includes `phase` field
+- `gotg advance` command — moves phase forward, writes system transition message
+- **New:** Coach agent in `team.json` — separate from engineering agents, invoked at phase transitions
+- **New:** `gotg advance` from grooming invokes coach to produce `groomed.md`
+- **New:** Coach summarization prompt (`COACH_GROOMING_PROMPT`) — faithful capture without opinion injection
+- Phase-aware system prompts — grooming mode constrains agents to scope/requirements
+- Base prompt explains phase system to all agents regardless of current phase
+- Phase sequence: grooming → planning → pre-code-review
+- Consolidated message format with speaker labels and @mentions
 - Dynamic teammate list in system prompts with role labels
 - JSONL conversation log with `from`, `iteration`, `content`
+- System messages for phase transitions (rendered in magenta)
 - Human messages excluded from agent turn count
 - OpenAI-compatible and Anthropic API provider support
-- Debug logging (prompts sent to models)
+- Debug logging (prompts sent to models, per-iteration directory)
+- Conversation history tracking with commit-id filenames
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Five conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions)
+- Eight conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent), CLI bookmark manager grooming (3-agent, 15-turn, with coach artifact)
 
-### What's Designed (Not Yet Built)
-- Scrum-inspired phase system: grooming → planning → pre-code-review → implementation → code review
-- Agile Coach agent for artifact generation and process enforcement
-- Directory restructure: per-iteration directories with phase artifacts
-- `iteration.json` as master iteration/phase tracker at team level
-- `team.json` absorbing model config and defining coach alongside engineering agents
-- Artifact injection: coach summaries injected into conversation at phase transitions
-- Phase-aware system prompts constraining agent behavior per phase
-- `tasks.json` with human assignment workflow
-- Seven-iteration implementation plan with risk-ordered sequencing
+### Implementation Plan Progress (Resequenced)
+- ✅ **Iteration 1: Directory restructure** — complete
+- ✅ **Iteration 2: Phase state and `gotg advance`** — complete
+- ✅ **Iteration 3: Grooming mode** — complete, core hypothesis validated
+- ✅ **Iteration 4: Agile Coach artifact generation** — complete, second hypothesis validated
+- ⬜ **Iteration 4b: Coach-as-facilitator** — **next, new riskiest hypothesis**
+- ⬜ **Iteration 5: Artifact injection and planning mode** — postponed (high confidence, low risk)
+- ⬜ **Iteration 6: `tasks.json` and human assignment** — postponed
+- ⬜ **Iteration 7: Pre-code review phase** — postponed
+
+Iterations 5-7 are postponed, not canceled. They're mechanical wiring with high confidence of success. Iteration 4b is prioritized because it's a behavioral hypothesis — will agents respond well to a non-technical facilitator steering the conversation? — and the evidence from the 15-turn run strongly suggests it's needed.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -1237,36 +1453,41 @@ Agents get assigned tasks and write implementation proposals. Other agents revie
 - Consolidated messages fix attribution confusion — agents correctly track who said what
 - @Mentions activate conversation management behavior — agents direct questions to specific people, route topics, and create implicit accountability
 - Three-party conversations are better than two-party — PM input focuses discussion, engineers stress-test PM suggestions
+- **Three-agent conversations produce coalition formation, mediating voices, and emergent consensus mechanisms** (vote tables, explicit tallies)
 - Agents will push back on the PM when they have good reasons — role hierarchy isn't needed for healthy team dynamics
+- Agents defer to PM on scope but continue contributing on engineering details — natural authority emerges without enforcement
+- Grooming mode constraints produce better output than unconstrained conversation
+- Agents self-correct when approaching constraint boundaries
+- Phase awareness changes agent orientation — agents structure work as handoffs
+- **The coach faithfully summarizes conversations it didn't participate in** — accurate agreement tracking, correct identification of unresolved items, implicit assumptions made explicit, no opinion injection
+- **Engineering agents spend significant turns on process management** (vote tallying, consensus tracking, decision categorization) — this is facilitation work that should be the coach's job
+- **12-15 turns is a good grooming range for medium-complexity features with 3 agents**
 - Prompt architecture is a first-class design concern, not an implementation detail
 - Small prompt conventions can activate large behavioral changes when they align with model training data
-- Conversation quality gates tool quality — agents need to converse well before they can act well
-- The human has no other humans — multi-team is a necessity, not a long-term vision
 
 ### Development Strategy
-- **Execute the seven-iteration implementation plan** — directory restructure through pre-code review
-- **Iterations 1-2 fast** (structural), **iteration 3 is the core experiment** (can agents stay in grooming mode?)
-- **Iteration 4 is the second critical test** (can the coach faithfully summarize?)
-- Use gotg to build gotg — the phase system is itself the first real project to run through the phase system once built
+- **Iteration 4b next** — coach-as-facilitator with in-conversation process management and early exit detection
+- Compare facilitated vs unfacilitated conversations on same task complexity
+- If facilitation works, iterations 5-7 (artifact injection, planning, pre-code review) follow as wiring
+- Use gotg to build gotg
+- Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
 - Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
+- Artifact injection into conversation at phase transitions (Iteration 5 — postponed, not canceled)
+- Planning mode prompt (Iteration 5)
+- `tasks.json` generation and human assignment (Iteration 6 — postponed)
+- Pre-code review phase and prompt (Iteration 7 — postponed)
+- TUI chat interface (Textual — after phase system is validated with CLI)
+- OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
-- Narrator layer implementation (consolidated messages + @mentions work well — narrator is an upgrade, not a requirement)
-- Self-termination detection (after observing what "consensus" looks like within phases)
+- Narrator layer implementation (consolidated messages + @mentions work well)
 - Automated evaluation (after manual rubric is trusted)
 - Implicit signal instrumentation (after evaluation framework is validated)
 - Model capability threshold testing (after evaluation rubric exists)
-- Agent tool access: file I/O, bash (after phase system is solid — enables implementation and code review phases)
+- Agent tool access: file I/O, bash (after phase system is solid)
 - Agent full autonomy: git, testing, deployment (after basic tool access works)
-- Context window management / message compression (coach artifacts provide natural compression points — explicit compression later)
-- Scope enforcement by coach during conversations (after basic coach artifact generation works)
-- Stuck detection by coach (after basic coach role is validated)
-- Turn balance monitoring by coach (after basic coach role is validated)
-- Configuration hierarchy for todo app phases (user/system/local config — deferred per agent recommendation)
-- Message types / typed messages (phase markers serve this role for now)
-- `id` and `ts` fields on messages (add when needed)
-- Error handling on model calls (add when it becomes annoying)
+- Context window management / message compression (coach artifacts and facilitation summaries provide natural compression)
 - Fine-tuned role models (long-term vision)
 - Human dashboard / attention management (long-term vision)
 
@@ -1288,3 +1509,5 @@ Agents get assigned tasks and write implementation proposals. Other agents revie
 15. **Prompt architecture is a first-class design concern** — same model, same task, different prompt structure produces measurably different outcomes
 16. **Activate existing capabilities, don't teach new ones** — small conventions that align with model training data (like @mentions) produce outsized behavioral changes
 17. **Separate observation from participation** — the Agile Coach reads conversations but doesn't argue; different roles need different relationships to the conversation
+18. **Constraints improve output quality** — agents given explicit boundaries about what NOT to discuss produce more thorough and thoughtful work within those boundaries
+19. **Let the coach manage process, let the engineers manage substance** — process overhead (vote tallying, consensus tracking, decision categorization) belongs to a dedicated facilitator, not to the engineers whose attention should be on the problem

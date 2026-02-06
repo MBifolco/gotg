@@ -342,3 +342,119 @@ def test_build_prompt_no_phase_prompt_when_phase_missing():
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
     assert "CURRENT PHASE" not in system
+
+
+# --- coach awareness in agent prompt ---
+
+def test_build_prompt_includes_coach_awareness():
+    """Agent prompt should mention coach when coach is in participants."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    participants = [
+        {"name": "agent-1", "role": "Software Engineer"},
+        {"name": "agent-2", "role": "Software Engineer"},
+        {"name": "coach", "role": "Agile Coach"},
+    ]
+    messages = build_prompt(agent, iteration, [], participants)
+    system = messages[0]["content"]
+    assert "Agile Coach" in system
+    assert "process management" in system.lower()
+
+
+def test_build_prompt_no_coach_awareness_without_coach():
+    """Agent prompt should not mention coach facilitation when no coach."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    participants = [
+        {"name": "agent-1", "role": "Software Engineer"},
+        {"name": "agent-2", "role": "Software Engineer"},
+    ]
+    messages = build_prompt(agent, iteration, [], participants)
+    system = messages[0]["content"]
+    assert "process management" not in system.lower()
+
+
+# --- build_coach_prompt ---
+
+def test_build_coach_prompt_uses_facilitation_prompt():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress", "max_turns": 10}
+    history = [
+        {"from": "agent-1", "iteration": "iter-1", "content": "I think X"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "I agree"},
+    ]
+    messages = build_coach_prompt(coach, iteration, history)
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPT in system
+    assert "CURRENT PHASE" not in system
+
+
+def test_build_coach_prompt_maps_own_messages_to_assistant():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress", "max_turns": 10}
+    history = [
+        {"from": "agent-1", "iteration": "iter-1", "content": "idea"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "agree"},
+        {"from": "coach", "iteration": "iter-1", "content": "summary so far"},
+        {"from": "agent-1", "iteration": "iter-1", "content": "more ideas"},
+    ]
+    messages = build_coach_prompt(coach, iteration, history)
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert "summary so far" in assistant_msgs[0]["content"]
+
+
+def test_build_coach_prompt_no_phase_injection():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "grooming", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE: GROOMING" not in system
+
+
+def test_build_coach_prompt_lists_teammates():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress", "max_turns": 10}
+    participants = [
+        {"name": "agent-1", "role": "Software Engineer"},
+        {"name": "agent-2", "role": "Software Engineer"},
+        {"name": "coach", "role": "Agile Coach"},
+    ]
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ], participants)
+    system = messages[0]["content"]
+    assert "agent-1 (Software Engineer)" in system
+    assert "agent-2 (Software Engineer)" in system
+
+
+def test_build_coach_prompt_consolidates_consecutive_messages():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress", "max_turns": 10}
+    history = [
+        {"from": "agent-1", "iteration": "iter-1", "content": "idea A"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "idea B"},
+        {"from": "agent-3", "iteration": "iter-1", "content": "idea C"},
+    ]
+    messages = build_coach_prompt(coach, iteration, history)
+    # system + 1 consolidated user message
+    assert len(messages) == 2
+    assert messages[1]["role"] == "user"
+    assert "[agent-1]" in messages[1]["content"]
+    assert "[agent-2]" in messages[1]["content"]
+    assert "[agent-3]" in messages[1]["content"]

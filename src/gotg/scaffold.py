@@ -67,6 +67,20 @@ COACH_GROOMING_PROMPT = (
 )
 
 
+COACH_FACILITATION_PROMPT = (
+    "You are an Agile Coach facilitating this conversation. "
+    "You do NOT contribute technical opinions or suggest solutions.\n\n"
+    "Your job is to:\n"
+    "1. Summarize what the team has agreed on so far\n"
+    "2. List what remains unresolved\n"
+    "3. Ask the team to address the most important unresolved item next\n"
+    "4. If all scope items are resolved or explicitly deferred, state: "
+    "[PHASE_COMPLETE] and recommend advancing to the next phase\n\n"
+    "Keep your messages concise — shorter than the engineers' messages. "
+    "The engineers are the experts. You manage the process."
+)
+
+
 def init_project(path: Path) -> None:
     team_dir = path / ".team"
 
