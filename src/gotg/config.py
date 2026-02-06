@@ -42,7 +42,8 @@ def ensure_dotenv_key(dotenv_path: Path, key: str) -> None:
 
 
 def load_model_config(team_dir: Path) -> dict:
-    config = json.loads((team_dir / "model.json").read_text())
+    team_config = json.loads((team_dir / "team.json").read_text())
+    config = dict(team_config["model"])
     # Resolve api_key: if it starts with $, read from .env then environment
     api_key = config.get("api_key")
     if api_key and api_key.startswith("$"):
@@ -55,19 +56,40 @@ def load_model_config(team_dir: Path) -> dict:
         if not config["api_key"]:
             raise SystemExit(
                 f"Error: environment variable {env_var} is not set "
-                f"(referenced in .team/model.json api_key). "
+                f"(referenced in .team/team.json model.api_key). "
                 f"Add it to .env or export it in your shell."
             )
     return config
 
 
 def load_agents(team_dir: Path) -> list[dict]:
-    agents_dir = team_dir / "agents"
-    agents = []
-    for path in sorted(agents_dir.glob("*.json")):
-        agents.append(json.loads(path.read_text()))
-    return agents
+    team_config = json.loads((team_dir / "team.json").read_text())
+    return team_config["agents"]
 
 
 def load_iteration(team_dir: Path) -> dict:
-    return json.loads((team_dir / "iteration.json").read_text())
+    data = json.loads((team_dir / "iteration.json").read_text())
+    current_id = data["current"]
+    for iteration in data["iterations"]:
+        if iteration["id"] == current_id:
+            return iteration
+    raise SystemExit(
+        f"Error: current iteration '{current_id}' not found in iteration list."
+    )
+
+
+def get_iteration_dir(team_dir: Path, iteration_id: str) -> Path:
+    return team_dir / "iterations" / iteration_id
+
+
+def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
+    iteration = load_iteration(team_dir)
+    iter_dir = get_iteration_dir(team_dir, iteration["id"])
+    return iteration, iter_dir
+
+
+def save_model_config(team_dir: Path, model_config: dict) -> None:
+    team_path = team_dir / "team.json"
+    team_config = json.loads(team_path.read_text())
+    team_config["model"] = model_config
+    team_path.write_text(json.dumps(team_config, indent=2) + "\n")

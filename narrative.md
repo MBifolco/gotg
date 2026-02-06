@@ -980,54 +980,293 @@ Three positions evaluated in one section: agent-1's approach, an alternative, an
 
 ## Current State (Post-Consolidated-Format)
 
+## 27. @Mentions: Small Prompt Change, Outsized Effect
+
+One line was added to the system prompt: "When addressing a specific teammate, use @name. Watch for messages directed at you with @agent-1."
+
+No examples. No elaborate explanation. Just permission and convention. The results were disproportionate to the change.
+
+### Agents Adopted @Mentions Immediately
+
+Every agent response used @mentions naturally from the first turn: `@agent-2 What are your thoughts?`, `@human Great additions!`, `@agent-1 and @human - excellent points from both of you.` The model already understands @mention semantics from training data — Slack, GitHub, Twitter. The prompt just activated an existing capability.
+
+### Directed Questions Created Conversational Structure
+
+The most significant effect wasn't attribution — it was *conversation management*. Agent-2 ended its final turn with three numbered questions, each @-addressed to a specific person:
+
+1. "@human: Can you confirm the TOML scope?"
+2. "@agent-1: What's your take on my migration framework vs pre-add columns approach?"
+3. "Both: Should we support configuration hierarchy?"
+
+That's not just knowing who said what — it's actively managing conversation flow, asking specific people for specific input. This is closer to how a real tech lead runs a design review than anything in the previous runs.
+
+### The Human's Lack of @Mentions Became a Signal
+
+The PM message didn't @-address anyone: "I think these are good ideas but we should account for..." Both agents correctly treated it as team-wide direction rather than a message to one person. Agent-1 explicitly bridged: "@human Great additions!" then later "@agent-2 Thoughts on the multi-user preparation approach?" — routing the PM's input to the right teammate for further discussion. That's facilitation behavior that emerged without being prompted for.
+
+### Strongest Counter-Proposal Across All Runs
+
+Agent-2's YAGNI pushback on the auth schema was the most structured disagreement yet. It named the specific principle being violated ("YAGNI violation"), identified the wrong abstraction ("what if we later want org-based, not user-based?"), proposed a concrete alternative with three components (schema versioning, migration framework, documented upgrade path), and explained why it was better on five dimensions. Then it still deferred to the team: "Am I being too purist about YAGNI, or do you see the value in deferring schema changes?"
+
+That's confident disagreement with genuine openness to being wrong. The @mention framing may have contributed — by addressing "@agent-1" directly, the model treated it as a peer-to-peer technical challenge rather than a general objection.
+
+### Novel Ideas Unique to This Run
+
+The **config hierarchy** idea (system/user/local TOML files) appeared for the first time across all five runs. Agent-2 raised it, immediately voted against it for MVP ("I vote user-level only"), and asked the team. That's the kind of "worth mentioning even though I'd defer it" thinking that shows the agent is exploring the design space beyond the immediate question.
+
+The **schema versioning with migration framework** was also new — a concrete architectural pattern, not just an opinion about whether to add a column. Previous runs debated whether to future-proof; this run proposed *how* to future-proof without over-building.
+
+Agent-2's observation about status as TEXT enum ("extensible to 'archived', 'cancelled' later") with a CHECK constraint was a small but real design improvement over previous runs that used boolean completed flags.
+
+### What @Mentions Change About the Protocol
+
+@Mentions don't just improve attribution — they change the *social dynamics* of the conversation. When agent-2 writes "@agent-1: What's your take?", it creates an implicit contract: agent-1 should respond to this specific point. When it writes "@human: Can you confirm?", it signals that the team is waiting on PM input before proceeding. These are coordination mechanisms, not just labels.
+
+This matters for the evaluation framework. A conversation where agents @-mention each other with specific questions is structurally different from one where they write "what do you think?" into the void. The @mention pattern creates:
+
+- **Directed accountability**: specific people are asked specific things
+- **Conversation threading without threads**: you can trace who's responding to whom by following the @mentions
+- **Role emergence**: the agent that @-mentions everyone and routes topics is acting as a facilitator, even without being told to
+
+The @mention convention costs nothing (one line of prompt), requires no protocol changes, and produces richer conversational dynamics. It should be standard in all future runs.
+
+---
+
+## 28. Scrum-Inspired Phase System: From Conversation to Process
+
+With the conversation protocol solid — consolidated messages, @mentions, three-party dynamics working — the next challenge is giving conversations *structure over time*. Right now every conversation is a freeform hybrid of scope discussion and technical planning. The agents simultaneously debate "do we even need config?" (scope) and "use AUTOINCREMENT with a CHECK constraint" (implementation). Separating those concerns should produce better output at each stage.
+
+### Phase Sequence
+
+The design draws from Scrum's ceremony structure, adapted for AI teams:
+
+**1. Grooming** — Agents discuss scope, constraints, edge cases, and what "done" means. No implementation details. No specific technologies. No code or pseudo-code. The goal is shared understanding of the problem, not the solution.
+
+**2. PM Checkpoint** — Human reviews the grooming conversation and either approves the scope or redirects. This is `gotg advance` (or `gotg continue` with a message, then advance). The transition is always human-initiated.
+
+**3. Planning** — Agents take the approved scope and break it into independently implementable tasks. Each task gets a title, description, and dependency notes. The goal is a task list that a human could assign without ambiguity.
+
+**4. PM Checkpoint** — Human reviews the task breakdown and assigns tasks to agents. Tasks start with `assigned_to: null` — the human fills in assignments.
+
+**5. Pre-code Review** — Each agent writes an implementation proposal for their assigned tasks: architecture decisions, data flow, pseudo-code at most. Other agents review and comment. This is the most novel step — too expensive with human engineers, practically free with AI. It makes architectural decisions explicit and debatable before any code is written.
+
+**6. Implementation** — Agents write code for their assigned tasks. (Requires tool access, deferred.)
+
+**7. Code Review** — Agents review each other's code. (Requires tool access, deferred.)
+
+Phases 1-5 can be built and tested with the current system. Phases 6-7 wait for agent tool access.
+
+Not every iteration needs all phases. A well-scoped bug fix could skip grooming. A pure refactor might go straight to pre-code review. But the sequence exists as the default, and the PM decides which phases to skip by advancing past them.
+
+### The Agile Coach Agent
+
+A new agent role that solves multiple problems: artifact generation, process enforcement, and context compression.
+
+**What makes it different:** The coach reads conversations but isn't a participant in the debate. It observes, summarizes, enforces process, and produces structured artifacts. It has a fundamentally different system prompt from engineering agents — no technical opinions, just faithful capture of what the team decided.
+
+**Near-term jobs:**
+- After grooming: produce `groomed.md` — a scope summary capturing what the team agreed on, what remains unresolved, and any constraints or assumptions. If the summary reveals the team didn't actually converge, that's a signal to the PM that grooming needs another round.
+- After planning: produce `tasks.json` — a structured task list extracted from the planning conversation with ids, titles, descriptions, dependencies, and `assigned_to: null`.
+
+**Future jobs (deferred but clear):**
+- Scope enforcement during conversations: inject "you're drifting into implementation details" during grooming
+- Stuck detection: "you've been going back and forth on this for 4 turns, consider escalating to the PM"
+- Turn balance monitoring: "agent-1 has spoken 3 times, agent-2 hasn't responded to the auth question"
+
+**Implementation:** The coach is defined in `team.json` like any other agent, but with a different role and system prompt. It doesn't participate in the turn-taking rotation — it's invoked by the system at phase transitions. `gotg advance` triggers the coach to read the conversation and produce the appropriate artifact.
+
+**Why a separate agent, not one of the engineers:** An independent call avoids biased context — the coach isn't invested in any position from the debate. It reads the conversation fresh and summarizes what actually happened, not what one participant thought happened. This mirrors reality: in Scrum, the Scrum Master produces the summary, not the developer who was most passionate about their approach.
+
+### Artifact Injection
+
+When transitioning between phases, the coach's artifacts are injected back into the conversation as system messages. For example, when moving from grooming to planning:
+
+```jsonl
+{"from": "system", "phase": "planning", "content": "Phase transition: grooming → planning. The Agile Coach has summarized the agreed scope:\n\n[contents of groomed.md]\n\nYour job now is to break this scope into independently implementable tasks."}
+```
+
+This serves two purposes: it gives agents a clean, authoritative reference for what was agreed (rather than reconstructing from a long conversation), and it's an early form of context compression. The agents don't need to re-read every turn of grooming — the summary is the anchor.
+
+### Directory Structure
+
+```
+.team/
+  team.json              (agents, coach, model config — project-level)
+  iteration.json         (master iteration list, ordering, current iteration/phase)
+  iterations/
+    iter-1-todo-design/
+      conversation.jsonl  (continuous across all phases, single file)
+      groomed.md          (produced by coach after grooming)
+      tasks.json          (produced by coach after planning)
+    iter-2-auth-layer/
+      ...
+```
+
+**Key decisions:**
+
+`iteration.json` lives at team level as the master data store for iteration ordering, current iteration, and phase state. It tracks phase history with timestamps and who approved each transition:
+
+```json
+{
+  "iterations": [
+    {
+      "id": "iter-1-todo-design",
+      "title": "CLI Todo List Design",
+      "phase": "planning",
+      "phase_history": [
+        {"phase": "grooming", "completed_at": "...", "approved_by": "human"}
+      ]
+    }
+  ],
+  "current": "iter-1-todo-design"
+}
+```
+
+`team.json` absorbs model config (previously `model.json`). Models don't change per iteration — they're a team-level concern. It also defines the coach agent alongside the engineering agents:
+
+```json
+{
+  "agents": [
+    {"name": "agent-1", "role": "Software Engineer", "model": "..."},
+    {"name": "agent-2", "role": "Software Engineer", "model": "..."}
+  ],
+  "coach": {
+    "name": "coach",
+    "role": "Agile Coach",
+    "model": "..."
+  }
+}
+```
+
+**Continuous conversation file.** The conversation is one file per iteration, continuous across all phases. Agents need context from grooming to do good planning. Phase transitions are marked by system messages in the log. Later, context compression can be added to keep long conversations from getting unwieldy, but the injected artifacts at each phase transition already serve as natural compression points.
+
+**`tasks.json` as structured extraction.** The tasks file is generated by the coach from the planning conversation, not manually maintained. This reduces the risk of things getting lost in a long context. The human edits `assigned_to` fields directly. When the next phase starts, assignments are injected back into the conversation.
+
+### Phase-Aware System Prompts
+
+Each phase modifies the engineering agents' system prompts with phase-specific instructions:
+
+**Grooming mode additions:**
+"You are in the grooming phase. Focus on understanding the problem, clarifying requirements, identifying edge cases, and agreeing on scope. Do NOT discuss implementation details, specific technologies, or write any code or pseudo-code. If a teammate drifts into implementation, redirect them back to scope."
+
+**Planning mode additions:**
+"You are now in the planning phase. The agreed scope has been summarized above. Break this scope into independently implementable tasks. For each task, provide a clear title, description, and note any dependencies on other tasks. Do not write code or pseudo-code. Focus on task boundaries — each task should be completable by one agent without blocking on another."
+
+**Pre-code review mode additions:**
+"You are in the pre-code review phase. You have been assigned specific tasks. For each of your tasks, write an implementation proposal: key architecture decisions, data flow, and pseudo-code at most. Do not write actual runnable code. After writing your proposal, review your teammates' proposals and provide constructive feedback."
+
+### Task Assignment
+
+Tasks start with `assigned_to: null` in the coach-generated `tasks.json`. The human assigns tasks — either by editing the file directly or via a CLI command like `gotg assign task-1 agent-1`. Human assignment is the right starting point because agents are currently identical (same model, same prompt, same capabilities) and would have no meaningful basis for self-selection. Personality differentiation could enable agent self-selection later, but that's deferred.
+
+### Implementation Plan: Seven Iterations
+
+These are sequenced to test the riskiest hypotheses first and build incrementally. Each is independently testable.
+
+**Iteration 1: Directory restructure and phase tracking.**
+Move from flat `.team/` to nested iteration directories. `iteration.json` at team level as master list. `model.json` absorbed into `team.json`. Each iteration gets its own directory with `conversation.jsonl`. Update all four commands (`init`, `run`, `continue`, `show`) to work with new paths.
+- Test: run existing todo conversation with new structure. Everything works as before, files land in right places.
+- Validates: directory structure feels right before building on top of it.
+
+**Iteration 2: Phase state and `gotg advance`.**
+Add `phase` field to iteration entries in `iteration.json` (starts at "grooming"). Implement `gotg advance` command: updates phase, writes system transition message into conversation log. Phase sequence: grooming → planning → pre-code-review. No agent behavioral changes yet — just the state machine.
+- Test: run a conversation, `gotg advance`, verify `iteration.json` updates and transition message appears in log.
+- Validates: phase transition flow feels right as CLI experience.
+
+**Iteration 3: Grooming mode — constrain agents to scope discussion.**
+Add phase-aware system prompts. When phase is "grooming," agents get additional instructions to focus on scope and redirect implementation drift. This is the core experiment.
+- Test: run todo list task in grooming mode. Do agents stay at scope level? Do they resist debating SQLite vs JSON? If one drifts, does the other redirect?
+- Validates: whether mode-specific prompts actually change agent behavior. **Riskiest hypothesis — if this doesn't work, the phase system needs rethinking.**
+
+**Iteration 4: Agile Coach agent and `groomed.md`.**
+Add coach to `team.json`. Wire `gotg advance` to invoke coach after grooming → planning transition. Coach reads conversation, produces `groomed.md` in iteration directory.
+- Test: run grooming, then advance. Does coach produce useful summary? Does it accurately reflect agreements and flag unresolved points?
+- Validates: whether a separate agent can faithfully summarize a conversation it didn't participate in. **Second riskiest hypothesis.**
+
+**Iteration 5: Artifact injection and planning mode.**
+Inject `groomed.md` content into conversation as system message at phase transition. Planning-phase prompts instruct agents to break scope into tasks.
+- Test: full grooming → advance → planning flow. Do agents reference the injected summary? Are tasks genuinely independent?
+- Validates: whether injected artifacts anchor planning conversations.
+
+**Iteration 6: `tasks.json` generation and human assignment.**
+Wire coach to produce `tasks.json` after planning. Implement assignment mechanism (file editing or `gotg assign` CLI command). Inject assignments into conversation on next advance.
+- Test: full grooming → planning → assignment flow. Can tasks be assigned without ambiguity? If not, planning failed.
+- Validates: whether planning produces artifacts usable for the next stage.
+
+**Iteration 7: Pre-code review phase.**
+Agents get assigned tasks and write implementation proposals. Other agents review and comment. No actual code — architecture and pseudo-code only.
+- Test: do agents stay within assigned task scope? Do reviewers catch real issues? Does cross-review change approaches?
+- Validates: whether pre-code review improves implementation quality (the most novel step in the process).
+
+**Sequencing notes:** Iterations 1-2 are structural and can be done fast. Iteration 3 is the one to spend time on — it's the core experiment that determines whether the rest of the pipeline is viable. Iteration 4 is the second critical test. If 3 and 4 work, 5-7 are mostly wiring. Implementation and code review phases (6-7 in the Scrum sequence) are not included here because they depend on agent tool access, which is deferred until the process layer is solid.
+
+---
+
+## Current State (Post-Phase-Design)
+
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
 - Four commands: `init`, `run`, `continue`, `show`
 - `continue` command with human message injection (`-m`)
 - `--max-turns` override on both `run` and `continue`
 - Consolidated message format: all messages since agent's last turn in one `user` block with speaker labels
+- @mention convention in system prompt for directed communication
 - Dynamic teammate list in system prompts with role labels
 - JSONL conversation log with `from`, `iteration`, `content`
 - Human messages excluded from agent turn count
 - OpenAI-compatible and Anthropic API provider support
 - Debug logging (prompts sent to models)
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Four conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated messages)
+- Five conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions)
+
+### What's Designed (Not Yet Built)
+- Scrum-inspired phase system: grooming → planning → pre-code-review → implementation → code review
+- Agile Coach agent for artifact generation and process enforcement
+- Directory restructure: per-iteration directories with phase artifacts
+- `iteration.json` as master iteration/phase tracker at team level
+- `team.json` absorbing model config and defining coach alongside engineering agents
+- Artifact injection: coach summaries injected into conversation at phase transitions
+- Phase-aware system prompts constraining agent behavior per phase
+- `tasks.json` with human assignment workflow
+- Seven-iteration implementation plan with risk-ordered sequencing
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
 - 7B models can't sustain disagreement; Sonnet can argue, persuade, and change positions
 - The quality ceiling is the model; the quality floor is the protocol
-- **Consolidated messages fix attribution confusion** — agents correctly track who said what
-- **Three-party conversations are better than two-party** — PM input focuses discussion, two engineers stress-test PM suggestions
+- Consolidated messages fix attribution confusion — agents correctly track who said what
+- @Mentions activate conversation management behavior — agents direct questions to specific people, route topics, and create implicit accountability
+- Three-party conversations are better than two-party — PM input focuses discussion, engineers stress-test PM suggestions
 - Agents will push back on the PM when they have good reasons — role hierarchy isn't needed for healthy team dynamics
 - Prompt architecture is a first-class design concern, not an implementation detail
+- Small prompt conventions can activate large behavioral changes when they align with model training data
 - Conversation quality gates tool quality — agents need to converse well before they can act well
 - The human has no other humans — multi-team is a necessity, not a long-term vision
 
 ### Development Strategy
-- **Use gotg to build gotg.** Run parallel AI teams (however manually) across workstreams
-- Begin developing manual evaluation rubric using the four conversation logs as calibration data
-- Experiment with role authority differentiation (PM vs. engineer) now that base format works
-- Start planning multi-team support for parallel gotg development workstreams
+- **Execute the seven-iteration implementation plan** — directory restructure through pre-code review
+- **Iterations 1-2 fast** (structural), **iteration 3 is the core experiment** (can agents stay in grooming mode?)
+- **Iteration 4 is the second critical test** (can the coach faithfully summarize?)
+- Use gotg to build gotg — the phase system is itself the first real project to run through the phase system once built
 - Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
-- Human role authority differentiation (base format works without it — add when needed)
-- Narrator layer implementation (consolidated messages work well — narrator is an upgrade, not a requirement)
-- Agent personality differentiation (after observing identical agent behavior)
-- Self-termination detection (after observing what "consensus" looks like in practice)
+- Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
+- Narrator layer implementation (consolidated messages + @mentions work well — narrator is an upgrade, not a requirement)
+- Self-termination detection (after observing what "consensus" looks like within phases)
 - Automated evaluation (after manual rubric is trusted)
 - Implicit signal instrumentation (after evaluation framework is validated)
 - Model capability threshold testing (after evaluation rubric exists)
-- Attribution accuracy as evaluation dimension (consolidated format mostly solves this — revisit with larger teams)
-- Agent tool access: file I/O, bash (after team dynamics are solid)
+- Agent tool access: file I/O, bash (after phase system is solid — enables implementation and code review phases)
 - Agent full autonomy: git, testing, deployment (after basic tool access works)
-- Message types / typed messages (add when observed as needed)
-- Message threading / `ref` field (add when observed as needed)
+- Context window management / message compression (coach artifacts provide natural compression points — explicit compression later)
+- Scope enforcement by coach during conversations (after basic coach artifact generation works)
+- Stuck detection by coach (after basic coach role is validated)
+- Turn balance monitoring by coach (after basic coach role is validated)
+- Configuration hierarchy for todo app phases (user/system/local config — deferred per agent recommendation)
+- Message types / typed messages (phase markers serve this role for now)
 - `id` and `ts` fields on messages (add when needed)
 - Error handling on model calls (add when it becomes annoying)
-- Context window management / message windowing (add when turns increase)
 - Fine-tuned role models (long-term vision)
 - Human dashboard / attention management (long-term vision)
 
@@ -1047,3 +1286,5 @@ Three positions evaluated in one section: agent-1's approach, an alternative, an
 13. **Dogfooding isn't optional, it's the development strategy** — use the tool to build the tool; let real pain points drive the roadmap
 14. **Track attribution, not just agreement** — who originated an idea matters as much as whether the team agreed on it
 15. **Prompt architecture is a first-class design concern** — same model, same task, different prompt structure produces measurably different outcomes
+16. **Activate existing capabilities, don't teach new ones** — small conventions that align with model training data (like @mentions) produce outsized behavioral changes
+17. **Separate observation from participation** — the Agile Coach reads conversations but doesn't argue; different roles need different relationships to the conversation

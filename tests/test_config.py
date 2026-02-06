@@ -3,40 +3,55 @@ from pathlib import Path
 
 import pytest
 
-from gotg.config import load_model_config, load_agents, load_iteration, read_dotenv, ensure_dotenv_key
+from gotg.config import (
+    load_model_config, load_agents, load_iteration,
+    read_dotenv, ensure_dotenv_key,
+    get_iteration_dir, get_current_iteration, save_model_config,
+)
+
+
+def _write_team_json(team_dir, model=None, agents=None):
+    """Helper to write team.json with given model/agents."""
+    default_agents = [
+        {"name": "agent-1", "system_prompt": "You are an engineer."},
+        {"name": "agent-2", "system_prompt": "You are an engineer."},
+    ]
+    (team_dir / "team.json").write_text(json.dumps({
+        "model": model or {
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5-coder:7b",
+        },
+        "agents": default_agents if agents is None else agents,
+    }, indent=2))
+
+
+def _write_iteration_json(team_dir, iterations=None, current="iter-1"):
+    """Helper to write list-format iteration.json."""
+    (team_dir / "iteration.json").write_text(json.dumps({
+        "iterations": iterations or [
+            {
+                "id": "iter-1",
+                "title": "Test Task",
+                "description": "Design a todo app",
+                "status": "in-progress",
+                "max_turns": 10,
+            }
+        ],
+        "current": current,
+    }, indent=2))
 
 
 @pytest.fixture
 def team_dir(tmp_path):
-    """Create a minimal .team/ directory structure."""
+    """Create a minimal .team/ directory structure (new format)."""
     team = tmp_path / ".team"
     team.mkdir()
-    agents_dir = team / "agents"
-    agents_dir.mkdir()
-
-    (team / "model.json").write_text(json.dumps({
-        "provider": "ollama",
-        "base_url": "http://localhost:11434",
-        "model": "qwen2.5-coder:7b",
-    }))
-
-    (agents_dir / "agent-1.json").write_text(json.dumps({
-        "name": "agent-1",
-        "system_prompt": "You are an engineer.",
-    }))
-
-    (agents_dir / "agent-2.json").write_text(json.dumps({
-        "name": "agent-2",
-        "system_prompt": "You are an engineer.",
-    }))
-
-    (team / "iteration.json").write_text(json.dumps({
-        "id": "iter-1",
-        "description": "Design a todo app",
-        "status": "in-progress",
-        "max_turns": 10,
-    }))
-
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
     return team
 
 
@@ -47,17 +62,11 @@ def test_load_model_config(team_dir):
     assert config["model"] == "qwen2.5-coder:7b"
 
 
-def test_load_agents_returns_sorted(team_dir):
+def test_load_agents_returns_list(team_dir):
     agents = load_agents(team_dir)
     assert len(agents) == 2
     assert agents[0]["name"] == "agent-1"
     assert agents[1]["name"] == "agent-2"
-
-
-def test_load_agents_ignores_non_json(team_dir):
-    (team_dir / "agents" / "notes.txt").write_text("not an agent")
-    agents = load_agents(team_dir)
-    assert len(agents) == 2
 
 
 def test_load_iteration(team_dir):
@@ -80,7 +89,7 @@ def test_load_model_config_missing_file(tmp_path):
 def test_load_model_config_invalid_json(tmp_path):
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text("{invalid json")
+    (team / "team.json").write_text("{invalid json")
     with pytest.raises(json.JSONDecodeError):
         load_model_config(team)
 
@@ -93,10 +102,10 @@ def test_load_iteration_invalid_json(tmp_path):
         load_iteration(team)
 
 
-def test_load_agents_empty_directory(tmp_path):
+def test_load_agents_empty_list(tmp_path):
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "agents").mkdir()
+    _write_team_json(team, agents=[])
     agents = load_agents(team)
     assert agents == []
 
@@ -105,13 +114,9 @@ def test_load_agents_preserves_all_fields(tmp_path):
     """Extra fields in agent config should be preserved (forward compat)."""
     team = tmp_path / ".team"
     team.mkdir()
-    agents_dir = team / "agents"
-    agents_dir.mkdir()
-    (agents_dir / "agent-1.json").write_text(json.dumps({
-        "name": "agent-1",
-        "system_prompt": "hi",
-        "custom_field": "some value",
-    }))
+    _write_team_json(team, agents=[
+        {"name": "agent-1", "system_prompt": "hi", "custom_field": "some value"},
+    ])
     agents = load_agents(team)
     assert agents[0]["custom_field"] == "some value"
 
@@ -120,12 +125,12 @@ def test_load_model_config_preserves_extra_fields(tmp_path):
     """api_key and other future fields should be preserved."""
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "openai",
         "base_url": "https://api.openai.com",
         "model": "gpt-4o",
         "api_key": "sk-test",
-    }))
+    })
     config = load_model_config(team)
     assert config["api_key"] == "sk-test"
 
@@ -135,12 +140,12 @@ def test_load_model_config_resolves_env_var_api_key(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-123")
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "model": "claude-sonnet-4-5-20250929",
         "api_key": "$ANTHROPIC_API_KEY",
-    }))
+    })
     config = load_model_config(team)
     assert config["api_key"] == "sk-ant-secret-123"
 
@@ -150,12 +155,12 @@ def test_load_model_config_env_var_missing_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("NONEXISTENT_KEY_VAR", raising=False)
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "model": "m",
         "api_key": "$NONEXISTENT_KEY_VAR",
-    }))
+    })
     with pytest.raises(SystemExit):
         load_model_config(team)
 
@@ -164,14 +169,68 @@ def test_load_model_config_literal_api_key_not_resolved(tmp_path):
     """api_key without $ prefix should be used as-is."""
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "openai",
         "base_url": "https://api.openai.com",
         "model": "m",
         "api_key": "sk-literal-key",
-    }))
+    })
     config = load_model_config(team)
     assert config["api_key"] == "sk-literal-key"
+
+
+# --- get_iteration_dir ---
+
+def test_get_iteration_dir(team_dir):
+    path = get_iteration_dir(team_dir, "iter-1")
+    assert path == team_dir / "iterations" / "iter-1"
+
+
+def test_get_iteration_dir_custom_id(team_dir):
+    path = get_iteration_dir(team_dir, "iter-2-auth")
+    assert path == team_dir / "iterations" / "iter-2-auth"
+
+
+# --- get_current_iteration ---
+
+def test_get_current_iteration_returns_tuple(team_dir):
+    iteration, iter_dir = get_current_iteration(team_dir)
+    assert iteration["id"] == "iter-1"
+    assert iteration["description"] == "Design a todo app"
+    assert iter_dir == team_dir / "iterations" / "iter-1"
+
+
+def test_get_current_iteration_missing_id_raises(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, current="nonexistent")
+    with pytest.raises(SystemExit):
+        get_current_iteration(team)
+
+
+# --- save_model_config ---
+
+def test_save_model_config_updates_model(team_dir):
+    save_model_config(team_dir, {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-4-5-20250929",
+    })
+    config = load_model_config(team_dir)
+    assert config["provider"] == "anthropic"
+
+
+def test_save_model_config_preserves_agents(team_dir):
+    """Writing model config should not clobber agents."""
+    save_model_config(team_dir, {
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "m",
+    })
+    agents = load_agents(team_dir)
+    assert len(agents) == 2
+    assert agents[0]["name"] == "agent-1"
 
 
 # --- read_dotenv ---
@@ -260,12 +319,12 @@ def test_load_model_config_resolves_from_dotenv(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "model": "m",
         "api_key": "$ANTHROPIC_API_KEY",
-    }))
+    })
     # Write .env in project root (parent of .team/)
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-from-dotenv\n")
     config = load_model_config(team)
@@ -277,12 +336,12 @@ def test_load_model_config_dotenv_takes_priority_over_env(tmp_path, monkeypatch)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-environ")
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "model": "m",
         "api_key": "$ANTHROPIC_API_KEY",
-    }))
+    })
     (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-from-dotenv\n")
     config = load_model_config(team)
     assert config["api_key"] == "sk-from-dotenv"
@@ -293,12 +352,12 @@ def test_load_model_config_falls_back_to_environ(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-environ")
     team = tmp_path / ".team"
     team.mkdir()
-    (team / "model.json").write_text(json.dumps({
+    _write_team_json(team, model={
         "provider": "anthropic",
         "base_url": "https://api.anthropic.com",
         "model": "m",
         "api_key": "$ANTHROPIC_API_KEY",
-    }))
+    })
     # .env exists but has a different key
     (tmp_path / ".env").write_text("OTHER_KEY=something\n")
     config = load_model_config(team)

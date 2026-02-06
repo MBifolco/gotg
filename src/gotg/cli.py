@@ -4,7 +4,11 @@ import sys
 from pathlib import Path
 
 from gotg.agent import build_prompt
-from gotg.config import load_agents, load_iteration, load_model_config, ensure_dotenv_key, read_dotenv
+from gotg.config import (
+    load_agents, load_model_config,
+    ensure_dotenv_key, read_dotenv,
+    get_current_iteration, save_model_config,
+)
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
 from gotg.scaffold import init_project
@@ -18,14 +22,14 @@ def find_team_dir(cwd: Path) -> Path | None:
 
 
 def run_conversation(
-    team_dir: Path,
+    iter_dir: Path,
     agents: list[dict],
     iteration: dict,
     model_config: dict,
     max_turns_override: int | None = None,
 ) -> None:
-    log_path = team_dir / "conversation.jsonl"
-    debug_path = team_dir / "debug.jsonl"
+    log_path = iter_dir / "conversation.jsonl"
+    debug_path = iter_dir / "debug.jsonl"
     history = read_log(log_path)
     max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
 
@@ -89,7 +93,7 @@ def cmd_run(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration = load_iteration(team_dir)
+    iteration, iter_dir = get_current_iteration(team_dir)
     if not iteration.get("description"):
         print("Error: iteration description is empty. Edit .team/iteration.json first.", file=sys.stderr)
         raise SystemExit(1)
@@ -101,10 +105,10 @@ def cmd_run(args):
     agents = load_agents(team_dir)
 
     if len(agents) < 2:
-        print("Error: need at least 2 agent configs in .team/agents/.", file=sys.stderr)
+        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    run_conversation(team_dir, agents, iteration, model_config, max_turns_override=args.max_turns)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns)
 
 
 PROVIDER_PRESETS = {
@@ -137,8 +141,6 @@ def cmd_model(args):
 
     import json
 
-    model_path = team_dir / "model.json"
-
     if args.provider:
         preset = PROVIDER_PRESETS.get(args.provider)
         if not preset:
@@ -149,7 +151,7 @@ def cmd_model(args):
         if args.model_name:
             config["model"] = args.model_name
 
-        model_path.write_text(json.dumps(config, indent=2) + "\n")
+        save_model_config(team_dir, config)
         print(f"Model config updated: {config['provider']} / {config['model']}")
 
         env_key = config.get("api_key", "")
@@ -166,7 +168,8 @@ def cmd_model(args):
                 print(f"Edit .env and add your key: {env_var}=your-key-here")
     else:
         # No args — show current config
-        config = json.loads(model_path.read_text())
+        team_config = json.loads((team_dir / "team.json").read_text())
+        config = team_config["model"]
         print(f"Provider: {config.get('provider', 'unknown')}")
         print(f"Model:    {config.get('model', 'unknown')}")
         print(f"Base URL: {config.get('base_url', 'unknown')}")
@@ -190,7 +193,7 @@ def cmd_continue(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration = load_iteration(team_dir)
+    iteration, iter_dir = get_current_iteration(team_dir)
     if not iteration.get("description"):
         print("Error: iteration description is empty.", file=sys.stderr)
         raise SystemExit(1)
@@ -202,10 +205,10 @@ def cmd_continue(args):
     agents = load_agents(team_dir)
 
     if len(agents) < 2:
-        print("Error: need at least 2 agent configs in .team/agents/.", file=sys.stderr)
+        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    log_path = team_dir / "conversation.jsonl"
+    log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
 
     # Count current agent turns (not human messages)
@@ -228,7 +231,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(team_dir, agents, iteration, model_config, max_turns_override=target_total)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total)
 
 
 def cmd_show(args):
@@ -238,7 +241,8 @@ def cmd_show(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    log_path = team_dir / "conversation.jsonl"
+    iteration, iter_dir = get_current_iteration(team_dir)
+    log_path = iter_dir / "conversation.jsonl"
     messages = read_log(log_path)
 
     if not messages:

@@ -28,39 +28,43 @@ def init_project(path: Path) -> None:
         raise SystemExit(1)
 
     team_dir.mkdir(parents=True)
-    agents_dir = team_dir / "agents"
-    agents_dir.mkdir()
 
-    # Model config
-    (team_dir / "model.json").write_text(json.dumps({
-        "provider": "ollama",
-        "base_url": "http://localhost:11434",
-        "model": "qwen2.5-coder:7b",
+    # team.json: model config + agents
+    (team_dir / "team.json").write_text(json.dumps({
+        "model": {
+            "provider": "ollama",
+            "base_url": "http://localhost:11434",
+            "model": "qwen2.5-coder:7b",
+        },
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
     }, indent=2) + "\n")
 
-    # Agent configs
-    for i in (1, 2):
-        (agents_dir / f"agent-{i}.json").write_text(json.dumps({
-            "name": f"agent-{i}",
-            "role": "Software Engineer",
-        }, indent=2) + "\n")
-
-    # Iteration config
+    # iteration.json: list format with current pointer
+    iter_id = "iter-1"
     (team_dir / "iteration.json").write_text(json.dumps({
-        "id": "iter-1",
-        "description": "",
-        "status": "pending",
-        "max_turns": 10,
+        "iterations": [
+            {
+                "id": iter_id,
+                "title": "",
+                "description": "",
+                "status": "pending",
+                "max_turns": 10,
+            }
+        ],
+        "current": iter_id,
     }, indent=2) + "\n")
 
-    # Empty conversation log
-    (team_dir / "conversation.jsonl").touch()
+    # Iteration directory with empty conversation log
+    iter_dir = team_dir / "iterations" / iter_id
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
 
     print(f"Initialized .team/ in {path.resolve()}")
-    print("  .team/model.json")
-    print("  .team/agents/agent-1.json")
-    print("  .team/agents/agent-2.json")
+    print("  .team/team.json")
     print("  .team/iteration.json")
-    print("  .team/conversation.jsonl")
+    print(f"  .team/iterations/{iter_id}/conversation.jsonl")
     print()
     print("Next: edit .team/iteration.json to set your task description and status to 'in-progress'.")
