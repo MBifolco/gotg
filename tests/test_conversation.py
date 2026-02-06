@@ -139,3 +139,12 @@ def test_render_message_multiline_content():
     rendered = render_message(msg)
     assert "line 1" in rendered
     assert "line 3" in rendered
+
+
+def test_render_message_human_gets_green_color():
+    """Human messages should render with green color."""
+    msg = {"from": "human", "iteration": "iter-1", "content": "PM feedback"}
+    rendered = render_message(msg)
+    assert "[human]" in rendered
+    assert "PM feedback" in rendered
+    assert "\033[32m" in rendered  # green

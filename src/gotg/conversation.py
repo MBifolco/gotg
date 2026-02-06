@@ -4,6 +4,7 @@ from pathlib import Path
 AGENT_COLORS = {
     "agent-1": "\033[36m",  # cyan
     "agent-2": "\033[33m",  # yellow
+    "human": "\033[32m",    # green
 }
 RESET = "\033[0m"
 BOLD = "\033[1m"

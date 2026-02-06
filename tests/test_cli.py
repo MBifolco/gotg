@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation
-from gotg.conversation import read_log
+from gotg.cli import main, find_team_dir, run_conversation, cmd_continue
+from gotg.conversation import read_log, append_message
 
 
 # --- find_team_dir ---
@@ -367,3 +367,148 @@ def test_cli_run_fails_with_fewer_than_two_agents(tmp_path):
         with patch("gotg.cli.find_team_dir", return_value=team):
             with pytest.raises(SystemExit):
                 main()
+
+
+# --- max-turns override ---
+
+def test_run_conversation_with_max_turns_override(tmp_path):
+    """max_turns_override should take precedence over iteration config."""
+    team = _make_team_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 10,  # iteration says 10
+    }
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(team, _default_agents(), iteration, _default_model_config(),
+                         max_turns_override=3)  # but we override to 3
+    messages = read_log(team / "conversation.jsonl")
+    assert len(messages) == 3
+
+
+# --- human turn skipping ---
+
+def test_run_conversation_skips_human_in_turn_count(tmp_path):
+    """Human messages in log should not affect agent turn count or rotation."""
+    team = _make_team_dir(tmp_path)
+    log_path = team / "conversation.jsonl"
+    # Pre-populate: agent-1, human, agent-2 (2 agent turns, 1 human)
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "human", "iteration": "iter-1", "content": "feedback"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "response"})
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,  # 4 agent turns total
+    }
+
+    call_log = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        call_log.append("call")
+        return "new response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(team, _default_agents(), iteration, _default_model_config())
+
+    # Should have made 2 more calls (turns 2,3 → total 4 agent turns)
+    assert len(call_log) == 2
+    messages = read_log(log_path)
+    agent_messages = [m for m in messages if m["from"] != "human"]
+    assert len(agent_messages) == 4
+    # Agent rotation should continue correctly: agent-1 was turn 0, agent-2 turn 1
+    # So turn 2 → agent-1, turn 3 → agent-2
+    assert agent_messages[2]["from"] == "agent-1"
+    assert agent_messages[3]["from"] == "agent-2"
+
+
+# --- continue command ---
+
+def _make_full_team_dir(tmp_path):
+    """Helper to create a .team/ dir with all config files for continue tests."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents_dir = team / "agents"
+    agents_dir.mkdir()
+    (team / "conversation.jsonl").touch()
+    (team / "iteration.json").write_text(json.dumps({
+        "id": "iter-1", "description": "A task", "status": "in-progress", "max_turns": 10,
+    }))
+    (team / "model.json").write_text(json.dumps({
+        "provider": "ollama", "base_url": "http://localhost:11434", "model": "m",
+    }))
+    for i in (1, 2):
+        (agents_dir / f"agent-{i}.json").write_text(json.dumps({
+            "name": f"agent-{i}", "system_prompt": "hi",
+        }))
+    return team
+
+
+def test_continue_appends_human_message(tmp_path):
+    """continue -m should append human message to log."""
+    team = _make_full_team_dir(tmp_path)
+    log_path = team / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "response"})
+
+    # --max-turns 0 so no agent turns, just the human message
+    with patch("sys.argv", ["gotg", "continue", "-m", "consider auth", "--max-turns", "0"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    messages = read_log(log_path)
+    assert len(messages) == 3  # 2 original + 1 human
+    assert messages[2]["from"] == "human"
+    assert messages[2]["content"] == "consider auth"
+    assert messages[2]["iteration"] == "iter-1"
+
+
+def test_continue_without_message_just_continues(tmp_path):
+    """continue without -m should just run more agent turns."""
+    team = _make_full_team_dir(tmp_path)
+    log_path = team / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "response"})
+
+    with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="more talk"):
+                main()
+
+    messages = read_log(log_path)
+    assert len(messages) == 4  # 2 original + 2 new agent turns
+    assert messages[2]["from"] == "agent-1"
+    assert messages[3]["from"] == "agent-2"
+
+
+def test_continue_max_turns_means_new_turns(tmp_path):
+    """--max-turns on continue means N MORE turns, not total."""
+    team = _make_full_team_dir(tmp_path)
+    log_path = team / "conversation.jsonl"
+    # Pre-populate 6 agent turns
+    for i in range(6):
+        agent = f"agent-{(i % 2) + 1}"
+        append_message(log_path, {"from": agent, "iteration": "iter-1", "content": f"msg {i}"})
+
+    # Already at 6 (iteration max=10), but continue --max-turns 2 should add 2 more
+    with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="extended"):
+                main()
+
+    messages = read_log(log_path)
+    assert len(messages) == 8  # 6 original + 2 new
+
+
+def test_continue_human_message_not_counted_in_turns(tmp_path):
+    """Human message via -m should not count toward --max-turns limit."""
+    team = _make_full_team_dir(tmp_path)
+
+    with patch("sys.argv", ["gotg", "continue", "-m", "my input", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="response"):
+                main()
+
+    messages = read_log(team / "conversation.jsonl")
+    human_msgs = [m for m in messages if m["from"] == "human"]
+    agent_msgs = [m for m in messages if m["from"] != "human"]
+    assert len(human_msgs) == 1
+    assert len(agent_msgs) == 2  # exactly 2 agent turns

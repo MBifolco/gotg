@@ -22,12 +22,23 @@ def run_conversation(
     agents: list[dict],
     iteration: dict,
     model_config: dict,
+    max_turns_override: int | None = None,
 ) -> None:
     log_path = team_dir / "conversation.jsonl"
     debug_path = team_dir / "debug.jsonl"
     history = read_log(log_path)
-    max_turns = iteration["max_turns"]
-    turn = len(history)
+    max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
+
+    # Build participant list from agents + detect human in history
+    all_participants = [
+        {"name": a["name"], "role": a.get("role", "Software Engineer")}
+        for a in agents
+    ]
+    if any(msg["from"] == "human" for msg in history):
+        all_participants.append({"name": "human", "role": "Team Member"})
+
+    # Count only agent turns (human messages don't affect rotation)
+    turn = sum(1 for msg in history if msg["from"] != "human")
 
     print(f"Starting conversation: {iteration['id']}")
     print(f"Task: {iteration['description']}")
@@ -36,7 +47,7 @@ def run_conversation(
 
     while turn < max_turns:
         agent = agents[turn % len(agents)]
-        prompt = build_prompt(agent, iteration, history)
+        prompt = build_prompt(agent, iteration, history, all_participants)
         append_debug(debug_path, {
             "turn": turn,
             "agent": agent["name"],
@@ -93,7 +104,7 @@ def cmd_run(args):
         print("Error: need at least 2 agent configs in .team/agents/.", file=sys.stderr)
         raise SystemExit(1)
 
-    run_conversation(team_dir, agents, iteration, model_config)
+    run_conversation(team_dir, agents, iteration, model_config, max_turns_override=args.max_turns)
 
 
 PROVIDER_PRESETS = {
@@ -172,6 +183,54 @@ def cmd_model(args):
             print("API key:  none")
 
 
+def cmd_continue(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration = load_iteration(team_dir)
+    if not iteration.get("description"):
+        print("Error: iteration description is empty.", file=sys.stderr)
+        raise SystemExit(1)
+    if iteration.get("status") != "in-progress":
+        print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    model_config = load_model_config(team_dir)
+    agents = load_agents(team_dir)
+
+    if len(agents) < 2:
+        print("Error: need at least 2 agent configs in .team/agents/.", file=sys.stderr)
+        raise SystemExit(1)
+
+    log_path = team_dir / "conversation.jsonl"
+    history = read_log(log_path)
+
+    # Count current agent turns (not human messages)
+    current_agent_turns = sum(1 for msg in history if msg["from"] != "human")
+
+    # Inject human message if provided
+    if args.message:
+        msg = {
+            "from": "human",
+            "iteration": iteration["id"],
+            "content": args.message,
+        }
+        append_message(log_path, msg)
+        print(render_message(msg))
+        print()
+
+    # Calculate target total agent turns
+    if args.max_turns is not None:
+        target_total = current_agent_turns + args.max_turns
+    else:
+        target_total = iteration["max_turns"]
+
+    run_conversation(team_dir, agents, iteration, model_config, max_turns_override=target_total)
+
+
 def cmd_show(args):
     cwd = Path.cwd()
     team_dir = find_team_dir(cwd)
@@ -198,8 +257,14 @@ def main():
     init_parser = subparsers.add_parser("init", help="Initialize a new .team/ directory")
     init_parser.add_argument("path", nargs="?", default=".", help="Project path (default: current directory)")
 
-    subparsers.add_parser("run", help="Run the agent conversation")
+    run_parser = subparsers.add_parser("run", help="Run the agent conversation")
+    run_parser.add_argument("--max-turns", type=int, help="Override max_turns from iteration.json")
+
     subparsers.add_parser("show", help="Show the conversation log")
+
+    continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
+    continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
+    continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
 
     model_parser = subparsers.add_parser("model", help="View or change model config")
     model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
@@ -213,6 +278,8 @@ def main():
         cmd_run(args)
     elif args.command == "show":
         cmd_show(args)
+    elif args.command == "continue":
+        cmd_continue(args)
     elif args.command == "model":
         cmd_model(args)
     else:

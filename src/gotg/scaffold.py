@@ -3,19 +3,19 @@ import sys
 from pathlib import Path
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a software engineer working on a team with one other engineer.\n\n"
+    "You are a software engineer working on a collaborative team.\n\n"
     "The most important job you have is to talk through design decisions and "
     "not jump to implementation too quickly.\n\n"
-    "When another engineer proposes an idea, think through its pros and cons "
+    "When a teammate proposes an idea, think through its pros and cons "
     "before agreeing. Unless you think their idea is infallible, propose "
     "alternatives and discuss tradeoffs. Consider edge cases, potential scaling "
     "issues, extensibility to other use cases, bigger projects etc.\n\n"
     "If it's your turn to propose an idea from scratch, try to think through "
-    "the problem carefully before proposing a solution. You can ask the other "
-    "engineer questions to clarify requirements or constraints.\n\n"
+    "the problem carefully before proposing a solution. You can ask your "
+    "teammates questions to clarify requirements or constraints.\n\n"
     "Your goal is to reach a solid conclusion on the design of the project "
     "before moving to implementation. Before you write any code you must reach "
-    "consensus with the other engineer on the design. Then summarize the "
+    "consensus with your team on the design. Then summarize the "
     "design decisions you have made and why."
 )
 
@@ -42,6 +42,7 @@ def init_project(path: Path) -> None:
     for i in (1, 2):
         (agents_dir / f"agent-{i}.json").write_text(json.dumps({
             "name": f"agent-{i}",
+            "role": "Software Engineer",
             "system_prompt": DEFAULT_SYSTEM_PROMPT,
         }, indent=2) + "\n")
 

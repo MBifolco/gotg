@@ -750,51 +750,223 @@ This feeds the flywheel: users use the tool normally → their behavior generate
 
 The `.team/` directory already contains the raw data for most of these signals. It just needs to be instrumented.
 
+## 22. End-to-End Teams: From Conversation to Code
+
+A question about Claude Code's architecture — it's built in TypeScript with React/Ink for the terminal UI — led to a broader discussion about tool access. Claude Code gives its model tools (file read/write, bash, grep, git) and the model decides which to call. The "intelligence" is the model; the tools are just hands.
+
+### The Tool Access Question
+
+Currently, gotg agents converse but don't act. The Sonnet run produced a design document through pure conversation — no agent needed to read a file or run a command. But the vision is teams that build real products end-to-end: design, implement, test, deploy. That requires tool access.
+
+The key insight: **agents that can't converse well will use tools poorly.** The 7B agents would have spent their tool access writing setup.py nobody asked for. The Sonnet agents would have produced focused code implementing their debated design. Conversation quality *gates* tool quality. This means the sequencing matters:
+
+1. **Get team dynamics right** — conversation, multi-agent, human participation
+2. **Give them hands** — file I/O, bash execution
+3. **Give them full autonomy** — git, testing, deployment, CI/CD
+
+Each layer only works if the one below it is solid.
+
+### Human vs. Agent Tool Access
+
+The end-to-end vision also clarifies the different roles humans and agents play. In a real engineering org, senior engineers don't write most of the code — they review it, set direction, unblock decisions, maintain standards. The human in a gotg team isn't writing code either. They're doing what the human PM has been doing throughout this project: setting vision, making scope calls, evaluating output, redirecting when things drift. The human contribution is *judgment*, not labor.
+
+This means tool access for humans is different from tool access for agents. Agents need file write and bash. Humans need the ability to read conversations, approve designs, review diffs, and say "ship it" or "try again." Two different interfaces to the same team.
+
+## 23. Dogfooding as Survival: Building gotg with gotg
+
+The most significant reframing in the project's history emerged from a simple constraint: **the human has no other humans available.** Building gotg requires multiple parallel workstreams — agent protocol, evaluation framework, API integration, CLI experience — and there's one person to do it all.
+
+This changes the priority stack dramatically. Multi-team isn't a "long-term vision" item — it's a near-term necessity. The human needs:
+
+- A team working on the agent protocol (the N>2 prompt format problem)
+- A team working on the evaluation framework
+- A team working on Anthropic API integration and provider abstraction
+- A team on the CLI experience
+
+The human is PM across all of them. They check in on each team's conversation, make scope calls, resolve cross-team dependencies when the protocol team's changes affect how the evaluation team reads conversation logs.
+
+### First Customer, First User, First Test
+
+gotg's first real user isn't some hypothetical developer — it's the builder, right now, building gotg. Every pain point hit is a real product requirement, not a speculated one. If the tool can't support one human running three parallel AI teams to build itself, it doesn't work.
+
+This resolves a common solo-founder trap: doing everything sequentially means years of work. Running parallel AI teams means weeks — *if* the teams are good. The entire value proposition of gotg is that a single human can run multiple AI teams simultaneously. The builder is the proof of concept and the first customer.
+
+### The Bootstrap Problem
+
+There's a beautiful irony: you need the multi-team feature to build the multi-team feature. The very first version has to be just good enough — manual, hacky, multiple `.team/` directories, checking each one by hand — to bootstrap the better version. The tool doesn't need to be polished to be used. It needs to be functional enough to help build itself.
+
+This is the ultimate expression of the dogfooding flywheel:
+
+1. Use gotg (however rough) to run AI teams building gotg
+2. Hit real pain points → these become the next iteration's priorities
+3. AI teams discuss and design solutions to those pain points
+4. Human PM approves designs, teams implement
+5. gotg improves → run more/better teams → hit subtler pain points → repeat
+
+The product roadmap isn't speculated — it's *experienced*. And the development strategy isn't "build, then find users" — it's "be the user while building."
+
+### Vision Reframing (Again)
+
+This marks another evolution in how the project sees itself:
+
+- **v1:** "An AI coding tool with a team-first approach" (a better Cursor)
+- **v2:** "An AI engineering org in a box" (a new category)
+- **v3:** "A tool that a solo human uses to run an AI engineering org that builds the tool" (a self-constructing category)
+
+The competitive moat isn't the protocol or the CLI or the evaluation framework. It's that the tool is being built by the process it enables. Every improvement to gotg makes the process of improving gotg faster. No competitor can replicate that flywheel without building the same thing.
+
+## 24. Implementation: Human Participation & N>2 Support
+
+Claude Code produced a clean implementation plan for the riskiest hypothesis: adding a third participant (the human PM) and solving the N>2 prompt format problem.
+
+### What Was Built
+
+**`gotg continue` command:** Stop the conversation, inject a human message, resume. The human appends a message to the JSONL log and the agents continue from where they left off. Usage: `gotg continue -m "Good ideas but account for auth later" --max-turns 2`.
+
+**Name-prefix format for multi-party:** Non-self messages get prefixed with the speaker's name: `[agent-1]: content`. The agent's own messages stay clean as `assistant` role. This was Approach 1 from the earlier discussion — simplest thing that works, every provider supports it.
+
+**Dynamic teammate list:** The system prompt now tells each agent who their teammates are and their roles: "Your teammates: agent-2 (Software Engineer), human (Team Member)."
+
+**`--max-turns` override:** Both `run` and `continue` accept a turn limit override, and human messages don't count toward the agent turn budget.
+
+**Role field on agent configs:** Each agent config now has a `role` field (defaulting to "Software Engineer"). The human is labeled "Team Member" — intentionally generic to start, avoiding premature authority hierarchy.
+
+### Design Decisions
+
+The implementation chose name-prefixing (Approach 1) over the narrator approach (Approach 4) or consolidated context (Approach 3). This was the right first move — minimal change, backward compatible, isolates the multi-party variable from prompt architecture changes. The fancier approaches remain available for later experimentation.
+
+The `continue` command is a Unix-philosophy solution: composable, scriptable, no complex mid-conversation UI. It maps naturally to the PM workflow — read the conversation, decide whether to intervene, inject a message, let the team continue.
+
+## 25. Three-Party Run: Human PM with Two Sonnet Agents
+
+The first three-party conversation was run: two Sonnet agents discussing the CLI todo list design, with the human injecting a PM message after the first two agent turns.
+
+### What Happened
+
+**Turns 1-2 (agents only):** The agents followed the same strong pattern as the pure Sonnet run — agent-1 asked clarifying questions, agent-2 engaged substantively, proposed SQLite over JSON with a real argument about corruption risks, pushed back on ID reuse.
+
+**Turn 3 (human injection):** The PM injected: "I think these are good ideas but we should account for the need to do authentication later even though we won't implement it now. Also, I'd like you to consider using TOML for config instead of JSON - it's more human-friendly."
+
+**Turn 4 (agent-1 responds to PM):** Agent-1 handled the PM input well. It asked clarifying questions about the auth scope ("What authentication model are you envisioning?"), pushed back appropriately ("Are we over-engineering? What's the likelihood of actually adding auth?"), and made an insightful distinction the PM hadn't — separating config files from data storage, agreeing TOML is better for config but arguing SQLite should remain for data.
+
+**Turn 5 (agent-2 synthesizes):** This was the most interesting turn. Agent-2 didn't just respond to the PM or to agent-1 — it synthesized across all three participants. It took the PM's auth concern, filtered it through agent-1's "are we over-engineering?" challenge, and produced a scoped recommendation: "Let's just use proper user directories and call it 'authentication-ready.' We're not adding any code complexity, just being thoughtful about file locations." Then explicitly: "We should NOT add unused `user_id` columns or authentication stubs. YAGNI applies here."
+
+This is a three-party interaction working correctly. The PM set direction, engineer 1 stress-tested it, engineer 2 synthesized a pragmatic middle ground. The PM's input carried weight (they didn't ignore it) but wasn't treated as gospel (they scoped it down).
+
+### Attribution Confusion: A Subtle Behavioral Issue
+
+Agent-2's turn 5 contained a telling phrase: "You raise a valid concern about over-engineering. Let me be more specific about what I'm thinking."
+
+The "you" addressed agent-1 correctly. But "what I'm thinking" implies agent-2 had prior thoughts on authentication. It didn't — the *human* raised auth, and agent-2 had never mentioned it. This is ownership language applied to someone else's idea.
+
+Tracing the conversation flow from agent-2's perspective: it saw agent-1's initial thoughts (user), its own response about SQLite/IDs (assistant), the human's message about auth/TOML (user), and agent-1's analysis of the human's points (user). Agent-2 never discussed auth before turn 5, yet spoke as if clarifying its own prior position.
+
+This is likely genuine attribution confusion rather than loose language. The model partially conflated the human's input with its own internal state. The name prefix helps track *who* to address but may not fully prevent the model from absorbing another participant's position as its own.
+
+This was flagged as an important signal for automated evaluation. Attribution accuracy — does each agent correctly track who originated which idea? — may need to be its own dimension in the evaluation rubric. This matters because if agents lose track of idea ownership in larger teams, consensus tracking breaks down. The team might think they've agreed on something when actually one agent is claiming credit for a position that was never theirs.
+
+### Debug Log Analysis: Root Causes
+
+Examining the actual prompts sent to the model (debug.jsonl) revealed several contributing factors:
+
+**1. System prompt inconsistency.** The system prompt still opened with "You are a software engineer working on a team with **one other engineer**" but the teammate list at the bottom showed two teammates. The scaffold update was supposed to change this to "a collaborative team" but the old text persisted. The model received contradictory information about team size.
+
+**2. Vague human role.** The teammate list showed "human (Team Member)" — carrying zero authority signal. The model had no reason to treat the human's input differently from a peer's. This was intentional for this run (isolate the multi-party variable before introducing authority hierarchy), but it likely contributed to the model absorbing the human's ideas as its own rather than attributing them to a PM.
+
+**3. Consecutive `user` messages — the key finding.** From agent-2's perspective, the message sequence was:
+
+```
+system:    You are a software engineer...
+user:      [agent-1]: Great! Let's work through this...     ← turn 1
+assistant: Great approach! Let's work through these...       ← agent-2's own turn 2
+user:      [human]: I think these are good ideas...          ← human injection
+user:      [agent-1]: Great points! Let me address...        ← turn 4
+```
+
+Two consecutive `user` messages. The human's message and agent-1's response were both `role: user`, delivered as separate messages back-to-back. This blurs the boundary between speakers. The model may partially merge consecutive same-role messages, especially since agent-1's response was *about* the human's message. The topic (auth) flowed across both `user` messages, making it easy for the model to internalize the topic as general conversation context rather than tracking its provenance.
+
+**4. Self-prefix leak.** Agent-2 prefixed its own response with `[agent-2]:`, mimicking the name-prefix format it saw on incoming messages. The model treated the formatting convention as conversational style rather than system-level metadata. Minor but worth fixing.
+
+### Decision: Consolidated User Messages
+
+The fix for the consecutive `user` message problem: **aggregate all messages since the agent's last turn into a single `user` message with clear speaker labels inside.**
+
+Instead of:
+```
+user: [human]: I think these are good ideas...
+user: [agent-1]: Great points! Let me address...
+```
+
+The agent sees:
+```
+user: [human]: I think these are good ideas but we should account for...
+
+[agent-1]: Great points! Let me address both of these...
+```
+
+One `user` message containing everything that happened since the agent's last turn, with speaker identity preserved through labels inside the content. This solves several problems simultaneously:
+
+- No consecutive same-role messages regardless of participant count
+- Clear delineation between speakers within a single context block
+- Naturally handles any number of participants (four people speak between turns? One `user` message with four labeled sections)
+- May reduce the self-prefix leak (the format pattern only appears inside `user` content, not on message boundaries)
+- Steps toward the narrator approach without committing to it — same structure, just not yet summarizing or contextualizing
+
+This is the next experiment to run. If consolidated messages fix the attribution confusion, the name-prefix approach may be sufficient for multi-party. If not, the narrator approach (which explicitly frames "the PM raised the auth concern") becomes the next thing to try.
+
 ---
 
-## Current State (Post-Sonnet-Run)
+## Current State (Post-Three-Party-Run)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
-- Three commands: `init`, `run`, `show`
+- Four commands: `init`, `run`, `continue`, `show`
+- `continue` command with human message injection (`-m`)
+- `--max-turns` override on both `run` and `continue`
+- Name-prefix format for N>2 participants
+- Dynamic teammate list in system prompts with role labels
 - JSONL conversation log with `from`, `iteration`, `content`
-- Alternating turn-based agent conversation with max turn ceiling
-- OpenAI-compatible model interface (local Ollama or any provider)
-- Anthropic API provider support
-- 30+ tests passing
+- Human messages excluded from agent turn count
+- OpenAI-compatible and Anthropic API provider support
+- Debug logging (prompts sent to models)
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Two conversation logs: 7B run (sycophantic) and Sonnet run (genuine deliberation)
+- Three conversation logs: 7B run, Sonnet two-party run, Sonnet three-party run with human PM
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
 - 7B models can't sustain disagreement; Sonnet can argue, persuade, and change positions
 - The quality ceiling is the model; the quality floor is the protocol
-- Bigger local models didn't close the gap — the jump to frontier models was necessary
-- Design documents produced through debate are substantively better than monologues
+- Three-party conversations work — agents synthesize across participants, not just respond to the last speaker
+- Attribution confusion is a real issue: agents may absorb other participants' ideas as their own
+- Consecutive `user` messages in the prompt likely contribute to attribution confusion
+- The human has no other humans — multi-team is a necessity, not a long-term vision
+- Conversation quality gates tool quality — agents need to converse well before they can act well
 
-### What's Next
-- **Riskiest hypothesis first:** Solve the N>2 prompt format problem and test with human as third participant
-- Develop manual evaluation rubric using 7B-vs-Sonnet comparison as calibration
-- Experiment with prompt approaches to improve local model quality (narrator, constrained seeds, role differentiation)
-- Investigate self-termination detection now that Sonnet shows natural convergence patterns
+### Development Strategy
+- **Use gotg to build gotg.** Run parallel AI teams (however manually) across workstreams
+- **Next experiment:** Consolidated `user` messages (aggregate all messages since agent's last turn into one message with speaker labels)
+- Fix system prompt inconsistency ("one other engineer" → "a collaborative team")
+- Develop manual evaluation rubric using conversation comparison as calibration
+- Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
-- Message types / typed messages (add when observed as needed)
-- Message threading / `ref` field (add when observed as needed)
+- Human role authority differentiation (test consolidated messages first, then add role hierarchy)
+- Narrator layer implementation (try consolidated messages first — same structure, less complexity)
 - Agent personality differentiation (after observing identical agent behavior)
 - Self-termination detection (after observing what "consensus" looks like in practice)
-- Narrator layer implementation (after experimenting with prompt format approaches)
 - Automated evaluation (after manual rubric is trusted)
 - Implicit signal instrumentation (after evaluation framework is validated)
 - Model capability threshold testing (after evaluation rubric exists)
-- Orchestrator / scrum master agent (Iteration 4)
-- Decentralized communication / pub-sub (future, when multi-participant)
-- Human dashboard / attention management (Iteration 3)
+- Attribution accuracy as evaluation dimension (after more multi-party data)
+- Agent tool access: file I/O, bash (after team dynamics are solid)
+- Agent full autonomy: git, testing, deployment (after basic tool access works)
+- Message types / typed messages (add when observed as needed)
+- Message threading / `ref` field (add when observed as needed)
 - `id` and `ts` fields on messages (add when needed)
 - Error handling on model calls (add when it becomes annoying)
 - Context window management / message windowing (add when turns increase)
 - Fine-tuned role models (long-term vision)
-- Multi-team orchestration (long-term vision)
+- Human dashboard / attention management (long-term vision)
 
 ### Key Principles Established
 1. **Conversation over implementation**
@@ -809,3 +981,5 @@ The `.team/` directory already contains the raw data for most of these signals. 
 10. **The log is the source of truth; the prompt is a view of it** — conversation format and prompt format are independent concerns
 11. **The quality ceiling is the model; the quality floor is the protocol** — both matter, neither is sufficient alone
 12. **Observe behavior, don't ask for ratings** — implicit signals from what users do after a conversation are more reliable than explicit feedback
+13. **Dogfooding isn't optional, it's the development strategy** — use the tool to build the tool; let real pain points drive the roadmap
+14. **Track attribution, not just agreement** — who originated an idea matters as much as whether the team agreed on it

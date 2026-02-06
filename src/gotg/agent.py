@@ -2,11 +2,25 @@ def build_prompt(
     agent_config: dict,
     iteration: dict,
     history: list[dict],
+    all_participants: list[dict] | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
 
-    system_content = f"{agent_config['system_prompt']}\n\nCurrent task: {task}"
+    # Build system message
+    system_parts = [agent_config["system_prompt"]]
+
+    if all_participants:
+        teammates = [p for p in all_participants if p["name"] != agent_name]
+        if teammates:
+            teammate_list = ", ".join(
+                f"{p['name']} ({p['role']})" for p in teammates
+            )
+            system_parts.append(f"Your teammates: {teammate_list}")
+
+    system_parts.append(f"Current task: {task}")
+    system_content = "\n\n".join(system_parts)
+
     messages = [{"role": "system", "content": system_content}]
 
     if not history:
@@ -16,7 +30,10 @@ def build_prompt(
         })
     else:
         for msg in history:
-            role = "assistant" if msg["from"] == agent_name else "user"
-            messages.append({"role": role, "content": msg["content"]})
+            if msg["from"] == agent_name:
+                messages.append({"role": "assistant", "content": msg["content"]})
+            else:
+                prefixed = f"[{msg['from']}]: {msg['content']}"
+                messages.append({"role": "user", "content": prefixed})
 
     return messages
