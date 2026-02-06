@@ -1,8 +1,6 @@
-# GOTG - Guardians of the Groupchat
+# GOTG
 
-An AI SCRUM team tool that runs structured conversations between AI agents. Instead of treating AI as a tool inside your editor, GOTG treats AI agents as **team members** with roles, autonomy, and communication responsibilities.
-
-The core idea: the conversation is the product, not the code. Code is a byproduct of good team process.
+GOTG is an AI product and engineering department. We've taken real-world experience working with high-performing engineering teams and distilled it into a development tool built for AI-assisted software development. Instead of treating AI as a tool inside your editor, GOTG treats AI agents as team members with roles, autonomy, and communication responsibilities. This isn't multiple agents working on isolated tasks — it's AI agents and humans collaborating like real engineering teams, following a structure that ensures higher quality and safer products.
 
 ## Quick Start
 

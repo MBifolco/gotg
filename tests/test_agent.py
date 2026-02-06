@@ -535,3 +535,69 @@ def test_build_coach_prompt_no_groomed_summary_when_none():
     ], groomed_summary=None)
     system = messages[0]["content"]
     assert "GROOMED SCOPE SUMMARY" not in system
+
+
+# --- tasks_summary injection ---
+
+def test_build_prompt_injects_tasks_summary():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
+    }
+    summary = "### Layer 0\n- **add-auth** [pending]"
+    messages = build_prompt(agent, iteration, [], tasks_summary=summary)
+    system = messages[0]["content"]
+    assert "TASK LIST" in system
+    assert "add-auth" in system
+
+
+def test_build_prompt_no_tasks_summary_when_none():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [], tasks_summary=None)
+    system = messages[0]["content"]
+    assert "TASK LIST" not in system
+
+
+def test_build_prompt_tasks_summary_after_groomed_summary():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
+    }
+    groomed = "## Summary\nBuild auth."
+    tasks = "### Layer 0\n- **add-auth** [pending]"
+    messages = build_prompt(agent, iteration, [], groomed_summary=groomed, tasks_summary=tasks)
+    system = messages[0]["content"]
+    assert system.index("GROOMED SCOPE SUMMARY") < system.index("TASK LIST")
+
+
+def test_build_coach_prompt_injects_tasks_summary():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
+    }
+    tasks = "### Layer 0\n- **add-auth** [pending]"
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ], tasks_summary=tasks)
+    system = messages[0]["content"]
+    assert "TASK LIST" in system
+    assert "add-auth" in system
+
+
+def test_build_prompt_includes_pre_code_review_phase_prompt():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE: PRE-CODE-REVIEW" in system

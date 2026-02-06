@@ -205,7 +205,10 @@ def test_anthropic_extracts_system_from_messages(mock_post):
         provider="anthropic",
     )
     body = mock_post.call_args[1]["json"]
-    assert body["system"] == "Be helpful."
+    # System is now a list with cache_control
+    assert isinstance(body["system"], list)
+    assert body["system"][0]["text"] == "Be helpful."
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
     # System message should NOT be in the messages array
     assert all(m["role"] != "system" for m in body["messages"])
     assert len(body["messages"]) == 3
@@ -352,3 +355,130 @@ def test_anthropic_returns_dict_with_tool_calls(mock_post):
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["name"] == "my_tool"
     assert result["tool_calls"][0]["input"] == {"arg": "value"}
+
+
+# --- Anthropic prompt caching ---
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_system_cache_control(mock_post):
+    """System prompt should be a list with cache_control marker."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "hi"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert isinstance(body["system"], list)
+    assert len(body["system"]) == 1
+    assert body["system"][0]["type"] == "text"
+    assert body["system"][0]["text"] == "Be helpful."
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_second_to_last_message_cache_control(mock_post):
+    """Second-to-last message should get cache_control marker."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    # Second-to-last (assistant "reply") should have cache_control
+    second_to_last = body["messages"][1]
+    assert isinstance(second_to_last["content"], list)
+    assert second_to_last["content"][0]["cache_control"] == {"type": "ephemeral"}
+    # Last message should remain a plain string
+    last = body["messages"][2]
+    assert isinstance(last["content"], str)
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_last_message_no_cache_control(mock_post):
+    """Last message should NOT get cache_control."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "latest"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    last = body["messages"][-1]
+    assert isinstance(last["content"], str)
+    assert last["content"] == "latest"
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_single_message_no_message_cache(mock_post):
+    """With only one message, no message should get cache_control."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "user", "content": "hi"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert len(body["messages"]) == 1
+    assert isinstance(body["messages"][0]["content"], str)
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_no_system_no_system_field(mock_post):
+    """Without system message, body should not have 'system' field."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "user", "content": "hi"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert "system" not in body
+
+
+@patch("gotg.model.httpx.post")
+def test_openai_no_cache_control(mock_post):
+    """OpenAI path should never add cache_control markers."""
+    mock_post.return_value = _mock_response("ok")
+    chat_completion(
+        base_url="http://localhost:11434",
+        model="m",
+        messages=[
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ],
+    )
+    body = mock_post.call_args[1]["json"]
+    # System should be in messages, not extracted
+    assert "system" not in body or body.get("system") is None
+    # No message should have cache_control
+    for msg in body["messages"]:
+        assert isinstance(msg["content"], str)

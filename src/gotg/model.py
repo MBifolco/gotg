@@ -1,4 +1,5 @@
 import json
+import sys
 
 import httpx
 
@@ -90,13 +91,41 @@ def _anthropic_completion(
         "messages": chat_messages,
     }
     if system:
-        body["system"] = system
+        body["system"] = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
     if tools:
         body["tools"] = tools
+
+    # Prompt caching: mark second-to-last message for cache breakpoint
+    if len(chat_messages) >= 2:
+        msg = chat_messages[-2]
+        if isinstance(msg["content"], str):
+            msg["content"] = [
+                {
+                    "type": "text",
+                    "text": msg["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     resp.raise_for_status()
     data = resp.json()
+
+    # Log cache usage if present (for observability)
+    usage = data.get("usage", {})
+    cache_created = usage.get("cache_creation_input_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+    if cache_created or cache_read:
+        print(
+            f"  [cache] created={cache_created} read={cache_read}",
+            file=sys.stderr,
+        )
 
     if tools:
         text_parts = []

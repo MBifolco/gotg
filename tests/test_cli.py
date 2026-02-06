@@ -677,30 +677,47 @@ def test_advance_without_coach_skips_summary(tmp_path):
     assert data["iterations"][0]["phase"] == "planning"
 
 
-def test_advance_non_grooming_skips_coach(tmp_path):
-    """Advancing planning→pre-code-review should not invoke coach."""
+def test_advance_planning_with_coach_produces_tasks_json(tmp_path):
+    """Advancing planning→pre-code-review with coach should produce tasks.json."""
     team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
     _add_coach_to_team_json(team)
 
-    call_log = []
-    def mock_completion(*args, **kwargs):
-        call_log.append("called")
-        return "should not happen"
+    # Add some planning conversation
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Task 1: build auth."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Task 2: build API."})
+
+    tasks_response = json.dumps([
+        {"id": "build-auth", "description": "Build auth", "done_criteria": "Auth works",
+         "depends_on": [], "assigned_to": None, "status": "pending"},
+        {"id": "build-api", "description": "Build API", "done_criteria": "API works",
+         "depends_on": ["build-auth"], "assigned_to": None, "status": "pending"},
+    ])
 
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+            with patch("gotg.cli.chat_completion", return_value=tasks_response):
                 main()
 
-    # Coach should NOT have been called
-    assert len(call_log) == 0
-
-    # No groomed.md
-    assert not (iter_dir / "groomed.md").exists()
+    # tasks.json should exist with valid JSON
+    tasks_path = iter_dir / "tasks.json"
+    assert tasks_path.exists()
+    tasks_data = json.loads(tasks_path.read_text())
+    assert len(tasks_data) == 2
+    assert tasks_data[0]["id"] == "build-auth"
+    assert tasks_data[1]["depends_on"] == ["build-auth"]
+    # Layers should be computed and stored
+    assert tasks_data[0]["layer"] == 0
+    assert tasks_data[1]["layer"] == 1
 
     # Phase should advance
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "pre-code-review"
+
+    # System message should mention tasks.json
+    messages = read_log(log_path)
+    system_msgs = [m for m in messages if m["from"] == "system"]
+    assert any("tasks.json" in m["content"] for m in system_msgs)
 
 
 # --- coach-as-facilitator (in-conversation) ---
@@ -1019,3 +1036,115 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     coach_system_msg = captured_prompts[2][0]["content"]
     assert "Build auth." in coach_system_msg
     assert "GROOMED SCOPE SUMMARY" in coach_system_msg
+
+
+# --- tasks.json advance + injection ---
+
+def test_advance_planning_without_coach_no_tasks_json(tmp_path):
+    """No coach in team.json → advance planning still works, no tasks.json."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    # No coach added
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    assert not (iter_dir / "tasks.json").exists()
+    assert not (iter_dir / "tasks_raw.txt").exists()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "pre-code-review"
+
+
+def test_advance_planning_invalid_json_saves_raw(tmp_path):
+    """Invalid JSON from coach should save tasks_raw.txt, still advance."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="Not valid JSON at all {{{"):
+                main()
+
+    # tasks_raw.txt should exist, tasks.json should not
+    assert not (iter_dir / "tasks.json").exists()
+    assert (iter_dir / "tasks_raw.txt").exists()
+    assert "Not valid JSON" in (iter_dir / "tasks_raw.txt").read_text()
+
+    # Phase should still advance
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "pre-code-review"
+
+
+def test_advance_planning_strips_code_fences(tmp_path):
+    """Coach output wrapped in markdown fences should still parse."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+
+    fenced = '```json\n[{"id": "t1", "description": "Do it", "done_criteria": "Done", "depends_on": [], "assigned_to": null, "status": "pending"}]\n```'
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value=fenced):
+                main()
+
+    tasks_path = iter_dir / "tasks.json"
+    assert tasks_path.exists()
+    tasks_data = json.loads(tasks_path.read_text())
+    assert len(tasks_data) == 1
+    assert tasks_data[0]["id"] == "t1"
+    assert tasks_data[0]["layer"] == 0
+
+
+def test_run_conversation_reads_tasks_json(tmp_path):
+    """run_conversation should read tasks.json and inject TASK LIST into prompts."""
+    iter_dir = _make_iter_dir(tmp_path)
+    tasks = [
+        {"id": "auth", "depends_on": [], "description": "Build auth",
+         "done_criteria": "Auth works", "assigned_to": None, "status": "pending"},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "TASK LIST" in system_msg
+    assert "auth" in system_msg
+
+
+def test_run_conversation_no_tasks_json_no_task_list(tmp_path):
+    """Without tasks.json, no TASK LIST should appear in prompts."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "pre-code-review", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "TASK LIST" not in system_msg

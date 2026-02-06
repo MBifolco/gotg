@@ -1,6 +1,6 @@
 # AI SCRUM Team — Conversation History & Project Development Log
 
-**Date:** February 5, 2026  
+**Date:** February 5-6, 2026  
 **Participants:** Human (PM/Architect), Claude (Design Partner)
 
 ---
@@ -1477,7 +1477,156 @@ Principle #20: **Drive to closure, but check for completeness** — convergence 
 
 ---
 
-## Current State (Post-Coach-Facilitation)
+## 33. Iteration 5: Artifact Injection and Planning Mode
+
+Mechanical wiring — no behavioral hypotheses. Connects the groomed scope artifact to the planning phase so agents can reference agreed requirements while decomposing work into tasks.
+
+### Changes
+
+1. **`scaffold.py`** — Added "planning" to `PHASE_PROMPTS` with DO/DO NOT structure. The planning prompt references "the groomed summary below" and constrains agents to break scope into concrete, assignable tasks with dependencies and done criteria. Agents must NOT revisit grooming decisions, discuss implementation details beyond task boundaries, or add features not in the groomed scope.
+
+2. **`agent.py`** — Added `groomed_summary` parameter to `build_prompt()` and `build_coach_prompt()`. When provided, injects the summary after the phase prompt: `"GROOMED SCOPE SUMMARY:\n\n" + groomed_summary`. Injection is unconditional on phase — the caller decides when to pass the summary. Prompt builders don't know about phases.
+
+3. **`cli.py`** — Reads `groomed.md` once at the start of `run_conversation()`, passes through to prompt builders. During grooming the file doesn't exist → `None` → no injection. Read-once-at-top pattern avoids repeated file I/O and ensures all agents see the same snapshot.
+
+4. **Tests** — 11 new tests (scaffold, agent, cli). Total: 177 tests.
+
+### Manual Test Results
+
+3 agents, planning phase, with groomed.md from the facilitated pomodoro timer run injected. Agents converged well:
+
+- Agreed on 17 tasks in 5 dependency layers
+- All three aligned on Layer 1.5 for parallelization
+- Config-first approach (no stubbing) — unanimous
+- Complexity estimates from all three agents
+- One agent proposed a task definition template with acceptance criteria
+- Coach suggested divide-and-conquer for remaining task definitions
+
+### False Positive Discovery
+
+The coach said "I'll mark [PHASE_COMPLETE]" as **future intent** — not an actual signal. But substring detection caught it anyway and triggered early exit. The conversation had 30 agent turns (21 grooming + 9 planning) and 10 coach messages total. It was nearly done anyway, but this reveals a fundamental limitation of in-band signaling: any string parsing approach is whack-a-mole. The next false positive will just be a slightly different phrasing.
+
+This directly motivated Iteration 5b.
+
+---
+
+## 34. Iteration 5b: Coach Tool Call for Phase Completion
+
+### The Problem
+
+String detection for `[PHASE_COMPLETE]` produces false positives. The coach can reference the token in natural language — "we're not yet at [PHASE_COMPLETE]", "once we resolve X I'll signal [PHASE_COMPLETE]", "I'll mark [PHASE_COMPLETE]" — and trigger early exit. Any regex or line-position fix is whack-a-mole because the fundamental issue is in-band signaling: the signal occupies the same channel as the content.
+
+### The Solution
+
+Out-of-band signaling via tool call. A `tool_use` block is structurally distinct from text. The coach can discuss phase completion freely in text without triggering anything. It only signals when it actually invokes the tool.
+
+This also sets up infrastructure needed later — engineering agents will eventually get tools (file I/O, bash). The coach getting a tool first is a low-risk way to validate tool handling. One tool, one agent, clear success criteria.
+
+### Implementation
+
+**Tool definition (`scaffold.py`):**
+```python
+COACH_TOOLS = [{
+    "name": "signal_phase_complete",
+    "description": "Signal that all scope items are resolved or explicitly deferred and the team is ready to advance to the next phase. Only call this after the team confirms nothing is missing.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string", "description": "Brief summary of what was resolved in this phase"}
+        },
+        "required": ["summary"]
+    }
+}]
+```
+
+The tool description bakes Principle #20 ("check for completeness") into the tool level: "Only call this after the team confirms nothing is missing."
+
+**Return type strategy (`model.py`):**
+```python
+def chat_completion(..., tools=None) -> str | dict:
+```
+- `tools=None` (default): returns `str` — zero changes for agent calls
+- `tools=[...]`: returns `{"content": "text...", "tool_calls": [{"name": "...", "input": {...}}]}`
+
+Only the coach call site in `run_conversation()` needs to handle the dict return. Agent call sites continue getting strings. Minimal blast radius.
+
+**API format translation:** Anthropic tools go directly in the request body. OpenAI wraps tools in `{"type": "function", "function": {...}}` and returns arguments as JSON strings that need parsing. The translation lives in `model.py`.
+
+**Coach prompt update:** Removed `[PHASE_COMPLETE]` from `COACH_FACILITATION_PROMPT`. Replaced item 5 with: "If the team confirms nothing is missing and all scope items are resolved or explicitly deferred, use the signal_phase_complete tool to recommend advancing to the next phase."
+
+### Test Results
+
+Full two-phase run: grooming → advance → planning. 41 total lines: 30 agent turns (21 grooming + 9 planning), 10 coach turns, 1 system transition message.
+
+**Tool call worked perfectly.** Zero instances of `[PHASE_COMPLETE]` string anywhere in the conversation. The false positive problem is structurally eliminated.
+
+**Grooming phase completion:** Coach asked "Is there anything we haven't discussed?" three separate times (turns 16, 20, 24) before signaling with the tool at turn 28. All three agents confirmed nothing missing. Coach's final turn included a 2,470-character summary alongside the tool call — text and signal coexist cleanly.
+
+**Planning phase completion:** Coach had already provided a complete summary at turn 37, so the final tool call at turn 41 was signal-only with empty text content. Both modes work — text+tool and tool-only.
+
+**No false positive risk:** The word "tool" appears 10 times in the conversation, always referring to the pomodoro tool itself (the project being designed). Coach never mentioned the signaling mechanism in text because it doesn't need to — it just calls it when ready.
+
+**Metrics:** ~38K tokens of output across 41 turns. Coach averaged 1,947 chars per message versus agents at 4,448 — coach stayed concise at ~44% of agent message length.
+
+**Planning output quality:** Agents produced a surprisingly detailed task breakdown — 12 tasks with full done criteria, dependency mapping, parallelization strategy, and time estimates. They defined done criteria for every single task including manual test scenarios and deliverables. The groomed scope flowed into planning naturally with the injected summary giving agents clear guardrails.
+
+### What This Validates
+
+The tool call approach is clean, correct, and backward-compatible. It establishes the infrastructure pattern for when engineering agents get their own tools later. The conceptual model matches the implementation model: coach "calls a tool," system pauses and prompts PM, PM's decision drives next action — analogous to Claude Code's `ask_human` tool.
+
+Principle #21: **Use out-of-band signaling for control flow** — in-band signals (special strings in text) are fragile because models reference them conversationally. Tool calls are structurally unambiguous and let agents discuss the signal freely without triggering it.
+
+---
+
+## 35. Iteration 6 Design: `tasks.json` and Layer-Based Execution
+
+### The Problem
+
+The planning phase produces a task breakdown with dependencies, but currently only as unstructured text in the conversation log. To execute those tasks — whether in pre-code review or eventual coding phases — the system needs structured task data with clear execution ordering.
+
+### The Design
+
+The planning conversation naturally organizes tasks into dependency layers. In the pomodoro timer run, agents identified: foundation tasks (T1, T4) → core functionality (T2, T3, T5, T6) → commands (T8-T11) → robustness (T7, T12). This layering is the execution order.
+
+**`tasks.json` structure:**
+
+Each task has:
+- **`id`** — unique identifier (e.g., "T1", "T4a")
+- **`description`** — what the task is
+- **`done_criteria`** — specific, testable outcomes
+- **`depends_on`** — list of task IDs that must complete first
+- **`assigned_to`** — agent name, filled in by the PM (null until assigned)
+- **`layer`** — computed from dependencies, determines execution wave
+- **`status`** — `pending` | `in_progress` | `complete`
+
+**Layer computation:** Tasks with no dependencies are layer 0. Tasks whose dependencies are all layer 0 are layer 1. Tasks whose dependencies are all layer 0 or 1 are layer 2. And so on. Within a layer, tasks can run in parallel across agents. Across layers, execution is sequential.
+
+**Execution model:** PM looks at the current layer's tasks, assigns one per agent. When all tasks in a layer complete, the system advances to the next layer. PM assigns again. This continues until all layers are done.
+
+In the pomodoro example:
+- **Layer 0:** T1 (basic timer), T4 (state persistence), T11 (help/version) — three agents each grab one
+- **Layer 1:** T2 (break sessions), T3 (cycle tracking), T7 (history logging) — start when layer 0 finishes
+- **Layer 2:** T5, T6, T8, T9, T10, T12 — start when layer 1 finishes
+
+Agents who finish layer 0 tasks early wait for the layer to complete before starting layer 1 work.
+
+**Pre-code review follows the same ordering.** Reviewing T5 (resume/void) without T1 (basic timer) and T4 (state persistence) having been reviewed first doesn't make sense. The review builds on the same dependency graph.
+
+### Generation
+
+The coach produces `tasks.json` as an artifact when `gotg advance` moves from planning to the next phase — same pattern as `groomed.md` generation from grooming. The coach reads the planning conversation and extracts the structured task data.
+
+### PM's Role
+
+The PM assigns agents to tasks within each layer. The system could auto-assign within layers and pause at layer boundaries for PM confirmation, or the PM could manually assign each wave. Start with manual assignment — auto-assignment requires agent personality differentiation (deferred).
+
+### Human Approval for Agent Tool Use (Deferred)
+
+When engineering agents eventually get tools (bash, file I/O), the PM will need to approve or reject individual tool calls before execution. The pattern mirrors Claude Code's permission modes: auto-accept, manually approve each call, or approve dangerous tools while auto-accepting safe ones. Not needed now — the coach's tool is a signal, not an action. No approval needed, just a recommendation the PM accepts or ignores. Pull forward when agent tool access becomes real.
+
+---
+
+## Current State (Post-Tool-Call-Validation)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
@@ -1491,12 +1640,16 @@ Principle #20: **Drive to closure, but check for completeness** — convergence 
 - Coach agent in `team.json` — separate from engineering agents
 - `gotg advance` from grooming invokes coach to produce `groomed.md`
 - Coach summarization prompt (`COACH_GROOMING_PROMPT`)
-- **New:** Coach-as-facilitator — injects after every full agent rotation during conversations
-- **New:** Coach facilitation prompt (`COACH_FACILITATION_PROMPT`) — tracks agreements, lists unresolved items, drives toward decisions
-- **New:** `[PHASE_COMPLETE]` early exit signal — coach signals when all items resolved, system stops conversation and prompts PM
-- **New:** Coach awareness paragraph in engineering agent prompts — tells agents to let coach handle process management
-- **New:** Coach messages don't count toward `--max-turns`
-- **New:** Coach rendered in orange (256-color) in terminal output
+- Coach-as-facilitator — injects after every full agent rotation during conversations
+- Coach facilitation prompt (`COACH_FACILITATION_PROMPT`) — tracks agreements, lists unresolved items, drives toward decisions
+- Coach awareness paragraph in engineering agent prompts — tells agents to let coach handle process management
+- Coach messages don't count toward `--max-turns`
+- Coach rendered in orange (256-color) in terminal output
+- **New:** `signal_phase_complete` tool call — coach signals phase completion via out-of-band tool call instead of in-band string detection. Eliminates false positives from coach referencing the signal in natural language. Tool definition includes Principle #20 check: "Only call this after the team confirms nothing is missing."
+- **New:** `chat_completion()` returns `str | dict` depending on whether tools are provided. Agent calls get strings (zero change). Coach calls get dict with `content` and `tool_calls`. Minimal blast radius — only one call site handles the dict.
+- **New:** Planning mode prompt with DO/DO NOT structure — constrains agents to task decomposition with dependencies and done criteria
+- **New:** `groomed.md` injection into planning phase prompts — read once at conversation start, passed to all agents so they reference agreed scope
+- **New:** API format translation for tools — Anthropic tools go directly in request body, OpenAI wraps in `{"type": "function", "function": {...}}` with JSON string arguments
 - Phase-aware system prompts — grooming mode constrains agents to scope/requirements
 - Base prompt explains phase system to all agents regardless of current phase
 - Phase sequence: grooming → planning → pre-code-review
@@ -1509,7 +1662,7 @@ Principle #20: **Drive to closure, but check for completeness** — convergence 
 - Debug logging (prompts sent to models, per-iteration directory)
 - Conversation history tracking with commit-id filenames
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Nine conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent, phase system test), CLI bookmark manager grooming (3-agent, 15-turn, unfacilitated with coach artifact), CLI pomodoro timer grooming (3-agent, coach-facilitated, `[PHASE_COMPLETE]` early exit)
+- Conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent, phase system test), CLI bookmark manager grooming (3-agent, 15-turn, unfacilitated with coach artifact), CLI pomodoro timer grooming (3-agent, coach-facilitated, early exit), CLI pomodoro timer full run (3-agent, tool-call-based completion, grooming + planning phases, 41 turns)
 
 ### Implementation Plan Progress (Resequenced)
 - ✅ **Iteration 1: Directory restructure** — complete
@@ -1517,11 +1670,12 @@ Principle #20: **Drive to closure, but check for completeness** — convergence 
 - ✅ **Iteration 3: Grooming mode** — complete, core hypothesis validated
 - ✅ **Iteration 4: Agile Coach artifact generation** — complete, second hypothesis validated
 - ✅ **Iteration 4b: Coach-as-facilitator** — complete, third hypothesis validated
-- ⬜ **Iteration 5: Artifact injection and planning mode** — next (high confidence, low risk)
-- ⬜ **Iteration 6: `tasks.json` and human assignment**
+- ✅ **Iteration 5: Artifact injection and planning mode** — complete (mechanical wiring)
+- ✅ **Iteration 5b: Coach tool call for phase completion** — complete, false positive eliminated, tool infrastructure established
+- ⬜ **Iteration 6: `tasks.json` generation and layer-based execution** — next
 - ⬜ **Iteration 7: Pre-code review phase**
 
-All three behavioral hypotheses have been validated (grooming constraints work, coach summarizes faithfully, coach facilitates effectively). Iterations 5-7 are mechanical wiring — connecting pieces that individually work.
+All three behavioral hypotheses validated. Iteration 5/5b established tool infrastructure. Iteration 6 is mechanical wiring — coach produces structured task data from planning conversations, system computes execution layers from dependencies, PM assigns agents per layer.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -1539,29 +1693,37 @@ All three behavioral hypotheses have been validated (grooming constraints work, 
 - The coach faithfully summarizes conversations it didn't participate in
 - **With a facilitator, engineering agents produce zero process-management overhead** — no vote tables, no consensus tallying, no decision categorization
 - **Facilitated conversations reach full consensus where unfacilitated ones leave open questions**
-- **The coach accurately tracks convergence and signals `[PHASE_COMPLETE]` at the right time**
+- **The coach accurately tracks convergence and signals completion at the right time**
 - **Agents respond to coach facilitation naturally** — reference coach's framing, use decision labels, direct process questions to coach
 - **Coach facilitation produces better concession quality** — agents concede with genuine reasoning rather than feeling outvoted
 - **The coach actively maintains the grooming/implementation boundary** — redirects drift in ways the mode prompt alone cannot
-- **Convergence-driving behavior may suppress late-emerging requirements** — need explicit "what did we miss?" before `[PHASE_COMPLETE]`
+- **Convergence-driving behavior may suppress late-emerging requirements** — need explicit "what did we miss?" before completion
+- **In-band signaling (special strings in text) produces false positives** — models reference signal tokens conversationally, triggering early exit
+- **Tool calls eliminate false positives structurally** — `tool_use` blocks are unambiguous, coach can discuss completion freely in text
+- **Planning output flows naturally from groomed scope injection** — agents reference agreed requirements and stay within scope boundaries
+- **Agents naturally organize tasks into dependency layers** — foundation → core → commands → robustness pattern emerges without explicit prompting
 - 12-15 turns is a good grooming range for medium-complexity features with 3 agents
 - Prompt architecture is a first-class design concern, not an implementation detail
 - Small prompt conventions can activate large behavioral changes when they align with model training data
 
 ### Development Strategy
-- **Iteration 5 next** — artifact injection and planning mode (mechanical wiring, high confidence)
+- **Iteration 6 next** — `tasks.json` generation with dependency layers and PM assignment (mechanical wiring, high confidence)
+- Coach produces `tasks.json` from planning conversation via `gotg advance` — same pattern as `groomed.md`
+- System computes layers from dependency graph: layer 0 = no deps, layer 1 = all deps in layer 0, etc.
+- PM assigns agents to tasks within each layer; execution proceeds wave by wave
+- Pre-code review follows same layer ordering — can't review T5 without T1 and T4 reviewed first
+- Agent verbosity in planning phase is a known optimization lever — agents respond to prompt tuning, not worth working on now
 - All behavioral hypotheses validated — remaining work is connecting proven pieces
-- Coach facilitation prompt needs one addition: "what did we miss?" before `[PHASE_COMPLETE]`
-- Coach could benefit from permission to stay silent if early injection is unhelpful (not yet observed as a problem)
+- Tool infrastructure established — pattern ready for engineering agent tools later
 - Use gotg to build gotg
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
 - Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
-- Coach "what did we miss?" prompt addition (next prompt refinement)
-- Coach option to stay silent on early turns (if premature injection becomes a problem)
-- Planning mode prompt (Iteration 5)
-- `tasks.json` generation and human assignment (Iteration 6)
+- Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
+- Agent verbosity optimization in planning phase (known lever, not worth pulling yet)
+- Human approval gate for agent tool calls (needed when engineering agents get bash/file tools, not for coach signal tool)
+- `tasks.json` generation and layer-based execution (Iteration 6 — next)
 - Pre-code review phase and prompt (Iteration 7)
 - TUI chat interface (Textual — after phase system is validated with CLI)
 - OpenCode integration for agent tool access (needs deeper evaluation)
@@ -1573,6 +1735,7 @@ All three behavioral hypotheses have been validated (grooming constraints work, 
 - Agent tool access: file I/O, bash (after phase system is solid)
 - Agent full autonomy: git, testing, deployment (after basic tool access works)
 - Context window management / message compression (coach artifacts and facilitation summaries provide natural compression)
+- Prompt caching for API cost optimization (can reduce input costs by 90% on cache hits — growing conversation history is the main cost driver)
 - Fine-tuned role models (long-term vision)
 - Human dashboard / attention management (long-term vision)
 
@@ -1597,3 +1760,4 @@ All three behavioral hypotheses have been validated (grooming constraints work, 
 18. **Constraints improve output quality** — agents given explicit boundaries about what NOT to discuss produce more thorough and thoughtful work within those boundaries
 19. **Let the coach manage process, let the engineers manage substance** — process overhead (vote tallying, consensus tracking, decision categorization) belongs to a dedicated facilitator, not to the engineers whose attention should be on the problem
 20. **Drive to closure, but check for completeness** — convergence tracking is powerful but can suppress late-emerging requirements; an explicit "what did we miss?" prompt before completion ensures scope quality without sacrificing efficiency
+21. **Use out-of-band signaling for control flow** — in-band signals (special strings in text) are fragile because models reference them conversationally; tool calls are structurally unambiguous and let agents discuss the signal freely without triggering it

@@ -158,3 +158,33 @@ def test_planning_prompt_mentions_redirect():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["planning"].lower()
     assert "grooming" in prompt
+
+
+def test_coach_planning_prompt_exists():
+    from gotg.scaffold import COACH_PLANNING_PROMPT
+    assert isinstance(COACH_PLANNING_PROMPT, str)
+    assert len(COACH_PLANNING_PROMPT) > 0
+    assert "json" in COACH_PLANNING_PROMPT.lower()
+
+
+def test_coach_planning_prompt_mentions_required_fields():
+    from gotg.scaffold import COACH_PLANNING_PROMPT
+    for field in ["id", "description", "done_criteria", "depends_on", "assigned_to", "status"]:
+        assert field in COACH_PLANNING_PROMPT
+
+
+def test_phase_prompts_has_pre_code_review_key():
+    from gotg.scaffold import PHASE_PROMPTS
+    assert "pre-code-review" in PHASE_PROMPTS
+
+
+def test_pre_code_review_prompt_mentions_implementation():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["pre-code-review"].lower()
+    assert "implement" in prompt
+
+
+def test_pre_code_review_prompt_mentions_redirect():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["pre-code-review"].lower()
+    assert "planning" in prompt

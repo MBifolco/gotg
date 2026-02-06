@@ -12,7 +12,7 @@ from gotg.config import (
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
-from gotg.scaffold import init_project, COACH_GROOMING_PROMPT, COACH_TOOLS
+from gotg.scaffold import init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT, COACH_TOOLS
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -39,6 +39,15 @@ def run_conversation(
     groomed_path = iter_dir / "groomed.md"
     groomed_summary = groomed_path.read_text().strip() if groomed_path.exists() else None
 
+    # Load tasks.json artifact if it exists (for pre-code-review/later phases)
+    tasks_path = iter_dir / "tasks.json"
+    tasks_summary = None
+    if tasks_path.exists():
+        import json as _json
+        from gotg.tasks import format_tasks_summary
+        tasks_data = _json.loads(tasks_path.read_text())
+        tasks_summary = format_tasks_summary(tasks_data)
+
     # Build participant list from agents + coach + detect human in history
     all_participants = [
         {"name": a["name"], "role": a.get("role", "Software Engineer")}
@@ -63,7 +72,7 @@ def run_conversation(
 
     while turn < max_turns:
         agent = agents[turn % num_agents]
-        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary)
+        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary)
         append_debug(debug_path, {
             "turn": turn,
             "agent": agent["name"],
@@ -91,7 +100,7 @@ def run_conversation(
 
         # Coach injection: after every full rotation of engineering agents
         if coach and turn % num_agents == 0:
-            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary)
+            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary)
             append_debug(debug_path, {
                 "turn": f"coach-after-{turn}",
                 "agent": coach["name"],
@@ -355,10 +364,60 @@ def cmd_advance(args):
             print(f"Wrote {groomed_path}")
             coach_ran = True
 
+    # Invoke coach on planning → pre-code-review transition
+    tasks_written = False
+    if current_phase == "planning" and next_phase == "pre-code-review":
+        coach = load_coach(team_dir)
+        if coach:
+            import json as _json
+            print("Coach is extracting tasks from the planning conversation...")
+            model_config = load_model_config(team_dir)
+            log_path = iter_dir / "conversation.jsonl"
+            history = read_log(log_path)
+            conversation_text = "\n\n".join(
+                f"[{m['from']}]: {m['content']}" for m in history
+            )
+            coach_messages = [
+                {"role": "system", "content": COACH_PLANNING_PROMPT},
+                {"role": "user", "content": conversation_text},
+            ]
+            tasks_json_text = chat_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=coach_messages,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+            )
+            # Strip markdown code fences if present
+            text = tasks_json_text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+            try:
+                tasks_data = _json.loads(text)
+                # Compute and store layers from dependency graph
+                from gotg.tasks import compute_layers
+                layers = compute_layers(tasks_data)
+                for task in tasks_data:
+                    task["layer"] = layers[task["id"]]
+                tasks_path = iter_dir / "tasks.json"
+                tasks_path.write_text(_json.dumps(tasks_data, indent=2) + "\n")
+                print(f"Wrote {tasks_path}")
+                tasks_written = True
+            except _json.JSONDecodeError as e:
+                print(f"Warning: Coach produced invalid JSON: {e}", file=sys.stderr)
+                print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
+                (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
+            coach_ran = True
+
     save_iteration_phase(team_dir, iteration["id"], next_phase)
 
     log_path = iter_dir / "conversation.jsonl"
-    if coach_ran:
+    if tasks_written:
+        transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Task list written to tasks.json ---"
+    elif coach_ran and current_phase == "grooming":
         transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Scope summary written to groomed.md ---"
     else:
         transition_content = f"--- Phase advanced: {current_phase} → {next_phase} ---"
