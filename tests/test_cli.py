@@ -140,7 +140,7 @@ def test_run_conversation_alternates_agents(tmp_path):
     }
 
     call_count = 0
-    def mock_completion(base_url, model, messages, api_key=None):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
         nonlocal call_count
         call_count += 1
         return f"Response {call_count}"
@@ -188,7 +188,7 @@ def test_run_conversation_resumes_from_existing(tmp_path):
         "model": "test-model",
     }
 
-    def mock_completion(base_url, model, messages, api_key=None):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
         return "new response"
 
     with patch("gotg.cli.chat_completion", side_effect=mock_completion):
@@ -314,7 +314,7 @@ def test_run_conversation_model_error_mid_conversation(tmp_path):
     }
 
     call_count = 0
-    def flaky_completion(*args, **kwargs):
+    def flaky_completion(base_url, model, messages, api_key=None, provider="ollama"):
         nonlocal call_count
         call_count += 1
         if call_count == 3:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gotg.config import load_model_config, load_agents, load_iteration
+from gotg.config import load_model_config, load_agents, load_iteration, read_dotenv, ensure_dotenv_key
 
 
 @pytest.fixture
@@ -128,3 +128,178 @@ def test_load_model_config_preserves_extra_fields(tmp_path):
     }))
     config = load_model_config(team)
     assert config["api_key"] == "sk-test"
+
+
+def test_load_model_config_resolves_env_var_api_key(tmp_path, monkeypatch):
+    """api_key starting with $ should resolve from environment."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret-123")
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-4-5-20250929",
+        "api_key": "$ANTHROPIC_API_KEY",
+    }))
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-ant-secret-123"
+
+
+def test_load_model_config_env_var_missing_raises(tmp_path, monkeypatch):
+    """Missing env var should raise a clear error."""
+    monkeypatch.delenv("NONEXISTENT_KEY_VAR", raising=False)
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "m",
+        "api_key": "$NONEXISTENT_KEY_VAR",
+    }))
+    with pytest.raises(SystemExit):
+        load_model_config(team)
+
+
+def test_load_model_config_literal_api_key_not_resolved(tmp_path):
+    """api_key without $ prefix should be used as-is."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "openai",
+        "base_url": "https://api.openai.com",
+        "model": "m",
+        "api_key": "sk-literal-key",
+    }))
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-literal-key"
+
+
+# --- read_dotenv ---
+
+def test_read_dotenv_basic(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("FOO=bar\nBAZ=qux\n")
+    result = read_dotenv(dotenv)
+    assert result == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_read_dotenv_missing_file(tmp_path):
+    result = read_dotenv(tmp_path / ".env")
+    assert result == {}
+
+
+def test_read_dotenv_ignores_comments_and_blank_lines(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("# comment\n\nFOO=bar\n  # another comment\n")
+    result = read_dotenv(dotenv)
+    assert result == {"FOO": "bar"}
+
+
+def test_read_dotenv_strips_quotes(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text('KEY1="double-quoted"\nKEY2=\'single-quoted\'\n')
+    result = read_dotenv(dotenv)
+    assert result["KEY1"] == "double-quoted"
+    assert result["KEY2"] == "single-quoted"
+
+
+def test_read_dotenv_empty_value(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("MY_KEY=\n")
+    result = read_dotenv(dotenv)
+    assert result == {"MY_KEY": ""}
+
+
+def test_read_dotenv_value_with_equals(tmp_path):
+    """Values containing = should be preserved."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("KEY=abc=def=ghi\n")
+    result = read_dotenv(dotenv)
+    assert result["KEY"] == "abc=def=ghi"
+
+
+# --- ensure_dotenv_key ---
+
+def test_ensure_dotenv_key_creates_file(tmp_path):
+    dotenv = tmp_path / ".env"
+    ensure_dotenv_key(dotenv, "ANTHROPIC_API_KEY")
+    assert dotenv.exists()
+    assert dotenv.read_text() == "ANTHROPIC_API_KEY=\n"
+
+
+def test_ensure_dotenv_key_appends_to_existing(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("EXISTING=value\n")
+    ensure_dotenv_key(dotenv, "NEW_KEY")
+    content = dotenv.read_text()
+    assert "EXISTING=value" in content
+    assert "NEW_KEY=" in content
+
+
+def test_ensure_dotenv_key_does_not_duplicate(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("ANTHROPIC_API_KEY=sk-abc\n")
+    ensure_dotenv_key(dotenv, "ANTHROPIC_API_KEY")
+    content = dotenv.read_text()
+    assert content.count("ANTHROPIC_API_KEY") == 1
+
+
+def test_ensure_dotenv_key_handles_no_trailing_newline(tmp_path):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("EXISTING=value")  # no trailing newline
+    ensure_dotenv_key(dotenv, "NEW_KEY")
+    content = dotenv.read_text()
+    assert "EXISTING=value\n" in content
+    assert "NEW_KEY=\n" in content
+
+
+# --- load_model_config with .env ---
+
+def test_load_model_config_resolves_from_dotenv(tmp_path, monkeypatch):
+    """api_key $VAR should resolve from .env file."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "m",
+        "api_key": "$ANTHROPIC_API_KEY",
+    }))
+    # Write .env in project root (parent of .team/)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-from-dotenv"
+
+
+def test_load_model_config_dotenv_takes_priority_over_env(tmp_path, monkeypatch):
+    """.env file should take priority over os.environ."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-environ")
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "m",
+        "api_key": "$ANTHROPIC_API_KEY",
+    }))
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-from-dotenv"
+
+
+def test_load_model_config_falls_back_to_environ(tmp_path, monkeypatch):
+    """If .env doesn't have the key, fall back to os.environ."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-environ")
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "model.json").write_text(json.dumps({
+        "provider": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "model": "m",
+        "api_key": "$ANTHROPIC_API_KEY",
+    }))
+    # .env exists but has a different key
+    (tmp_path / ".env").write_text("OTHER_KEY=something\n")
+    config = load_model_config(team)
+    assert config["api_key"] == "sk-from-environ"

@@ -144,3 +144,97 @@ def test_chat_completion_base_url_trailing_slash(mock_post):
     chat_completion("http://localhost:11434/", "m", [])
     url = mock_post.call_args[0][0]
     assert "//" not in url.replace("http://", "")
+
+
+# --- Anthropic provider ---
+
+def _mock_anthropic_response(text: str):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": text}]
+    }
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_returns_content(mock_post):
+    mock_post.return_value = _mock_anthropic_response("Hello from Claude")
+    result = chat_completion(
+        base_url="https://api.anthropic.com",
+        model="claude-sonnet-4-5-20250929",
+        messages=[
+            {"role": "system", "content": "You are an engineer."},
+            {"role": "user", "content": "hi"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    assert result == "Hello from Claude"
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_sends_correct_url(mock_post):
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    url = mock_post.call_args[0][0]
+    assert url == "https://api.anthropic.com/v1/messages"
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_extracts_system_from_messages(mock_post):
+    """System message should be extracted to top-level 'system' field."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "system", "content": "Be helpful."},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "bye"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert body["system"] == "Be helpful."
+    # System message should NOT be in the messages array
+    assert all(m["role"] != "system" for m in body["messages"])
+    assert len(body["messages"]) == 3
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_sends_api_key_header(mock_post):
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="sk-ant-test-key",
+        provider="anthropic",
+    )
+    headers = mock_post.call_args[1]["headers"]
+    assert headers["x-api-key"] == "sk-ant-test-key"
+    assert headers["anthropic-version"] == "2023-06-01"
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_sets_max_tokens(mock_post):
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert body["max_tokens"] == 4096

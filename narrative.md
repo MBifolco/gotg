@@ -325,3 +325,177 @@ The design conversation is complete. Implementation is being handed to Claude Co
 5. **Platform is transport, protocol is product**
 6. **"Iteration" not "task"** — language matters, avoid engineering baggage
 7. **Self-termination as a success metric** — agents should know when they're done
+
+---
+
+## 14. Implementation Complete — First Code Review
+
+Claude Code executed the implementation plan and produced a clean, working codebase. The human uploaded all source files and tests to the browser Claude instance for review. The repo was also pushed to GitHub as a public repository: https://github.com/MBifolco/gotg
+
+### Project Structure (As Built)
+
+```
+gotg/
+├── src/gotg/
+│   ├── __init__.py
+│   ├── cli.py          # argparse subcommands: init, run, show
+│   ├── scaffold.py     # gotg init — creates .team/ structure
+│   ├── agent.py        # build_prompt — the role-mapping logic
+│   ├── model.py        # HTTP call to OpenAI-compatible API (~20 lines)
+│   ├── conversation.py # read/append JSONL, terminal rendering
+│   └── config.py       # load .team/*.json files
+├── tests/
+│   ├── test_agent.py
+│   ├── test_cli.py
+│   ├── test_config.py
+│   ├── test_conversation.py
+│   ├── test_model.py
+│   ├── test_scaffold.py
+│   └── test_smoke.py
+├── docs/
+├── narrative.md
+├── pyproject.toml
+└── README.md
+```
+
+Uses `src/` layout per modern Python packaging conventions. Single dependency: `httpx`. CLI entry point: `gotg`.
+
+### Code Review Findings
+
+**What was done well:**
+- Remarkably disciplined code — every file does one thing, total source under 200 lines
+- The role-mapping in `agent.py` is the heart of the system: each agent sees its own messages as `assistant` and the other's as `user`, allowing two LLMs to converse through a standard chat completion API without any multi-agent framework. Elegant and correct.
+- `model.py` is exactly as specified — ~20 lines, raw HTTP, no SDK dependency, swappable via config
+- Resume support falls out naturally from the design — if `conversation.jsonl` has existing messages, the loop picks up where it left off
+- Surprisingly thorough test suite (30+ cases) covering happy paths, edge cases (empty logs, missing files, resume), and validation logic
+- 120s timeout on model calls is smart for local 7B models that can be slow on first token
+
+**Issues flagged (none blocking):**
+- **Dead code in tests:** `monkeypatch_cwd` helper in `test_cli.py` does nothing. Test works anyway because it patches `find_team_dir` directly. Misleading but harmless.
+- **Context window growth:** `build_prompt` sends the entire conversation history every call. Fine for 10 turns. Will hit context limits on 7B models (8K-32K tokens) when `max_turns` increases. Not a problem now — will surface naturally and indicate when to add message windowing.
+- **No error handling on model calls:** If Ollama is down or returns garbage, the run loop crashes with a raw `httpx` traceback. The conversation log is safe (everything prior was flushed), and resume works. But the UX is poor. Worth a `try/except` eventually.
+- **Hardcoded color map:** `AGENT_COLORS` in `conversation.py` only has entries for `agent-1` and `agent-2`. A third agent would get default white. Trivial to fix when N>2 agents are needed.
+
+**Design observation:** The system prompt tells agents to "say so clearly and summarize what was decided" when they reach consensus, but nothing in the run loop detects this. Agents might declare consensus on turn 4, and the loop continues through turn 10 anyway — both agents awkwardly talking past the natural end of the conversation. This is intentional (self-termination is a future iteration goal) but was called out as one of the most obvious things to improve. The conversation logs from real runs will show what "consensus" actually looks like, enabling detection based on real examples rather than guessing.
+
+### GitHub Access Attempt
+
+An attempt was made to have the browser Claude clone the repo directly from GitHub. The repo is public and accessible via HTTP (returned 200), but `git clone` was blocked by the proxy infrastructure. Files were reviewed via direct upload instead. This is a limitation of the current Claude environment, not the repo. For future reviews, file upload remains the most reliable path.
+
+## 15. Open Source Business Model Discussion
+
+The human raised a tangential but strategically relevant question: how does a company like Kilo.ai (an AI coding tool) make money while open-sourcing their core product?
+
+### The Kilo Model
+
+Kilo follows the **open client, paid platform** pattern (a variant of "open core"):
+
+- **Open source (free):** The VS Code / JetBrains extension — the client that runs on your machine, talks to LLMs, edits code. Fully open, Apache 2.0, on GitHub.
+- **Revenue streams:**
+  - **API Gateway:** Routes LLM calls through Kilo's infrastructure to 500+ models. Claims no markup on raw model pricing, but owns the billing relationship and usage data. "Kilo Pass" offers bonus credits on prepaid subscriptions — margin on float and volume.
+  - **Teams & Enterprise:** Pooled credits, unified billing, admin dashboards, managed codebase indexing, AI adoption scoring, compliance/security features. This is where the real revenue is. Their pricing page explicitly states "we make money on Teams/Enterprise."
+  - **Cloud compute:** Cloud-hosted agent execution, managed indexing, deployment pipelines. Compute-intensive features running on Kilo's infrastructure, not the user's machine.
+
+### Why Open Source the Core?
+
+The human asked: "Can't someone just change the project to not go through their proxies?" The answer is yes — and Kilo explicitly supports it. Users can bring their own API keys, point at their own providers, or run local models.
+
+**Kilo isn't worried because those users aren't the customer — they're the distribution channel.** The path is: individual developer uses Kilo with own keys → loves it → tells their team → team lead wants to roll it out to 50 engineers → now needs centralized billing, usage tracking, access controls, compliance, onboarding → that's an enterprise purchase. Nobody is going to fork the open source project and build their own admin dashboard to avoid the enterprise tier.
+
+The companies that get burned by open source are those whose paid value is just "hosting the open source thing" (e.g., Elastic vs. AWS). Kilo's paid value is the platform *around* the open source thing. Forking the extension doesn't give you any of that.
+
+### Relevance to gotg
+
+This model maps directly to gotg's potential future. The CLI tool and agent protocol could be fully open source — that's the distribution and trust layer. The monetizable value would be in the orchestration, multi-team coordination, managed model routing, team analytics, and enterprise management features that come later.
+
+## 16. Long-Term Vision Crystallizes: Fine-Tuned Role Models & AI Engineering Orgs
+
+The human proposed what became the most significant vision expansion in the project's history: **fine-tuning models to excel at specific team roles**, and using gotg to manage **multiple AI teams** while dogfooding the product to build itself.
+
+### Fine-Tuned Role Models
+
+Current AI coding tools use general-purpose models and coerce role behavior through system prompts. This works for "write code" but falls apart for softer roles. A general model prompted to be a scrum master produces a *parody* — it says the right words but doesn't actually behave like one (tracking blockers, knowing when to escalate, recognizing circular conversations).
+
+Fine-tuned role models could be genuinely different in *how they think*, not just what they say:
+- A fine-tuned **code reviewer** would naturally focus on edge cases, naming, testability
+- A fine-tuned **PM** would think in terms of user impact, scope creep, trade-offs
+- A fine-tuned **scrum master** would recognize process breakdowns and intervene
+
+**The key insight:** gotg generates its own training data. The conversation logs are literally labeled examples of agents attempting to play roles. Curate the good conversations, train on them, and the models improve at their roles.
+
+### The Dogfooding Flywheel
+
+The human described a self-reinforcing loop:
+
+1. Build gotg with a single team (human + 2 AI engineers)
+2. Once it works, add an AI PM to the team that manages iterations for gotg itself
+3. Now the human is the "group PM" overseeing an AI-managed team that's building the tool they're working inside of
+4. Every conversation the team has generates training data for better role models
+5. Better role models produce better conversations → better training data → better models
+
+**The product improves itself by being used to build itself.** This is a genuine flywheel, not a marketing concept.
+
+### Multi-Team AI Engineering Org
+
+The natural extension: run multiple AI teams in parallel, each with their own AI PM, backlog, and velocity. The human acts as "group PM" or engineering director providing alignment across teams.
+
+Example for gotg itself — three parallel workstreams:
+- **Team A:** Agent protocol and conversation mechanics
+- **Team B:** CLI experience and human interface
+- **Team C:** Model integration and provider abstraction
+
+Each team has an AI PM managing scope and AI engineers doing the work. The human checks in on each team's conversation, approves designs, resolves conflicts when Team A's interface changes break Team B's assumptions.
+
+This isn't just dogfooding — it's a **genuinely new way of building software.** The human's role shifts from "person who writes code with AI help" to "person who leads an organization of AI teams." Which is probably where the entire industry is heading.
+
+### Vision Reframing
+
+This discussion marked a pivot in how the project sees itself. It evolved from:
+- **Original:** "An AI coding tool with a team-first approach" (a better Cursor)
+- **Evolved:** "An AI engineering org in a box" (a new category)
+
+The tool isn't competing with Cursor or Copilot. It's building the infrastructure for a future where software is built by AI teams managed by humans, not by humans assisted by AI tools.
+
+---
+
+## Current State (Post-Implementation, Pre-First-Run)
+
+### What Exists
+- Working Python CLI tool (`gotg`) installable via pip
+- Three commands: `init`, `run`, `show`
+- JSONL conversation log with `from`, `iteration`, `content`
+- Alternating turn-based agent conversation with max turn ceiling
+- OpenAI-compatible model interface (local Ollama or any provider)
+- 30+ tests passing
+- Public GitHub repo: https://github.com/MBifolco/gotg
+
+### What's Next
+- Run the first real conversation: two Qwen2.5-Coder-7B agents discussing a CLI todo list design
+- Observe and evaluate: Do agents contribute substantively? Do they just agree? How does the conversation end?
+- Use observations to drive the next iteration's priorities
+
+### Deferred (Intentionally)
+- Message types / typed messages (add when observed as needed)
+- Message threading / `ref` field (add when observed as needed)
+- Agent personality differentiation (after observing identical agent behavior)
+- Self-termination detection (after observing what "consensus" looks like in practice)
+- Orchestrator / scrum master agent (Iteration 4)
+- Decentralized communication / pub-sub (future, when multi-participant)
+- Human dashboard / attention management (Iteration 3)
+- AI evaluator agent for quality assessment (Iteration 2)
+- `id` and `ts` fields on messages (add when needed)
+- Error handling on model calls (add when it becomes annoying)
+- Context window management / message windowing (add when turns increase)
+- Fine-tuned role models (long-term vision)
+- Multi-team orchestration (long-term vision)
+
+### Key Principles Established
+1. **Conversation over implementation**
+2. **Fail simple, learn why**
+3. **Evidence-driven schema evolution**
+4. **The human is the PM**
+5. **Platform is transport, protocol is product**
+6. **"Iteration" not "task"** — language matters, avoid engineering baggage
+7. **Self-termination as a success metric** — agents should know when they're done
+8. **Open source the core, monetize the platform** — distribution through openness, revenue through coordination
+9. **The product builds itself** — dogfooding as a flywheel for training data and product improvement
