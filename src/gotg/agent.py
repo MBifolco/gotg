@@ -30,6 +30,11 @@ def build_prompt(
         '"[teammate-name] add the following to the conversation:"'
     )
 
+    system_parts.append(
+        "When addressing a specific teammate, use @name. "
+        f"Watch for messages directed at you with @{agent_name}."
+    )
+
     system_parts.append(f"Current task: {task}")
     system_content = "\n\n".join(system_parts)
 

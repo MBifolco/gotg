@@ -101,6 +101,13 @@ def test_build_prompt_system_includes_message_format_explanation(agent_config, i
     assert "[teammate-name] add the following to the conversation:" in system
 
 
+def test_build_prompt_system_includes_mention_instructions(agent_config, iteration):
+    messages = build_prompt(agent_config, iteration, [])
+    system = messages[0]["content"]
+    assert "use @name" in system
+    assert "@agent-1" in system  # watch for messages directed at you
+
+
 def test_build_prompt_longer_conversation(agent_config, iteration):
     history = [
         {"from": "agent-1", "iteration": "iter-1", "content": "msg 1"},
@@ -272,8 +279,8 @@ def test_build_prompt_with_participants_lists_teammates(iteration):
     assert "agent-2 (Software Engineer)" in system
     assert "human (Product Manager)" in system
     # agent-1 should not be listed as its own teammate
-    teammates_section = system.split("Your teammates are:")[1].split("Current task:")[0]
-    assert "agent-1" not in teammates_section
+    teammates_line = system.split("Your teammates are:")[1].split("\n")[0]
+    assert "agent-1" not in teammates_line
 
 
 def test_build_prompt_without_participants_no_teammate_list(iteration):
