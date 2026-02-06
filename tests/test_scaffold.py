@@ -188,3 +188,56 @@ def test_pre_code_review_prompt_mentions_redirect():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["pre-code-review"].lower()
     assert "planning" in prompt
+
+
+def test_pre_code_review_prompt_mentions_layer_by_layer():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["pre-code-review"].lower()
+    assert "layer by layer" in prompt
+    assert "layer 0" in prompt
+
+
+def test_pre_code_review_prompt_discourages_full_code():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["pre-code-review"].lower()
+    assert "code review phase after this" in prompt
+    assert "don't write full implementations" in prompt or "write full implementations" in prompt
+
+
+def test_pre_code_review_prompt_mentions_one_at_a_time():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["pre-code-review"].lower()
+    assert "one task at a time" in prompt
+
+
+def test_coach_facilitation_prompts_dict_exists():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    assert isinstance(COACH_FACILITATION_PROMPTS, dict)
+    assert "grooming" in COACH_FACILITATION_PROMPTS
+    assert "planning" in COACH_FACILITATION_PROMPTS
+    assert "pre-code-review" in COACH_FACILITATION_PROMPTS
+
+
+def test_coach_facilitation_prompts_grooming_is_default():
+    from gotg.scaffold import COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
+    assert COACH_FACILITATION_PROMPTS["grooming"] is COACH_FACILITATION_PROMPT
+
+
+def test_coach_facilitation_planning_mentions_scope_coverage():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["planning"].lower()
+    assert "requirements" in prompt
+    assert "groomed scope" in prompt
+
+
+def test_coach_facilitation_pre_code_review_mentions_all_tasks():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["pre-code-review"].lower()
+    assert "all tasks" in prompt
+    assert "every task id" in prompt
+
+
+def test_coach_facilitation_pre_code_review_blocks_early_completion():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["pre-code-review"].lower()
+    assert "do not signal" in prompt or "do not signal completion" in prompt

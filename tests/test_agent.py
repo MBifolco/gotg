@@ -601,3 +601,72 @@ def test_build_prompt_includes_pre_code_review_phase_prompt():
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
     assert "CURRENT PHASE: PRE-CODE-REVIEW" in system
+
+
+# --- phase-specific coach facilitation ---
+
+def test_build_coach_prompt_uses_grooming_facilitation():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "grooming", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPTS["grooming"] in system
+
+
+def test_build_coach_prompt_uses_planning_facilitation():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "planning", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPTS["planning"] in system
+    assert "requirements from the groomed scope" in system.lower()
+
+
+def test_build_coach_prompt_uses_pre_code_review_facilitation():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "pre-code-review", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPTS["pre-code-review"] in system
+    assert "all tasks" in system.lower()
+
+
+def test_build_coach_prompt_falls_back_to_default_for_unknown_phase():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "some-future-phase", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPT in system
+
+
+def test_build_coach_prompt_falls_back_to_default_when_no_phase():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPT in system

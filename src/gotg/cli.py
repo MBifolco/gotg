@@ -22,6 +22,24 @@ def find_team_dir(cwd: Path) -> Path | None:
     return None
 
 
+def _validate_task_assignments(iter_dir: Path, phase: str) -> None:
+    """Check that all tasks are assigned before entering pre-code-review."""
+    if phase != "pre-code-review":
+        return
+    import json as _json
+    tasks_path = iter_dir / "tasks.json"
+    if not tasks_path.exists():
+        print("Error: pre-code-review requires tasks.json. Run 'gotg advance' from planning first.", file=sys.stderr)
+        raise SystemExit(1)
+    tasks = _json.loads(tasks_path.read_text())
+    unassigned = [t["id"] for t in tasks if not t.get("assigned_to")]
+    if unassigned:
+        print("Error: all tasks must be assigned before starting pre-code-review.", file=sys.stderr)
+        print(f"Unassigned tasks: {', '.join(unassigned)}", file=sys.stderr)
+        print("Edit .team/iterations/<id>/tasks.json to assign agents.", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def run_conversation(
     iter_dir: Path,
     agents: list[dict],
@@ -164,6 +182,8 @@ def cmd_run(args):
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
+    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
+
     run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach)
 
 
@@ -264,6 +284,8 @@ def cmd_continue(args):
     if len(agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
+
+    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
 
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)

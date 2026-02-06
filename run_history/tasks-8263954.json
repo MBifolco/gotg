@@ -1,0 +1,58 @@
+[
+  {
+    "id": "basic-timer",
+    "description": "Implement core countdown timer with configurable duration, terminal display, and audible bell on completion.",
+    "done_criteria": "Timer counts down from N seconds, displays remaining time, and rings bell when done.",
+    "depends_on": [],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "state-persistence",
+    "description": "Persist timer state to disk so it survives terminal closure. Include error handling, concurrency detection, and define the state file format.",
+    "done_criteria": "Timer state is saved/restored across terminal sessions. Concurrent access is detected and handled.",
+    "depends_on": [],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "break-sessions",
+    "description": "Add short and long break sessions with visual distinction from work sessions.",
+    "done_criteria": "Break timer runs with different display style. Short (5min) and long (15min) breaks supported.",
+    "depends_on": ["basic-timer"],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "cycle-tracking",
+    "description": "Track position within a 4-pomodoro cycle. Determine when long break is due.",
+    "done_criteria": "System tracks which pomodoro in the cycle (1-4) and triggers long break after 4th.",
+    "depends_on": ["basic-timer", "state-persistence"],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "resume-interrupted",
+    "description": "Handle interrupted work sessions: allow resume or void.",
+    "done_criteria": "User can resume an interrupted work session or void it. Voided sessions are not counted.",
+    "depends_on": ["state-persistence"],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "status-command",
+    "description": "Read-only status command showing current timer state, cycle position, and session history.",
+    "done_criteria": "gotg status shows current state without modifying anything.",
+    "depends_on": ["cycle-tracking"],
+    "assigned_to": null,
+    "status": "pending"
+  },
+  {
+    "id": "history-logging",
+    "description": "Append-only session history log in Unix-parseable format.",
+    "done_criteria": "Completed sessions are logged to a history file. File is parseable with standard Unix tools.",
+    "depends_on": ["cycle-tracking"],
+    "assigned_to": null,
+    "status": "pending"
+  }
+]

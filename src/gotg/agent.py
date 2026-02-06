@@ -1,4 +1,4 @@
-from gotg.scaffold import DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS, COACH_FACILITATION_PROMPT
+from gotg.scaffold import DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS, COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
 
 
 def build_prompt(
@@ -114,7 +114,9 @@ def build_coach_prompt(
     coach_name = coach_config["name"]
     task = iteration["description"]
 
-    system_parts = [COACH_FACILITATION_PROMPT]
+    phase = iteration.get("phase")
+    facilitation_prompt = COACH_FACILITATION_PROMPTS.get(phase, COACH_FACILITATION_PROMPT) if phase else COACH_FACILITATION_PROMPT
+    system_parts = [facilitation_prompt]
     system_parts.append(f"Your name is {coach_name}.")
 
     if all_participants:

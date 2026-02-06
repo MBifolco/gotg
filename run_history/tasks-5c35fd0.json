@@ -1,0 +1,137 @@
+[
+  {
+    "id": "project-setup",
+    "description": "Set up Python project structure with entry point, testing framework (unittest or pytest), and basic documentation. Create directory structure (e.g., src/, tests/), define how to run the application (python todo.py), and ensure team can execute tests.",
+    "done_criteria": "Team can run 'python todo.py --help' and get output. Tests can be executed. README exists with setup and usage instructions.",
+    "depends_on": [],
+    "assigned_to": "agent-1",
+    "status": "pending",
+    "layer": 0
+  },
+  {
+    "id": "task-data-structure",
+    "description": "Define task data structure (struct/class) with fields: id (auto-increment, never reused), title, priority (High/Medium/Low), due_date (optional), is_completed (boolean). Implement ID generation logic.",
+    "done_criteria": "Can create task objects in memory with all required fields. ID generation works correctly and IDs are never reused. Includes unit tests for task creation and ID generation.",
+    "depends_on": [
+      "project-setup"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 1
+  },
+  {
+    "id": "data-serialization",
+    "description": "Implement serialization and deserialization of task objects to/from JSON format. Handle all field types including optional due_date.",
+    "done_criteria": "Task objects serialize to and from JSON correctly. Handles all field types including null/optional values. Includes unit tests for serialization edge cases.",
+    "depends_on": [
+      "task-data-structure"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 2
+  },
+  {
+    "id": "file-io-persistence",
+    "description": "Implement file I/O to save and load tasks from ~/.todo-data.json. Handle first-run (create file if missing), corrupted file (start fresh with warning), file permissions issues, and atomic writes to prevent corruption on crash.",
+    "done_criteria": "Tasks persist across application restarts. Creates file on first run in user home directory. Handles missing or corrupted file gracefully with clear messaging. Atomic writes prevent data corruption. Includes unit tests for all error conditions.",
+    "depends_on": [
+      "data-serialization"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 3
+  },
+  {
+    "id": "cli-argument-parsing",
+    "description": "Implement command-line argument parsing using argparse. Parse command names (add, list, complete, un-complete, delete) and flags (--priority, --due). Route to appropriate command handlers (stubs acceptable for this task).",
+    "done_criteria": "Can parse all command names and flags correctly. Routes to handler functions (stub implementations OK). Shows help text. Includes unit tests for argument parsing logic.",
+    "depends_on": [
+      "project-setup"
+    ],
+    "assigned_to": "agent-1",
+    "status": "pending",
+    "layer": 1
+  },
+  {
+    "id": "sort-logic",
+    "description": "Implement task sorting logic: primary sort by priority (High then Medium then Low), within each priority tier sort overdue tasks first (most overdue first), then future due dates (soonest first), then no due date (by creation order). Completed tasks follow same sort rules.",
+    "done_criteria": "Given a list of tasks, returns correctly sorted list according to specified rules. Handles edge cases like tasks due today (treat as end-of-day). Stable sort maintains creation order for identical properties. Includes comprehensive unit tests for all sorting combinations.",
+    "depends_on": [
+      "task-data-structure"
+    ],
+    "assigned_to": "agent-1",
+    "status": "pending",
+    "layer": 2
+  },
+  {
+    "id": "add-command",
+    "description": "Implement add command to create new tasks with title, optional priority (defaults to Medium), and optional due date. Validate: reject empty/whitespace-only titles, reject invalid dates (e.g., 2024-02-31, malformed input), parse YYYY-MM-DD format. Persist new task and confirm to user.",
+    "done_criteria": "Users can add tasks with title, optional priority, optional due date. Rejects empty titles and invalid dates with clear error messages. Defaults priority to Medium if not specified. Persists correctly. Shows confirmation. Includes unit tests for validation and edge cases.",
+    "depends_on": [
+      "task-data-structure",
+      "data-serialization",
+      "file-io-persistence",
+      "cli-argument-parsing"
+    ],
+    "assigned_to": "agent-1",
+    "status": "pending",
+    "layer": 4
+  },
+  {
+    "id": "list-command",
+    "description": "Implement list command to display all tasks. Load tasks from disk, sort using sort logic, format display with visual indicators (\u2713 for completed, \u26a0 for overdue). Handle empty list with helpful message. Handle very long titles gracefully (wrap or truncate).",
+    "done_criteria": "Lists all tasks in correct sort order. Shows visual indicators for completed and overdue tasks. Empty list shows message like 'No tasks yet. Use add to create your first task.' Handles display edge cases. Includes unit tests for display logic and edge cases.",
+    "depends_on": [
+      "task-data-structure",
+      "data-serialization",
+      "file-io-persistence",
+      "sort-logic",
+      "cli-argument-parsing"
+    ],
+    "assigned_to": "agent-1",
+    "status": "pending",
+    "layer": 4
+  },
+  {
+    "id": "complete-command",
+    "description": "Implement complete command to mark a task as completed by ID. Handle non-existent ID with clear error message. Persist change and confirm to user.",
+    "done_criteria": "Users can mark tasks complete by ID. Handles invalid/non-existent IDs with clear error. Persists change. Shows confirmation. Includes unit tests for happy path and error cases.",
+    "depends_on": [
+      "task-data-structure",
+      "data-serialization",
+      "file-io-persistence",
+      "cli-argument-parsing"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 4
+  },
+  {
+    "id": "uncomplete-command",
+    "description": "Implement un-complete command to mark a completed task as incomplete by ID. Handle non-existent ID with clear error message. Persist change and confirm to user.",
+    "done_criteria": "Users can mark completed tasks as incomplete by ID. Handles invalid/non-existent IDs with clear error. Persists change. Shows confirmation. Includes unit tests for happy path and error cases.",
+    "depends_on": [
+      "task-data-structure",
+      "data-serialization",
+      "file-io-persistence",
+      "cli-argument-parsing"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 4
+  },
+  {
+    "id": "delete-command",
+    "description": "Implement delete command to permanently remove a task by ID. Handle non-existent ID with clear error message. Persist change and confirm to user.",
+    "done_criteria": "Users can delete tasks by ID. Handles invalid/non-existent IDs with clear error. Persists change. Shows confirmation. Includes unit tests for happy path and error cases.",
+    "depends_on": [
+      "task-data-structure",
+      "data-serialization",
+      "file-io-persistence",
+      "cli-argument-parsing"
+    ],
+    "assigned_to": "agent-2",
+    "status": "pending",
+    "layer": 4
+  }
+]

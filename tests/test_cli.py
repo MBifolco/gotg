@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue
+from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments
 from gotg.conversation import read_log, append_message
 
 
@@ -1148,3 +1148,55 @@ def test_run_conversation_no_tasks_json_no_task_list(tmp_path):
 
     system_msg = captured_prompts[0][0]["content"]
     assert "TASK LIST" not in system_msg
+
+
+# --- task assignment validation ---
+
+def test_validate_task_assignments_blocks_unassigned(tmp_path):
+    """Pre-code-review should fail if any tasks are unassigned."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+    tasks = [
+        {"id": "t1", "assigned_to": "agent-1", "depends_on": [], "description": "x",
+         "done_criteria": "y", "status": "pending"},
+        {"id": "t2", "assigned_to": None, "depends_on": [], "description": "x",
+         "done_criteria": "y", "status": "pending"},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with pytest.raises(SystemExit):
+        _validate_task_assignments(iter_dir, "pre-code-review")
+
+
+def test_validate_task_assignments_passes_when_all_assigned(tmp_path):
+    """Pre-code-review should succeed if all tasks are assigned."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+    tasks = [
+        {"id": "t1", "assigned_to": "agent-1", "depends_on": [], "description": "x",
+         "done_criteria": "y", "status": "pending"},
+        {"id": "t2", "assigned_to": "agent-2", "depends_on": [], "description": "x",
+         "done_criteria": "y", "status": "pending"},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    # Should not raise
+    _validate_task_assignments(iter_dir, "pre-code-review")
+
+
+def test_validate_task_assignments_skips_non_pre_code_review(tmp_path):
+    """Validation should be a no-op for other phases."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+    # No tasks.json at all — should not raise for grooming/planning
+    _validate_task_assignments(iter_dir, "grooming")
+    _validate_task_assignments(iter_dir, "planning")
+
+
+def test_validate_task_assignments_missing_tasks_json(tmp_path):
+    """Pre-code-review without tasks.json should fail."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+
+    with pytest.raises(SystemExit):
+        _validate_task_assignments(iter_dir, "pre-code-review")
