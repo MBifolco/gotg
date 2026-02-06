@@ -914,50 +914,113 @@ One `user` message containing everything that happened since the agent's last tu
 
 This is the next experiment to run. If consolidated messages fix the attribution confusion, the name-prefix approach may be sufficient for multi-party. If not, the narrator approach (which explicitly frames "the PM raised the auth concern") becomes the next thing to try.
 
+## 26. Consolidated Messages: Attribution Fixed, Quality Improved
+
+The consolidated message format was implemented and tested. Instead of sending each participant's message as a separate `user` message, all messages since the agent's last turn are aggregated into a single `user` message with speaker labels inside.
+
+### What Changed in the Prompt
+
+The system prompt was also improved:
+- "one other engineer" → "a collaborative team"
+- Added: "Your name is agent-1."
+- Added: "You may get messages from more than one teammate at a time. You'll know because a teammate's message will be prefixed by '[teammate-name] add the following to the conversation:'"
+
+The consolidated `user` message now looks like:
+
+```
+[human] add the following to the conversation:
+I think these are good ideas but we should account for...
+
+[agent-1] add the following to the conversation:
+Thanks for those inputs! Let me address both points...
+```
+
+One `user` block. Clean separation. No consecutive same-role messages.
+
+### Results: Three Problems Fixed
+
+**1. Attribution confusion eliminated.** Compare agent-2's responses across the two three-party runs:
+
+Previous run (separate `user` messages): "You raise a valid concern about over-engineering. Let me be more specific about **what I'm thinking**" — ownership language for the human's idea.
+
+Consolidated run: "When **human** says 'authentication,' are we talking about..." and "**human**, can you be more specific about the authentication use case?" — correct, explicit attribution throughout. Agent-2 tracked exactly who raised which concern and addressed each participant by name.
+
+**2. Self-prefix leak eliminated.** Agent-2 no longer starts its response with `[agent-2]:`. The prefix pattern now only appears inside consolidated `user` messages, so the model doesn't mimic it in `assistant` output.
+
+**3. System prompt consistency fixed.** "Collaborative team" language now matches the dynamic teammate list. No more contradiction between "one other engineer" and a three-person team roster.
+
+### Conversation Quality: The Best Run Yet
+
+The consolidated format didn't just fix bugs — it produced the highest-quality conversation so far.
+
+**Agent-2's turn 5 showed three levels of reasoning on authentication:**
+1. Challenged agent-1's one-DB-per-user approach: "I'm worried we're not thinking big enough about what 'authentication' means here."
+2. Proposed an alternative: add a `user_id` column now, defaulting to 'local', for zero-cost future-proofing.
+3. Immediately pushed back on its own proposal: "However, I want to push back: Do we actually need this?" — invoking YAGNI and noting that schema migrations aren't that scary.
+
+Three positions evaluated in one section: agent-1's approach, an alternative, and a counter-argument against the alternative. That's genuine deliberation, not performance.
+
+**Agent-2 directly disagreed with the PM.** On config, it said: "I strongly disagree with both proposals" and argued for no config file at all in MVP. It challenged the human's TOML suggestion head-on — not ignoring the PM, but pushing back with a clear argument: "We're solving problems we don't have yet." This is the team dynamic working correctly: PM sets direction, engineer says "I hear you, but here's why we shouldn't do that yet."
+
+**Novel edge cases emerged.** Agent-2 raised the `sudo` scenario: "What if the user runs `sudo todo list`? With your home directory approach, it would show root's todos, not the user's." This is the kind of insight that emerges from genuine thinking about another participant's proposal, not from sycophantic agreement.
+
+**Both agents addressed participants by name.** Agent-1: "agent-2, what's your take? Does storing config in SQLite feel wrong, or is it pragmatic? And human, can you clarify what specific configuration you're envisioning we'll need?" Agent-2: "human, can you be more specific about the authentication use case?" The team was having a real three-way conversation with clear awareness of who they were talking to.
+
+### What This Validates
+
+**Consolidated messages are the right prompt format for multi-party.** The fix was simple (concatenate with labels instead of sending separate messages), the improvement was dramatic (attribution accuracy, no self-prefix leak, better conversation quality), and it scales naturally to any number of participants.
+
+**The format is a step toward the narrator layer without committing to it.** The structure is identical — one `user` message containing everything since the agent's last turn, with speaker labels. The difference is that right now the content is raw concatenation. The narrator layer, when it comes, would summarize, contextualize, and selectively quote within the same structure. The upgrade path is clean.
+
+**Three-party conversations are better than two-party.** The PM's interjection didn't dilute the conversation — it focused it. The agents had to address real constraints (auth, config format) instead of optimizing in a vacuum. And having two engineers meant the PM's suggestions got stress-tested rather than blindly implemented. This confirms the core thesis: teams produce better output than individuals.
+
+**The prompt format matters as much as the model.** Same model (Sonnet), same task, same system prompt intent — but the consolidated format produced measurably better attribution, cleaner responses, and richer reasoning than the separate-message format. Prompt architecture is a first-class design concern, not an implementation detail.
+
 ---
 
-## Current State (Post-Three-Party-Run)
+## Current State (Post-Consolidated-Format)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
 - Four commands: `init`, `run`, `continue`, `show`
 - `continue` command with human message injection (`-m`)
 - `--max-turns` override on both `run` and `continue`
-- Name-prefix format for N>2 participants
+- Consolidated message format: all messages since agent's last turn in one `user` block with speaker labels
 - Dynamic teammate list in system prompts with role labels
 - JSONL conversation log with `from`, `iteration`, `content`
 - Human messages excluded from agent turn count
 - OpenAI-compatible and Anthropic API provider support
 - Debug logging (prompts sent to models)
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Three conversation logs: 7B run, Sonnet two-party run, Sonnet three-party run with human PM
+- Four conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated messages)
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
 - 7B models can't sustain disagreement; Sonnet can argue, persuade, and change positions
 - The quality ceiling is the model; the quality floor is the protocol
-- Three-party conversations work — agents synthesize across participants, not just respond to the last speaker
-- Attribution confusion is a real issue: agents may absorb other participants' ideas as their own
-- Consecutive `user` messages in the prompt likely contribute to attribution confusion
-- The human has no other humans — multi-team is a necessity, not a long-term vision
+- **Consolidated messages fix attribution confusion** — agents correctly track who said what
+- **Three-party conversations are better than two-party** — PM input focuses discussion, two engineers stress-test PM suggestions
+- Agents will push back on the PM when they have good reasons — role hierarchy isn't needed for healthy team dynamics
+- Prompt architecture is a first-class design concern, not an implementation detail
 - Conversation quality gates tool quality — agents need to converse well before they can act well
+- The human has no other humans — multi-team is a necessity, not a long-term vision
 
 ### Development Strategy
 - **Use gotg to build gotg.** Run parallel AI teams (however manually) across workstreams
-- **Next experiment:** Consolidated `user` messages (aggregate all messages since agent's last turn into one message with speaker labels)
-- Fix system prompt inconsistency ("one other engineer" → "a collaborative team")
-- Develop manual evaluation rubric using conversation comparison as calibration
+- Begin developing manual evaluation rubric using the four conversation logs as calibration data
+- Experiment with role authority differentiation (PM vs. engineer) now that base format works
+- Start planning multi-team support for parallel gotg development workstreams
 - Let real pain points from dogfooding drive the priority stack
 
 ### Deferred (Intentionally)
-- Human role authority differentiation (test consolidated messages first, then add role hierarchy)
-- Narrator layer implementation (try consolidated messages first — same structure, less complexity)
+- Human role authority differentiation (base format works without it — add when needed)
+- Narrator layer implementation (consolidated messages work well — narrator is an upgrade, not a requirement)
 - Agent personality differentiation (after observing identical agent behavior)
 - Self-termination detection (after observing what "consensus" looks like in practice)
 - Automated evaluation (after manual rubric is trusted)
 - Implicit signal instrumentation (after evaluation framework is validated)
 - Model capability threshold testing (after evaluation rubric exists)
-- Attribution accuracy as evaluation dimension (after more multi-party data)
+- Attribution accuracy as evaluation dimension (consolidated format mostly solves this — revisit with larger teams)
 - Agent tool access: file I/O, bash (after team dynamics are solid)
 - Agent full autonomy: git, testing, deployment (after basic tool access works)
 - Message types / typed messages (add when observed as needed)
@@ -983,3 +1046,4 @@ This is the next experiment to run. If consolidated messages fix the attribution
 12. **Observe behavior, don't ask for ratings** — implicit signals from what users do after a conversation are more reliable than explicit feedback
 13. **Dogfooding isn't optional, it's the development strategy** — use the tool to build the tool; let real pain points drive the roadmap
 14. **Track attribution, not just agreement** — who originated an idea matters as much as whether the team agreed on it
+15. **Prompt architecture is a first-class design concern** — same model, same task, different prompt structure produces measurably different outcomes
