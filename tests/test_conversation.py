@@ -148,3 +148,12 @@ def test_render_message_human_gets_green_color():
     assert "[human]" in rendered
     assert "PM feedback" in rendered
     assert "\033[32m" in rendered  # green
+
+
+def test_render_message_system_gets_magenta_color():
+    """System messages should render with magenta color."""
+    msg = {"from": "system", "iteration": "iter-1", "content": "--- Phase advanced ---"}
+    rendered = render_message(msg)
+    assert "[system]" in rendered
+    assert "Phase advanced" in rendered
+    assert "\033[35m" in rendered  # magenta

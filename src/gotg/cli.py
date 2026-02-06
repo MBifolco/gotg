@@ -8,6 +8,7 @@ from gotg.config import (
     load_agents, load_model_config,
     ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
+    save_iteration_phase, PHASE_ORDER,
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
@@ -46,6 +47,7 @@ def run_conversation(
 
     print(f"Starting conversation: {iteration['id']}")
     print(f"Task: {iteration['description']}")
+    print(f"Phase: {iteration.get('phase', 'grooming')}")
     print(f"Turns: {turn}/{max_turns}")
     print("---")
 
@@ -254,6 +256,44 @@ def cmd_show(args):
         print()
 
 
+def cmd_advance(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+    if iteration.get("status") != "in-progress":
+        print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    current_phase = iteration.get("phase", "grooming")
+    try:
+        idx = PHASE_ORDER.index(current_phase)
+    except ValueError:
+        print(f"Error: unknown phase '{current_phase}'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    if idx >= len(PHASE_ORDER) - 1:
+        print(f"Error: cannot advance past {current_phase}.", file=sys.stderr)
+        raise SystemExit(1)
+
+    next_phase = PHASE_ORDER[idx + 1]
+    save_iteration_phase(team_dir, iteration["id"], next_phase)
+
+    log_path = iter_dir / "conversation.jsonl"
+    msg = {
+        "from": "system",
+        "iteration": iteration["id"],
+        "content": f"--- Phase advanced: {current_phase} → {next_phase} ---",
+    }
+    append_message(log_path, msg)
+    print(render_message(msg))
+    print()
+    print(f"Phase advanced: {current_phase} → {next_phase}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -269,6 +309,8 @@ def main():
     continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
     continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
     continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
+
+    subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
 
     model_parser = subparsers.add_parser("model", help="View or change model config")
     model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
@@ -286,6 +328,8 @@ def main():
         cmd_continue(args)
     elif args.command == "model":
         cmd_model(args)
+    elif args.command == "advance":
+        cmd_advance(args)
     else:
         parser.print_help()
 

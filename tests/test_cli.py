@@ -503,3 +503,103 @@ def test_continue_human_message_not_counted_in_turns(tmp_path):
     agent_msgs = [m for m in messages if m["from"] != "human"]
     assert len(human_msgs) == 1
     assert len(agent_msgs) == 2
+
+
+# --- advance command ---
+
+def _make_advance_team_dir(tmp_path, phase="grooming"):
+    """Helper to create a .team/ dir for advance tests."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": phase, "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    return team, iter_dir
+
+
+def test_advance_grooming_to_planning(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # Verify iteration.json updated
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "planning"
+
+    # Verify system message in log
+    messages = read_log(iter_dir / "conversation.jsonl")
+    assert len(messages) == 1
+    assert messages[0]["from"] == "system"
+    assert "grooming" in messages[0]["content"]
+    assert "planning" in messages[0]["content"]
+
+
+def test_advance_planning_to_pre_code_review(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "pre-code-review"
+
+
+def test_advance_past_last_phase_errors(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+
+def test_advance_fails_without_team_dir(tmp_path):
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=None):
+            with pytest.raises(SystemExit):
+                main()
+
+
+def test_advance_fails_if_not_in_progress(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "pending", "phase": "grooming", "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+
+def test_advance_defaults_to_grooming_if_no_phase(tmp_path):
+    """Backward compat: iteration without phase field defaults to grooming."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    # No phase field in iteration
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "planning"

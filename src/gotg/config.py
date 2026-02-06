@@ -88,6 +88,22 @@ def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
     return iteration, iter_dir
 
 
+PHASE_ORDER = ["grooming", "planning", "pre-code-review"]
+
+
+def save_iteration_phase(team_dir: Path, iteration_id: str, new_phase: str) -> None:
+    iter_path = team_dir / "iteration.json"
+    data = json.loads(iter_path.read_text())
+    for iteration in data["iterations"]:
+        if iteration["id"] == iteration_id:
+            iteration["phase"] = new_phase
+            iter_path.write_text(json.dumps(data, indent=2) + "\n")
+            return
+    raise SystemExit(
+        f"Error: iteration '{iteration_id}' not found in iteration list."
+    )
+
+
 def save_model_config(team_dir: Path, model_config: dict) -> None:
     team_path = team_dir / "team.json"
     team_config = json.loads(team_path.read_text())

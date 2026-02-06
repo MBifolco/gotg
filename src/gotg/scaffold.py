@@ -51,6 +51,7 @@ def init_project(path: Path) -> None:
                 "title": "",
                 "description": "",
                 "status": "pending",
+                "phase": "grooming",
                 "max_turns": 10,
             }
         ],

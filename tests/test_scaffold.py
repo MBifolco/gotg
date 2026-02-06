@@ -47,6 +47,7 @@ def test_init_creates_iteration_json_list_format(tmp_path):
     assert entry["title"] == ""
     assert entry["description"] == ""
     assert entry["status"] == "pending"
+    assert entry["phase"] == "grooming"
     assert entry["max_turns"] == 10
 
 

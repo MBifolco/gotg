@@ -7,6 +7,7 @@ from gotg.config import (
     load_model_config, load_agents, load_iteration,
     read_dotenv, ensure_dotenv_key,
     get_iteration_dir, get_current_iteration, save_model_config,
+    save_iteration_phase, PHASE_ORDER,
 )
 
 
@@ -362,3 +363,30 @@ def test_load_model_config_falls_back_to_environ(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text("OTHER_KEY=something\n")
     config = load_model_config(team)
     assert config["api_key"] == "sk-from-environ"
+
+
+# --- save_iteration_phase ---
+
+def test_save_iteration_phase_updates_phase(team_dir):
+    save_iteration_phase(team_dir, "iter-1", "planning")
+    iteration = load_iteration(team_dir)
+    assert iteration["phase"] == "planning"
+
+
+def test_save_iteration_phase_preserves_other_fields(team_dir):
+    save_iteration_phase(team_dir, "iter-1", "planning")
+    iteration = load_iteration(team_dir)
+    assert iteration["description"] == "Design a todo app"
+    assert iteration["status"] == "in-progress"
+    assert iteration["max_turns"] == 10
+
+
+def test_save_iteration_phase_missing_id_raises(team_dir):
+    with pytest.raises(SystemExit):
+        save_iteration_phase(team_dir, "nonexistent", "planning")
+
+
+# --- PHASE_ORDER ---
+
+def test_phase_order_has_three_phases():
+    assert PHASE_ORDER == ["grooming", "planning", "pre-code-review"]
