@@ -6,6 +6,7 @@ def build_prompt(
     iteration: dict,
     history: list[dict],
     all_participants: list[dict] | None = None,
+    groomed_summary: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -55,6 +56,9 @@ def build_prompt(
         if phase_prompt:
             system_parts.append(phase_prompt)
 
+    if groomed_summary:
+        system_parts.append("GROOMED SCOPE SUMMARY:\n\n" + groomed_summary)
+
     system_content = "\n\n".join(system_parts)
 
     messages = [{"role": "system", "content": system_content}]
@@ -99,6 +103,7 @@ def build_coach_prompt(
     iteration: dict,
     history: list[dict],
     all_participants: list[dict] | None = None,
+    groomed_summary: str | None = None,
 ) -> list[dict]:
     """Build prompt for the coach facilitator during conversation."""
     coach_name = coach_config["name"]
@@ -116,6 +121,9 @@ def build_coach_prompt(
             system_parts.append(f"The team members are: {teammate_list}.")
 
     system_parts.append(f"Current task: {task}")
+
+    if groomed_summary:
+        system_parts.append("GROOMED SCOPE SUMMARY:\n\n" + groomed_summary)
 
     system_content = "\n\n".join(system_parts)
     messages = [{"role": "system", "content": system_content}]

@@ -35,6 +35,10 @@ def run_conversation(
     history = read_log(log_path)
     max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
 
+    # Load groomed.md artifact if it exists (for planning/later phases)
+    groomed_path = iter_dir / "groomed.md"
+    groomed_summary = groomed_path.read_text().strip() if groomed_path.exists() else None
+
     # Build participant list from agents + coach + detect human in history
     all_participants = [
         {"name": a["name"], "role": a.get("role", "Software Engineer")}
@@ -59,7 +63,7 @@ def run_conversation(
 
     while turn < max_turns:
         agent = agents[turn % num_agents]
-        prompt = build_prompt(agent, iteration, history, all_participants)
+        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary)
         append_debug(debug_path, {
             "turn": turn,
             "agent": agent["name"],
@@ -87,7 +91,7 @@ def run_conversation(
 
         # Coach injection: after every full rotation of engineering agents
         if coach and turn % num_agents == 0:
-            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants)
+            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary)
             append_debug(debug_path, {
                 "turn": f"coach-after-{turn}",
                 "agent": coach["name"],

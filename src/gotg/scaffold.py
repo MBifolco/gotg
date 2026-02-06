@@ -44,6 +44,24 @@ PHASE_PROMPTS = {
         "If a teammate drifts into implementation, redirect them: "
         "\"Let's nail down the requirements first before we discuss how to build it.\""
     ),
+    "planning": (
+        "CURRENT PHASE: PLANNING\n\n"
+        "You have completed grooming. The scope is defined in the groomed summary below.\n\n"
+        "In this phase, break the agreed scope into concrete, assignable tasks.\n\n"
+        "DO:\n"
+        "- Decompose each requirement into specific engineering tasks\n"
+        "- Ensure each task is independent and completable by one engineer\n"
+        "- Identify dependencies between tasks and note their ordering\n"
+        "- Define what 'done' looks like for each task\n"
+        "- Consider which tasks can be parallelized\n\n"
+        "DO NOT:\n"
+        "- Write code or pseudocode\n"
+        "- Re-debate requirements that were settled in grooming\n"
+        "- Pick specific libraries, frameworks, or tools\n"
+        "- Design APIs, schemas, or internal interfaces\n\n"
+        "If a teammate re-opens a settled requirement, redirect them: "
+        "\"That was decided in grooming. Let's focus on breaking it into tasks.\""
+    ),
 }
 
 

@@ -320,8 +320,8 @@ def test_build_prompt_includes_grooming_phase_prompt():
     assert "DO NOT" in system
 
 
-def test_build_prompt_no_phase_prompt_for_planning():
-    """Planning phase has no prompt yet — no grooming instructions should appear."""
+def test_build_prompt_includes_planning_phase_prompt():
+    """Planning phase should inject planning instructions."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
@@ -329,6 +329,8 @@ def test_build_prompt_no_phase_prompt_for_planning():
     }
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
+    assert "CURRENT PHASE: PLANNING" in system
+    assert "tasks" in system.lower()
     assert "CURRENT PHASE: GROOMING" not in system
 
 
@@ -458,3 +460,78 @@ def test_build_coach_prompt_consolidates_consecutive_messages():
     assert "[agent-1]" in messages[1]["content"]
     assert "[agent-2]" in messages[1]["content"]
     assert "[agent-3]" in messages[1]["content"]
+
+
+# --- groomed summary injection ---
+
+def test_build_prompt_injects_groomed_summary():
+    """When groomed_summary is provided, it appears in the system message."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    summary = "## Summary\nBuild an auth system."
+    messages = build_prompt(agent, iteration, [], groomed_summary=summary)
+    system = messages[0]["content"]
+    assert "GROOMED SCOPE SUMMARY" in system
+    assert "Build an auth system." in system
+
+
+def test_build_prompt_no_groomed_summary_when_none():
+    """When groomed_summary is None, no summary section appears."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [], groomed_summary=None)
+    system = messages[0]["content"]
+    assert "GROOMED SCOPE SUMMARY" not in system
+
+
+def test_build_prompt_groomed_summary_after_phase_prompt():
+    """Groomed summary should appear after the phase prompt in system message."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    summary = "## Summary\nBuild an auth system."
+    messages = build_prompt(agent, iteration, [], groomed_summary=summary)
+    system = messages[0]["content"]
+    phase_pos = system.index("CURRENT PHASE: PLANNING")
+    summary_pos = system.index("GROOMED SCOPE SUMMARY")
+    assert summary_pos > phase_pos
+
+
+def test_build_coach_prompt_injects_groomed_summary():
+    """Coach prompt should include groomed summary when provided."""
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    summary = "## Summary\nBuild an auth system."
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ], groomed_summary=summary)
+    system = messages[0]["content"]
+    assert "GROOMED SCOPE SUMMARY" in system
+    assert "Build an auth system." in system
+
+
+def test_build_coach_prompt_no_groomed_summary_when_none():
+    """Coach prompt should not include summary section when None."""
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "planning", "max_turns": 10,
+    }
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ], groomed_summary=None)
+    system = messages[0]["content"]
+    assert "GROOMED SCOPE SUMMARY" not in system

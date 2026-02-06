@@ -131,3 +131,21 @@ def test_coach_facilitation_prompt_exists():
     assert len(COACH_FACILITATION_PROMPT) > 0
     assert "PHASE_COMPLETE" in COACH_FACILITATION_PROMPT
     assert "technical opinions" in COACH_FACILITATION_PROMPT.lower()
+
+
+def test_phase_prompts_has_planning_key():
+    from gotg.scaffold import PHASE_PROMPTS
+    assert "planning" in PHASE_PROMPTS
+
+
+def test_planning_prompt_mentions_tasks():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["planning"].lower()
+    assert "tasks" in prompt
+    assert "independent" in prompt or "assignable" in prompt
+
+
+def test_planning_prompt_mentions_redirect():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["planning"].lower()
+    assert "grooming" in prompt

@@ -914,3 +914,74 @@ def test_continue_excludes_coach_from_turn_count(tmp_path):
     # Coach message should not have inflated the turn count
     agent_msgs = [m for m in messages if m["from"] not in ("coach", "system")]
     assert len(agent_msgs) == 4  # 2 existing + 2 new
+
+
+# --- groomed.md artifact injection ---
+
+def test_run_conversation_reads_groomed_md(tmp_path):
+    """run_conversation should read groomed.md and pass it to build_prompt."""
+    iter_dir = _make_iter_dir(tmp_path)
+    (iter_dir / "groomed.md").write_text("## Summary\nBuild auth.\n")
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "planning", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "Build auth." in system_msg
+    assert "GROOMED SCOPE SUMMARY" in system_msg
+
+
+def test_run_conversation_no_groomed_md_no_injection(tmp_path):
+    """Without groomed.md, no summary should appear in prompts."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "grooming", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "GROOMED SCOPE SUMMARY" not in system_msg
+
+
+def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
+    """Coach prompt should also receive the groomed summary."""
+    iter_dir = _make_iter_dir(tmp_path)
+    (iter_dir / "groomed.md").write_text("## Summary\nBuild auth.\n")
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "planning", "max_turns": 2,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    # 3rd call is the coach (after agent-1, agent-2)
+    coach_system_msg = captured_prompts[2][0]["content"]
+    assert "Build auth." in coach_system_msg
+    assert "GROOMED SCOPE SUMMARY" in coach_system_msg
