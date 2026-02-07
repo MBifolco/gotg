@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments
+from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments, _auto_checkpoint
 from gotg.conversation import read_log, append_message
 
 
@@ -1200,3 +1200,209 @@ def test_validate_task_assignments_missing_tasks_json(tmp_path):
 
     with pytest.raises(SystemExit):
         _validate_task_assignments(iter_dir, "pre-code-review")
+
+
+# --- auto-checkpoint ---
+
+def test_auto_checkpoint_creates_checkpoint(tmp_path):
+    """_auto_checkpoint should create a checkpoint directory."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    _auto_checkpoint(iter_dir, iteration)
+
+    assert (iter_dir / "checkpoints" / "1").is_dir()
+    assert (iter_dir / "checkpoints" / "1" / "state.json").exists()
+
+
+def test_auto_checkpoint_prints_message(tmp_path, capsys):
+    """_auto_checkpoint should print confirmation."""
+    iter_dir = tmp_path / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    _auto_checkpoint(iter_dir, iteration)
+
+    output = capsys.readouterr().out
+    assert "Checkpoint 1 created (auto)" in output
+
+
+def test_cmd_run_creates_auto_checkpoint(tmp_path):
+    """gotg run should create auto-checkpoint after conversation ends."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+
+    with patch("sys.argv", ["gotg", "run", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="response"):
+                main()
+
+    assert (iter_dir / "checkpoints" / "1").is_dir()
+
+
+def test_cmd_continue_creates_auto_checkpoint(tmp_path):
+    """gotg continue should create auto-checkpoint after conversation ends."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+
+    with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="response"):
+                main()
+
+    assert (iter_dir / "checkpoints" / "1").is_dir()
+
+
+def test_cmd_advance_creates_auto_checkpoint(tmp_path):
+    """gotg advance should create auto-checkpoint after phase transition."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    assert (iter_dir / "checkpoints" / "1").is_dir()
+    # Checkpoint should have the NEW phase
+    state = json.loads((iter_dir / "checkpoints" / "1" / "state.json").read_text())
+    assert state["phase"] == "planning"
+
+
+# --- checkpoint command ---
+
+def test_cmd_checkpoint_creates_manual(tmp_path, capsys):
+    """gotg checkpoint should create a manual checkpoint."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"hi"}\n')
+
+    with patch("sys.argv", ["gotg", "checkpoint", "my save point"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    assert (iter_dir / "checkpoints" / "1").is_dir()
+    state = json.loads((iter_dir / "checkpoints" / "1" / "state.json").read_text())
+    assert state["trigger"] == "manual"
+    assert state["description"] == "my save point"
+    output = capsys.readouterr().out
+    assert "Checkpoint 1 created" in output
+
+
+# --- checkpoints command ---
+
+def test_cmd_checkpoints_empty(tmp_path, capsys):
+    """gotg checkpoints with no checkpoints should show message."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+
+    with patch("sys.argv", ["gotg", "checkpoints"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "No checkpoints yet" in output
+
+
+def test_cmd_checkpoints_lists(tmp_path, capsys):
+    """gotg checkpoints should list existing checkpoints."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.checkpoint import create_checkpoint
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    create_checkpoint(iter_dir, iteration, description="first", trigger="auto")
+    create_checkpoint(iter_dir, iteration, description="second", trigger="manual")
+
+    with patch("sys.argv", ["gotg", "checkpoints"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "first" in output
+    assert "second" in output
+    assert "auto" in output
+    assert "manual" in output
+
+
+# --- restore command ---
+
+def test_cmd_restore_restores_state(tmp_path, capsys):
+    """gotg restore should restore conversation and update iteration.json."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    # Set phase in iteration.json
+    iter_json = json.loads((team / "iteration.json").read_text())
+    iter_json["iterations"][0]["phase"] = "grooming"
+    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
+
+    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"original"}\n')
+
+    from gotg.checkpoint import create_checkpoint
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    create_checkpoint(iter_dir, iteration, description="checkpoint 1")
+
+    # Modify state after checkpoint
+    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"modified"}\n')
+
+    with patch("sys.argv", ["gotg", "restore", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("builtins.input", return_value="n"):  # skip safety checkpoint
+                main()
+
+    # Conversation should be restored
+    assert "original" in (iter_dir / "conversation.jsonl").read_text()
+    output = capsys.readouterr().out
+    assert "Restored to checkpoint 1" in output
+
+
+def test_cmd_restore_safety_checkpoint_yes(tmp_path):
+    """Restore with Y should create safety checkpoint first."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    iter_json = json.loads((team / "iteration.json").read_text())
+    iter_json["iterations"][0]["phase"] = "grooming"
+    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
+
+    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"current"}\n')
+
+    from gotg.checkpoint import create_checkpoint
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    create_checkpoint(iter_dir, iteration)
+
+    with patch("sys.argv", ["gotg", "restore", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("builtins.input", return_value=""):  # default = yes
+                main()
+
+    # Safety checkpoint should exist as #2
+    assert (iter_dir / "checkpoints" / "2").is_dir()
+    state = json.loads((iter_dir / "checkpoints" / "2" / "state.json").read_text())
+    assert "Safety" in state["description"]
+
+
+def test_cmd_restore_safety_checkpoint_no(tmp_path):
+    """Restore with 'n' should skip safety checkpoint."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+    iter_json = json.loads((team / "iteration.json").read_text())
+    iter_json["iterations"][0]["phase"] = "grooming"
+    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
+
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.checkpoint import create_checkpoint
+    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    create_checkpoint(iter_dir, iteration)
+
+    with patch("sys.argv", ["gotg", "restore", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("builtins.input", return_value="n"):
+                main()
+
+    # Only original checkpoint, no safety
+    assert not (iter_dir / "checkpoints" / "2").exists()
+
+
+def test_cmd_restore_invalid_number(tmp_path, capsys):
+    """Restore with nonexistent checkpoint should error."""
+    team, iter_dir = _make_full_team_dir(tmp_path)
+
+    with patch("sys.argv", ["gotg", "restore", "99"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()

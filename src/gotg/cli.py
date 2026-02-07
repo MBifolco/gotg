@@ -4,11 +4,12 @@ import sys
 from pathlib import Path
 
 from gotg.agent import build_prompt, build_coach_prompt
+from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
     load_agents, load_coach, load_model_config,
     ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
-    save_iteration_phase, PHASE_ORDER,
+    save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
@@ -38,6 +39,15 @@ def _validate_task_assignments(iter_dir: Path, phase: str) -> None:
         print(f"Unassigned tasks: {', '.join(unassigned)}", file=sys.stderr)
         print("Edit .team/iterations/<id>/tasks.json to assign agents.", file=sys.stderr)
         raise SystemExit(1)
+
+
+def _auto_checkpoint(iter_dir: Path, iteration: dict) -> None:
+    """Create an automatic checkpoint after a command completes."""
+    try:
+        number = create_checkpoint(iter_dir, iteration, trigger="auto")
+        print(f"Checkpoint {number} created (auto)")
+    except Exception as e:
+        print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
 
 
 def run_conversation(
@@ -185,6 +195,7 @@ def cmd_run(args):
     _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
 
     run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach)
+    _auto_checkpoint(iter_dir, iteration)
 
 
 PROVIDER_PRESETS = {
@@ -311,6 +322,7 @@ def cmd_continue(args):
         target_total = iteration["max_turns"]
 
     run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach)
+    _auto_checkpoint(iter_dir, iteration)
 
 
 def cmd_show(args):
@@ -453,6 +465,82 @@ def cmd_advance(args):
     print()
     print(f"Phase advanced: {current_phase} → {next_phase}")
 
+    # Auto-checkpoint with updated phase
+    iteration["phase"] = next_phase
+    _auto_checkpoint(iter_dir, iteration)
+
+
+def cmd_checkpoint(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+    number = create_checkpoint(iter_dir, iteration, description=args.description, trigger="manual")
+    print(f"Checkpoint {number} created")
+
+
+def cmd_checkpoints(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    _, iter_dir = get_current_iteration(team_dir)
+    checkpoints = list_checkpoints(iter_dir)
+
+    if not checkpoints:
+        print("No checkpoints yet.")
+        return
+
+    print(f"{'#':<4} {'Phase':<18} {'Turns':<7} {'Trigger':<9} {'Description':<30} {'Timestamp'}")
+    print("-" * 100)
+    for cp in checkpoints:
+        print(
+            f"{cp['number']:<4} {cp['phase']:<18} {cp['turn_count']:<7} "
+            f"{cp['trigger']:<9} {cp.get('description', ''):<30} {cp['timestamp']}"
+        )
+
+
+def cmd_restore(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+
+    # Validate checkpoint exists before prompting
+    cp_path = iter_dir / "checkpoints" / str(args.number)
+    if not cp_path.exists():
+        print(f"Error: checkpoint {args.number} does not exist.", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Safety prompt
+    answer = input("Create checkpoint of current state before restoring? [Y/n] ")
+    if answer.strip().lower() not in ("n", "no"):
+        number = create_checkpoint(
+            iter_dir, iteration,
+            description=f"Safety before restore to #{args.number}",
+            trigger="manual",
+        )
+        print(f"Checkpoint {number} created (safety)")
+
+    state = restore_checkpoint(iter_dir, args.number)
+
+    # Update iteration.json to match checkpoint state
+    save_iteration_fields(
+        team_dir, iteration["id"],
+        phase=state["phase"],
+        max_turns=state["max_turns"],
+    )
+
+    print(f"Restored to checkpoint {args.number} (phase: {state['phase']}, turns: {state['turn_count']})")
+
 
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
@@ -472,6 +560,14 @@ def main():
 
     subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
 
+    cp_parser = subparsers.add_parser("checkpoint", help="Create a manual checkpoint")
+    cp_parser.add_argument("description", nargs="?", default=None, help="Checkpoint description")
+
+    subparsers.add_parser("checkpoints", help="List checkpoints for current iteration")
+
+    restore_parser = subparsers.add_parser("restore", help="Restore iteration to a checkpoint")
+    restore_parser.add_argument("number", type=int, help="Checkpoint number to restore")
+
     model_parser = subparsers.add_parser("model", help="View or change model config")
     model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
     model_parser.add_argument("model_name", nargs="?", help="Model name (overrides preset default)")
@@ -490,6 +586,12 @@ def main():
         cmd_model(args)
     elif args.command == "advance":
         cmd_advance(args)
+    elif args.command == "checkpoint":
+        cmd_checkpoint(args)
+    elif args.command == "checkpoints":
+        cmd_checkpoints(args)
+    elif args.command == "restore":
+        cmd_restore(args)
     else:
         parser.print_help()
 

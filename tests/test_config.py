@@ -7,7 +7,7 @@ from gotg.config import (
     load_model_config, load_agents, load_coach, load_iteration,
     read_dotenv, ensure_dotenv_key,
     get_iteration_dir, get_current_iteration, save_model_config,
-    save_iteration_phase, PHASE_ORDER,
+    save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
 
 
@@ -424,3 +424,24 @@ def test_load_coach_preserves_fields(tmp_path):
     (team / "team.json").write_text(json.dumps(team_config, indent=2))
     coach = load_coach(team)
     assert coach["custom"] == "value"
+
+
+# --- save_iteration_fields ---
+
+def test_save_iteration_fields_updates_multiple(team_dir):
+    save_iteration_fields(team_dir, "iter-1", phase="planning", max_turns=20)
+    iteration = load_iteration(team_dir)
+    assert iteration["phase"] == "planning"
+    assert iteration["max_turns"] == 20
+
+
+def test_save_iteration_fields_preserves_other_fields(team_dir):
+    save_iteration_fields(team_dir, "iter-1", phase="planning")
+    iteration = load_iteration(team_dir)
+    assert iteration["description"] == "Design a todo app"
+    assert iteration["status"] == "in-progress"
+
+
+def test_save_iteration_fields_missing_id_raises(team_dir):
+    with pytest.raises(SystemExit):
+        save_iteration_fields(team_dir, "nonexistent", phase="planning")
