@@ -19,14 +19,15 @@ gotg init .
 # Configure your model
 gotg model anthropic          # uses Claude Sonnet (recommended)
 # or: gotg model ollama       # uses local Ollama
+```
+### Edit your API key into .team/.env (for Anthropic/OpenAI)
+ANTHROPIC_API_KEY=sk-ant-...
 
-# Edit your API key into .team/.env (for Anthropic/OpenAI)
-# ANTHROPIC_API_KEY=sk-ant-...
+### Edit .team/iteration.json:
+- "description": "Design a CLI todo list application..."
+- "status": "in-progress"
 
-# Set up your first task — edit .team/iteration.json:
-#   "description": "Design a CLI todo list application..."
-#   "status": "in-progress"
-
+```bash
 # Run the conversation
 gotg run
 
