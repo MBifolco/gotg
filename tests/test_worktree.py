@@ -17,13 +17,19 @@ from gotg.worktree import (
     remove_worktree,
     list_active_worktrees,
     cleanup_layer_worktrees,
+    diff_branch,
+    list_layer_branches,
+    is_branch_merged,
+    is_merge_in_progress,
+    merge_branch,
+    abort_merge,
 )
 
 
 @pytest.fixture
 def git_project(tmp_path):
     """Create a minimal git repo with initial commit."""
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / "README.md").write_text("init")
@@ -279,3 +285,198 @@ def test_cleanup_layer_worktrees_preserves_other_layers(git_project):
 def test_cleanup_layer_worktrees_empty(git_project):
     removed = cleanup_layer_worktrees(git_project, 0)
     assert removed == []
+
+
+# --- diff_branch ---
+
+def test_diff_branch_with_changes(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "new.py").write_text("new code")
+    commit_worktree(wt, "add new.py")
+    result = diff_branch(git_project, "agent-1/layer-0")
+    assert result["branch"] == "agent-1/layer-0"
+    assert result["files_changed"] == 1
+    assert result["insertions"] > 0
+    assert result["empty"] is False
+    assert "new.py" in result["stat"]
+    assert "new code" in result["diff"]
+
+
+def test_diff_branch_empty(git_project):
+    create_worktree(git_project, "agent-1", 0)
+    result = diff_branch(git_project, "agent-1/layer-0")
+    assert result["empty"] is True
+    assert result["files_changed"] == 0
+    assert result["insertions"] == 0
+    assert result["deletions"] == 0
+
+
+def test_diff_branch_multiple_files(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "a.py").write_text("a")
+    (wt / "src" / "b.py").write_text("b")
+    commit_worktree(wt, "add two files")
+    result = diff_branch(git_project, "agent-1/layer-0")
+    assert result["files_changed"] == 2
+
+
+def test_diff_branch_modified_existing(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "main.py").write_text("modified code")
+    commit_worktree(wt, "modify main.py")
+    result = diff_branch(git_project, "agent-1/layer-0")
+    assert result["files_changed"] == 1
+    assert result["deletions"] > 0
+    assert result["insertions"] > 0
+
+
+def test_diff_branch_nonexistent(git_project):
+    with pytest.raises(WorktreeError, match="does not exist"):
+        diff_branch(git_project, "nonexistent/branch")
+
+
+# --- list_layer_branches ---
+
+def test_list_layer_branches_filters_correctly(git_project):
+    create_worktree(git_project, "agent-1", 0)
+    create_worktree(git_project, "agent-2", 0)
+    create_worktree(git_project, "agent-1", 1)
+    result = list_layer_branches(git_project, 0)
+    assert result == ["agent-1/layer-0", "agent-2/layer-0"]
+    result1 = list_layer_branches(git_project, 1)
+    assert result1 == ["agent-1/layer-1"]
+
+
+def test_list_layer_branches_empty(git_project):
+    assert list_layer_branches(git_project, 0) == []
+
+
+def test_list_layer_branches_includes_removed_worktrees(git_project):
+    """Branches persist after worktrees are removed."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "file.txt").write_text("data")
+    commit_worktree(wt, "add file")
+    remove_worktree(git_project, wt)
+    result = list_layer_branches(git_project, 0)
+    assert "agent-1/layer-0" in result
+
+
+# --- is_branch_merged ---
+
+def test_is_branch_merged_false_before_merge(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    assert is_branch_merged(git_project, "agent-1/layer-0") is False
+
+
+def test_is_branch_merged_true_after_merge(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    merge_branch(git_project, "agent-1/layer-0")
+    assert is_branch_merged(git_project, "agent-1/layer-0") is True
+
+
+# --- is_merge_in_progress ---
+
+def test_is_merge_in_progress_false_normally(git_project):
+    assert is_merge_in_progress(git_project) is False
+
+
+def test_is_merge_in_progress_true_during_conflict(git_project):
+    """Create a conflict so merge pauses mid-way."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "main.py").write_text("agent version")
+    commit_worktree(wt, "agent change")
+    # Change the same file on main
+    (git_project / "src" / "main.py").write_text("main version")
+    subprocess.run(["git", "add", "-A"], cwd=git_project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=git_project, capture_output=True, check=True)
+    # This merge should conflict
+    merge_branch(git_project, "agent-1/layer-0")
+    assert is_merge_in_progress(git_project) is True
+    # Clean up
+    subprocess.run(["git", "merge", "--abort"], cwd=git_project, capture_output=True)
+
+
+# --- merge_branch ---
+
+def test_merge_branch_clean(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+    result = merge_branch(git_project, "agent-1/layer-0")
+    assert result["success"] is True
+    assert result["branch"] == "agent-1/layer-0"
+    assert len(result["commit"]) >= 7
+    # Verify main has the file
+    assert (git_project / "src" / "feature.py").read_text() == "feature code"
+
+
+def test_merge_branch_conflict(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "main.py").write_text("agent version")
+    commit_worktree(wt, "agent change")
+    # Change same file on main
+    (git_project / "src" / "main.py").write_text("main version")
+    subprocess.run(["git", "add", "-A"], cwd=git_project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=git_project, capture_output=True, check=True)
+    result = merge_branch(git_project, "agent-1/layer-0")
+    assert result["success"] is False
+    assert "src/main.py" in result["conflicts"]
+    # Clean up
+    subprocess.run(["git", "merge", "--abort"], cwd=git_project, capture_output=True)
+
+
+def test_merge_branch_nonexistent(git_project):
+    with pytest.raises(WorktreeError, match="does not exist"):
+        merge_branch(git_project, "nonexistent/branch")
+
+
+def test_merge_branch_creates_merge_commit(git_project):
+    """--no-ff creates a merge commit even when fast-forward is possible."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    merge_branch(git_project, "agent-1/layer-0")
+    # Check last commit message contains "Merge"
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-1"],
+        cwd=git_project, capture_output=True, text=True,
+    )
+    assert "Merge" in result.stdout
+
+
+def test_merge_branch_not_on_main(git_project):
+    """Raises WorktreeError when HEAD is not on main."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    # Checkout a different branch
+    subprocess.run(["git", "checkout", "-b", "other"], cwd=git_project, capture_output=True, check=True)
+    with pytest.raises(WorktreeError, match="expected 'main'"):
+        merge_branch(git_project, "agent-1/layer-0")
+    # Clean up — go back to main
+    subprocess.run(["git", "checkout", "main"], cwd=git_project, capture_output=True)
+
+
+# --- abort_merge ---
+
+def test_abort_merge_restores_clean_state(git_project):
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "main.py").write_text("agent version")
+    commit_worktree(wt, "agent change")
+    (git_project / "src" / "main.py").write_text("main version")
+    subprocess.run(["git", "add", "-A"], cwd=git_project, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=git_project, capture_output=True, check=True)
+    merge_branch(git_project, "agent-1/layer-0")
+    assert is_merge_in_progress(git_project) is True
+    abort_merge(git_project)
+    assert is_merge_in_progress(git_project) is False
+    assert (git_project / "src" / "main.py").read_text() == "main version"
+
+
+def test_abort_merge_no_merge_in_progress(git_project):
+    with pytest.raises(WorktreeError, match="No merge in progress"):
+        abort_merge(git_project)

@@ -230,6 +230,152 @@ def list_active_worktrees(project_root: Path) -> list[dict]:
     return worktrees
 
 
+def diff_branch(project_root: Path, branch: str) -> dict:
+    """Return diff of a branch against main (three-dot: changes since divergence).
+
+    Returns dict with keys:
+        branch, stat, diff, files_changed, insertions, deletions, empty
+    """
+    if not _branch_exists(project_root, branch):
+        raise WorktreeError(f"Branch '{branch}' does not exist.")
+
+    stat = _git(project_root, "diff", "--stat", f"main...{branch}").stdout
+    full_diff = _git(project_root, "diff", f"main...{branch}").stdout
+    numstat = _git(project_root, "diff", "--numstat", f"main...{branch}").stdout
+
+    files_changed = 0
+    insertions = 0
+    deletions = 0
+    for line in numstat.strip().splitlines():
+        if not line:
+            continue
+        parts = line.split("\t")
+        files_changed += 1
+        # Binary files show "-" for counts
+        if parts[0] != "-":
+            insertions += int(parts[0])
+        if parts[1] != "-":
+            deletions += int(parts[1])
+
+    return {
+        "branch": branch,
+        "stat": stat,
+        "diff": full_diff,
+        "files_changed": files_changed,
+        "insertions": insertions,
+        "deletions": deletions,
+        "empty": files_changed == 0,
+    }
+
+
+def list_layer_branches(project_root: Path, layer: int) -> list[str]:
+    """List branches matching */layer-{N} pattern. Returns sorted list of branch names."""
+    result = _git(
+        project_root,
+        "for-each-ref",
+        f"--format=%(refname:short)",
+        f"refs/heads/*/layer-{layer}",
+    )
+    branches = [line for line in result.stdout.strip().splitlines() if line]
+    return sorted(branches)
+
+
+def is_branch_merged(project_root: Path, branch: str) -> bool:
+    """Check if branch is fully merged into current HEAD (main)."""
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", branch, "HEAD"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def is_merge_in_progress(project_root: Path) -> bool:
+    """Check if a merge is currently in progress."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--git-path", "MERGE_HEAD"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False
+    merge_head_path = Path(result.stdout.strip())
+    if not merge_head_path.is_absolute():
+        merge_head_path = project_root / merge_head_path
+    return merge_head_path.exists()
+
+
+def merge_branch(project_root: Path, branch: str) -> dict:
+    """Merge a branch into main with --no-ff.
+
+    Returns dict with keys: success, branch, commit (if success), conflicts (if not)
+    Raises WorktreeError if not on main or branch doesn't exist.
+    """
+    # Verify HEAD is on main
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+    current = result.stdout.strip()
+    if current != "main":
+        raise WorktreeError(
+            f"HEAD is on '{current}', expected 'main'. "
+            "gotg requires the default branch to be named 'main'."
+        )
+
+    if not _branch_exists(project_root, branch):
+        raise WorktreeError(f"Branch '{branch}' does not exist.")
+
+    merge_result = subprocess.run(
+        ["git", "merge", "--no-ff", "-m", f"Merge {branch} into main", branch],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+
+    if merge_result.returncode == 0:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        return {
+            "success": True,
+            "branch": branch,
+            "commit": commit.stdout.strip(),
+        }
+
+    # Non-zero exit: conflict or hard error?
+    if is_merge_in_progress(project_root):
+        conflict_result = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=U"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        conflicts = [f for f in conflict_result.stdout.strip().splitlines() if f]
+        return {
+            "success": False,
+            "branch": branch,
+            "conflicts": conflicts,
+        }
+
+    # Hard error (not a conflict)
+    raise WorktreeError(merge_result.stderr.strip() or f"git merge failed (exit {merge_result.returncode})")
+
+
+def abort_merge(project_root: Path) -> None:
+    """Abort an in-progress merge. Raises WorktreeError if no merge in progress."""
+    if not is_merge_in_progress(project_root):
+        raise WorktreeError("No merge in progress.")
+    _git(project_root, "merge", "--abort")
+
+
 def cleanup_layer_worktrees(project_root: Path, layer: int) -> list[str]:
     """Remove all worktrees for a given layer. Returns list of removed dir names."""
     suffix = f"-layer-{layer}"

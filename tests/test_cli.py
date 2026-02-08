@@ -26,7 +26,7 @@ def test_find_team_dir_returns_none_when_missing(tmp_path):
 
 def test_cli_init(tmp_path):
     import subprocess
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     with patch("sys.argv", ["gotg", "init", str(tmp_path)]):
         main()
     assert (tmp_path / ".team").is_dir()
@@ -35,7 +35,7 @@ def test_cli_init(tmp_path):
 
 def test_cli_init_defaults_to_cwd(tmp_path, monkeypatch):
     import subprocess
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     monkeypatch.chdir(tmp_path)
     with patch("sys.argv", ["gotg", "init"]):
         main()
@@ -2091,7 +2091,7 @@ def test_setup_worktrees_warns_without_file_access(tmp_path, capsys):
 def test_cmd_worktrees_no_worktrees(tmp_path, monkeypatch, capsys):
     """gotg worktrees with no active worktrees prints a message."""
     import subprocess
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / "f.txt").write_text("x")
@@ -2118,7 +2118,7 @@ def test_cmd_worktrees_no_worktrees(tmp_path, monkeypatch, capsys):
 def test_cmd_commit_worktrees_commits_dirty(tmp_path, monkeypatch, capsys):
     """gotg commit-worktrees should commit dirty worktrees."""
     import subprocess
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
     (tmp_path / "f.txt").write_text("x")
@@ -2145,3 +2145,322 @@ def test_cmd_commit_worktrees_commits_dirty(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "committed" in output
     assert "agent-1/layer-0" in output
+
+
+# --- review and merge commands ---
+
+def _make_git_project_with_team(tmp_path):
+    """Helper: git repo with initial commit + .team directory (gitignored like gotg init)."""
+    import subprocess
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("print('hello')")
+    (tmp_path / ".gitignore").write_text("/.team/\n/.worktrees/\n.env\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "team.json").write_text("{}")
+    (team / "iteration.json").write_text(json.dumps({
+        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress", "max_turns": 10}],
+        "current": "iter-1",
+    }))
+    (team / "iterations" / "iter-1").mkdir(parents=True)
+    return tmp_path
+
+
+def test_cmd_review_shows_diffs(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "review"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "agent-1/layer-0" in output
+    assert "feature.py" in output
+    assert "feature code" in output
+
+
+def test_cmd_review_stat_only(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "review", "--stat-only"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "feature.py" in output
+    # Full diff content should NOT appear in stat-only mode
+    assert "feature code" not in output
+
+
+def test_cmd_review_specific_branch(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt1 = create_worktree(tmp_path, "agent-1", 0)
+    wt2 = create_worktree(tmp_path, "agent-2", 0)
+    (wt1 / "src" / "a.py").write_text("a")
+    (wt2 / "src" / "b.py").write_text("b")
+    commit_worktree(wt1, "add a")
+    commit_worktree(wt2, "add b")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "review", "agent-1/layer-0"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "agent-1/layer-0" in output
+    assert "a.py" in output
+    assert "agent-2/layer-0" not in output
+
+
+def test_cmd_review_summary_line(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "review"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Layer 0:" in output
+    assert "branch(es)" in output
+
+
+def test_cmd_merge_single_branch(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Merged agent-1/layer-0 into main" in output
+    assert (tmp_path / "src" / "feature.py").read_text() == "feature code"
+
+
+def test_cmd_merge_all(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt1 = create_worktree(tmp_path, "agent-1", 0)
+    wt2 = create_worktree(tmp_path, "agent-2", 0)
+    (wt1 / "src" / "a.py").write_text("a")
+    (wt2 / "src" / "b.py").write_text("b")
+    commit_worktree(wt1, "add a")
+    commit_worktree(wt2, "add b")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "merge", "all"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "2 branch(es) merged into main" in output
+    assert (tmp_path / "src" / "a.py").exists()
+    assert (tmp_path / "src" / "b.py").exists()
+
+
+def test_cmd_merge_all_stops_on_conflict(tmp_path, monkeypatch, capsys):
+    import subprocess
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+
+    wt1 = create_worktree(tmp_path, "agent-1", 0)
+    wt2 = create_worktree(tmp_path, "agent-2", 0)
+    (wt1 / "src" / "main.py").write_text("agent-1 version")
+    (wt2 / "src" / "main.py").write_text("agent-2 version")
+    commit_worktree(wt1, "agent-1 change")
+    commit_worktree(wt2, "agent-2 change")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "merge", "all"]):
+        main()
+
+    output = capsys.readouterr().out
+    # First should merge, second should conflict
+    assert "CONFLICT" in output
+    # Clean up
+    subprocess.run(["git", "merge", "--abort"], cwd=tmp_path, capture_output=True)
+
+
+def test_cmd_merge_already_merged(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree, merge_branch
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    merge_branch(tmp_path, "agent-1/layer-0")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "already merged" in output
+
+
+def test_cmd_merge_abort(tmp_path, monkeypatch, capsys):
+    import subprocess
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree, merge_branch
+
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "main.py").write_text("agent version")
+    commit_worktree(wt, "agent change")
+    (tmp_path / "src" / "main.py").write_text("main version")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=tmp_path, capture_output=True, check=True)
+    merge_branch(tmp_path, "agent-1/layer-0")  # creates conflict
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "merge", "--abort"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Merge aborted" in output
+
+
+def test_cmd_merge_dirty_worktree_blocks(tmp_path, monkeypatch, capsys):
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+    # Make worktree dirty
+    (wt / "src" / "dirty.py").write_text("uncommitted")
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+            main()
+
+    output = capsys.readouterr().err
+    assert "uncommitted changes" in output
+    assert "commit-worktrees" in output
+
+
+# --- Integration tests ---
+
+def test_full_layer_create_review_merge(tmp_path, monkeypatch, capsys):
+    """Full flow: create worktrees, commit, review, merge all, verify main."""
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+
+    wt1 = create_worktree(tmp_path, "agent-1", 0)
+    wt2 = create_worktree(tmp_path, "agent-2", 0)
+    (wt1 / "src" / "routes.py").write_text("routes code")
+    (wt2 / "src" / "models.py").write_text("models code")
+    commit_worktree(wt1, "add routes")
+    commit_worktree(wt2, "add models")
+
+    monkeypatch.chdir(tmp_path)
+
+    # Review
+    with patch("sys.argv", ["gotg", "review"]):
+        main()
+    review_output = capsys.readouterr().out
+    assert "routes.py" in review_output
+    assert "models.py" in review_output
+
+    # Merge all
+    with patch("sys.argv", ["gotg", "merge", "all"]):
+        main()
+    merge_output = capsys.readouterr().out
+    assert "2 branch(es) merged into main" in merge_output
+
+    # Verify main has both files
+    assert (tmp_path / "src" / "routes.py").read_text() == "routes code"
+    assert (tmp_path / "src" / "models.py").read_text() == "models code"
+
+
+def test_layer_progression(tmp_path, monkeypatch, capsys):
+    """Merge layer 0, create layer 1, verify layer 1 sees layer 0 work."""
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree, merge_branch
+
+    # Layer 0
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "base.py").write_text("base module")
+    commit_worktree(wt, "add base")
+    merge_branch(tmp_path, "agent-1/layer-0")
+
+    # Layer 1 — should see layer 0 work since it branches from main (which now has layer 0)
+    wt1 = create_worktree(tmp_path, "agent-1", 1)
+    assert (wt1 / "src" / "base.py").read_text() == "base module"
+
+
+def test_cmd_review_specific_branch_no_layer_label(tmp_path, monkeypatch, capsys):
+    """When reviewing a specific branch, summary omits 'Layer N:' prefix."""
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "review", "agent-1/layer-0"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Layer 0:" not in output
+    assert "1 branch(es)" in output
+
+
+def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
+    """Dirty main checkout blocks merge."""
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+
+    # Dirty main
+    (tmp_path / "src" / "dirty.py").write_text("uncommitted on main")
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+            main()
+
+    output = capsys.readouterr().err
+    assert "uncommitted changes on main" in output
+
+
+def test_cmd_merge_all_handles_worktree_error(tmp_path, monkeypatch, capsys):
+    """merge all catches WorktreeError from merge_branch and reports cleanly."""
+    import subprocess
+    _make_git_project_with_team(tmp_path)
+    from gotg.worktree import create_worktree, commit_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature")
+    commit_worktree(wt, "add feature")
+
+    # Move main off the main branch to trigger "not on main" error
+    subprocess.run(["git", "checkout", "-b", "other"], cwd=tmp_path, capture_output=True, check=True)
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        with patch("sys.argv", ["gotg", "merge", "all"]):
+            main()
+
+    output = capsys.readouterr().err
+    assert "expected 'main'" in output
+    # Clean up
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True)

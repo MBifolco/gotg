@@ -61,12 +61,27 @@ def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args) -> dic
         return None
 
     from gotg.worktree import ensure_git_repo, create_worktree, ensure_gitignore_entries, WorktreeError
+    import subprocess as _sp
 
     project_root = team_dir.parent
     try:
         ensure_git_repo(project_root)
     except WorktreeError as e:
         print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Verify HEAD is on main — worktrees branch from HEAD
+    head_result = _sp.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=project_root, capture_output=True, text=True,
+    )
+    current_branch = head_result.stdout.strip()
+    if current_branch != "main":
+        print(
+            f"Error: HEAD is on '{current_branch}', expected 'main'. "
+            "Worktrees branch from HEAD — switch to main first.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     for warning in ensure_gitignore_entries(project_root):
@@ -823,6 +838,187 @@ def cmd_deny(args):
         raise SystemExit(1)
 
 
+def cmd_review(args):
+    """Show diffs of agent branches against main."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.worktree import (
+        ensure_git_repo, diff_branch, list_layer_branches,
+        is_branch_merged, WorktreeError,
+    )
+
+    project_root = team_dir.parent
+    try:
+        ensure_git_repo(project_root)
+    except WorktreeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    if args.branch:
+        branches = [args.branch]
+    else:
+        branches = list_layer_branches(project_root, args.layer)
+
+    if not branches:
+        print(f"No branches found for layer {args.layer}.")
+        return
+
+    total_files = 0
+    total_ins = 0
+    total_del = 0
+
+    for br in branches:
+        merged = is_branch_merged(project_root, br)
+        label = f" [merged]" if merged else ""
+        print(f"=== {br}{label} ===")
+
+        try:
+            result = diff_branch(project_root, br)
+        except WorktreeError as e:
+            print(f"Error: {e}")
+            print()
+            continue
+
+        if result["empty"]:
+            print("(no changes)")
+        else:
+            print(result["stat"].rstrip())
+            if not args.stat_only:
+                print()
+                print(result["diff"].rstrip())
+            total_files += result["files_changed"]
+            total_ins += result["insertions"]
+            total_del += result["deletions"]
+
+        print()
+
+    print("---")
+    if args.branch:
+        print(f"{len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
+    else:
+        print(f"Layer {args.layer}: {len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
+
+
+def cmd_merge(args):
+    """Merge an agent branch into main."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.worktree import (
+        ensure_git_repo, merge_branch, abort_merge, is_merge_in_progress,
+        list_layer_branches, is_branch_merged, is_worktree_dirty,
+        list_active_worktrees, WorktreeError,
+    )
+
+    project_root = team_dir.parent
+    try:
+        ensure_git_repo(project_root)
+    except WorktreeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    if args.abort:
+        try:
+            abort_merge(project_root)
+            print("Merge aborted.")
+        except WorktreeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+        return
+
+    if is_merge_in_progress(project_root):
+        print("Error: a merge is already in progress.", file=sys.stderr)
+        print("Resolve conflicts and commit, or run 'gotg merge --abort'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Block if main has uncommitted changes
+    if is_worktree_dirty(project_root):
+        print("Error: uncommitted changes on main.", file=sys.stderr)
+        print("Commit or stash changes before merging.", file=sys.stderr)
+        raise SystemExit(1)
+
+    if args.branch == "all":
+        branches = list_layer_branches(project_root, args.layer)
+        if not branches:
+            print(f"No branches found for layer {args.layer}.")
+            return
+
+        # Filter out already-merged branches
+        unmerged = [br for br in branches if not is_branch_merged(project_root, br)]
+        if not unmerged:
+            print(f"All {len(branches)} branch(es) in layer {args.layer} already merged.")
+            return
+
+        # Check for dirty worktrees (hard block unless --force)
+        if not args.force:
+            active_wts = list_active_worktrees(project_root)
+            wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
+            for br in unmerged:
+                if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
+                    print(f"Error: uncommitted changes in worktree for {br}.", file=sys.stderr)
+                    print("Run 'gotg commit-worktrees' first, or use --force to merge anyway.", file=sys.stderr)
+                    raise SystemExit(1)
+
+        merged_count = 0
+        for br in unmerged:
+            print(f"Merging {br}...")
+            try:
+                result = merge_branch(project_root, br)
+            except WorktreeError as e:
+                print(f"\nError merging {br}: {e}", file=sys.stderr)
+                print(f"Merged {merged_count}/{len(unmerged)} branches before error.")
+                raise SystemExit(1)
+            if result["success"]:
+                print(f"  Merged: {result['commit']}")
+                merged_count += 1
+            else:
+                print(f"\nCONFLICT merging {br}:")
+                for f in result["conflicts"]:
+                    print(f"  {f}")
+                print(f"\nMerged {merged_count}/{len(unmerged)} branches before conflict.")
+                print("Resolve conflicts and commit, then run 'gotg merge all' again,")
+                print("or run 'gotg merge --abort' to undo.")
+                return
+
+        print(f"\n{merged_count} branch(es) merged into main.")
+    else:
+        branch = args.branch
+
+        if is_branch_merged(project_root, branch):
+            print(f"Branch '{branch}' is already merged into main.")
+            return
+
+        # Check dirty worktree (hard block unless --force)
+        if not args.force:
+            active_wts = list_active_worktrees(project_root)
+            wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
+            if branch in wt_by_branch and is_worktree_dirty(wt_by_branch[branch]):
+                print(f"Error: uncommitted changes in worktree for {branch}.", file=sys.stderr)
+                print("Run 'gotg commit-worktrees' first, or use --force to merge anyway.", file=sys.stderr)
+                raise SystemExit(1)
+
+        try:
+            result = merge_branch(project_root, branch)
+        except WorktreeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+        if result["success"]:
+            print(f"Merged {branch} into main: {result['commit']}")
+        else:
+            print(f"CONFLICT merging {branch}:")
+            for f in result["conflicts"]:
+                print(f"  {f}")
+            print("\nResolve conflicts and commit, or run 'gotg merge --abort' to undo.")
+
+
 def cmd_worktrees(args):
     """List active git worktrees."""
     cwd = Path.cwd()
@@ -936,6 +1132,17 @@ def main():
     deny_parser.add_argument("request_id", help="Approval request ID (e.g., 'a1')")
     deny_parser.add_argument("-m", "--message", help="Denial reason")
 
+    review_parser = subparsers.add_parser("review", help="Review agent diffs against main")
+    review_parser.add_argument("--layer", type=int, default=0, help="Layer to review (default: 0)")
+    review_parser.add_argument("--stat-only", action="store_true", help="Show only file stats, not full diff")
+    review_parser.add_argument("branch", nargs="?", default=None, help="Specific branch to review")
+
+    merge_parser = subparsers.add_parser("merge", help="Merge an agent branch into main")
+    merge_parser.add_argument("branch", nargs="?", default=None, help="Branch name or 'all'")
+    merge_parser.add_argument("--layer", type=int, default=0, help="Layer for 'merge all' (default: 0)")
+    merge_parser.add_argument("--abort", action="store_true", help="Abort in-progress merge")
+    merge_parser.add_argument("--force", action="store_true", help="Merge even if worktree has uncommitted changes")
+
     subparsers.add_parser("worktrees", help="List active git worktrees")
 
     commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
@@ -967,6 +1174,12 @@ def main():
         cmd_approve(args)
     elif args.command == "deny":
         cmd_deny(args)
+    elif args.command == "review":
+        cmd_review(args)
+    elif args.command == "merge":
+        if not args.abort and args.branch is None:
+            parser.error("merge requires a branch name or 'all' (or use --abort)")
+        cmd_merge(args)
     elif args.command == "worktrees":
         cmd_worktrees(args)
     elif args.command == "commit-worktrees":

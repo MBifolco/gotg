@@ -12,279 +12,268 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# Initialize a project somewhere
+# Initialize a project (must be a git repo)
 mkdir /tmp/my-project && cd /tmp/my-project
+git init
 gotg init .
 
 # Configure your model
 gotg model anthropic          # uses Claude Sonnet (recommended)
 # or: gotg model ollama       # uses local Ollama
 ```
-### Edit your API key into .team/.env (for Anthropic/OpenAI)
-ANTHROPIC_API_KEY=sk-ant-...
 
-### Edit .team/iteration.json:
-- "description": "Design a CLI todo list application..."
-- "status": "in-progress"
+Edit your API key into `.env`:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Edit `.team/iteration.json` — set `description` and `status`:
+```json
+{
+  "iterations": [
+    {
+      "id": "iter-1",
+      "title": "",
+      "description": "Design a CLI todo list application...",
+      "status": "in-progress",
+      "phase": "grooming",
+      "max_turns": 10
+    }
+  ],
+  "current": "iter-1"
+}
+```
 
 ```bash
-# Run the conversation
-gotg run
-
-# Replay it later
-gotg show
+gotg run                      # Agents discuss the task
+gotg show                     # Replay the conversation
+gotg continue -m "Feedback"   # Inject your input and resume
+gotg advance                  # Move to the next phase
 ```
 
 ## Prerequisites
 
 - **Python 3.10+** (3.11+ recommended)
+- **Git** (required — `gotg init` requires a git repository)
 - One of:
   - **Anthropic API key** (recommended — Claude Sonnet)
   - **OpenAI API key**
   - **Ollama** running locally (free, no API key needed)
 
-## How to Collaborate
+## How It Works
 
-GOTG puts you in the role of **Product Manager**. Two AI agents discuss and design based on your task description, and you steer the conversation with feedback.
+GOTG puts you in the role of **Product Manager**. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. You steer the conversation with feedback and control when to advance.
 
-### 1. Set up a project
+### Phases
 
-```bash
-mkdir /tmp/my-project && cd /tmp/my-project
-gotg init .
-```
+Every iteration progresses through three phases:
 
-This creates a `.team/` directory (like `git init` creates `.git/`):
+1. **Grooming** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria. No code, no implementation details.
+2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies and done criteria. The coach extracts a structured `tasks.json`.
+3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy. Layer by layer, one task at a time.
 
-```
-.team/
-  model.json           # Model provider config
-  .env                 # API keys (gitignored)
-  iteration.json       # Current task definition
-  conversation.jsonl   # The conversation log (append-only)
-  agents/
-    agent-1.json       # Agent config + system prompt
-    agent-2.json       # Agent config + system prompt
-```
+The coach facilitates each phase — summarizing progress, flagging gaps, and signaling when the team is ready to advance. You control transitions with `gotg advance`.
 
-### 2. Configure the model
+### The PM Workflow
 
 ```bash
-gotg model anthropic                    # Claude Sonnet (recommended)
-gotg model openai                       # GPT-4o
-gotg model ollama                       # Local Ollama (qwen2.5-coder:7b)
-gotg model anthropic claude-sonnet-4-5-20250929  # Specific model name
+# Phase 1: Grooming
+gotg run                                    # Agents discuss requirements
+gotg show                                   # Read what they said
+gotg continue -m "Also handle offline mode" # Steer the scope
+gotg advance                                # Coach writes groomed.md, move to planning
+
+# Phase 2: Planning
+gotg continue                               # Agents break scope into tasks
+gotg advance                                # Coach writes tasks.json
+# Edit tasks.json to assign agents, then:
+
+# Phase 3: Pre-code-review
+gotg continue                               # Agents propose implementations
+gotg advance                                # Ready for coding
 ```
-
-For Anthropic or OpenAI, add your API key to `.team/.env`:
-
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-```
-
-`gotg model` will show current config and whether your key is set.
-
-### 3. Define a task
-
-Edit `.team/iteration.json`:
-
-```json
-{
-  "id": "iter-1",
-  "description": "Design a CLI todo list application. Discuss the command interface, data storage format, and core features.",
-  "status": "in-progress",
-  "max_turns": 10
-}
-```
-
-### 4. Let the agents talk
-
-```bash
-gotg run                  # Run the full conversation (default: 10 turns)
-gotg run --max-turns 4    # Or just 4 turns to start
-```
-
-### 5. Jump in with feedback
-
-Read what the agents discussed, then inject your PM perspective:
-
-```bash
-gotg continue -m "Good ideas, but we need to account for authentication later. Also use TOML for config."
-```
-
-This appends your message (as `"from": "human"`) and resumes the agent conversation. By default it runs until the iteration's `max_turns` is reached, or you can specify how many more agent turns:
-
-```bash
-gotg continue --max-turns 4 -m "Focus on the data model next."
-gotg continue --max-turns 2       # No message, just let them keep going
-```
-
-Human messages don't count toward `max_turns` — only agent messages do.
-
-### 6. Review the conversation
-
-```bash
-gotg show                 # Replay with color-coded names
-```
-
-Agent messages are color-coded (cyan/yellow), human messages show in green.
-
-### Typical workflow
-
-```bash
-gotg run --max-turns 4                          # Agents discuss initial thoughts
-gotg show                                        # Read what they said
-gotg continue --max-turns 4 -m "I like the SQLite idea but skip the ORM"
-gotg show                                        # See how they responded
-gotg continue --max-turns 4 -m "Let's finalize the schema"
-```
-
-You're steering the design conversation, not writing code. The agents treat you as a teammate — they'll reference your input, push back if they disagree, and incorporate your direction.
 
 ## Commands
 
-### `gotg init [path]`
+### Core
 
-Initialize a `.team/` directory. Defaults to current directory.
+| Command | Description |
+|---------|-------------|
+| `gotg init [path]` | Initialize `.team/` in a git repo (defaults to current directory) |
+| `gotg run [--max-turns N]` | Start the agent conversation |
+| `gotg continue [-m MSG] [--max-turns N]` | Resume with optional human input |
+| `gotg show` | Replay the conversation log |
+| `gotg advance` | Advance to the next phase |
+| `gotg model [provider] [model]` | View or change model config |
 
-### `gotg run [--max-turns N]`
+### Checkpoints
 
-Run the agent conversation. Validates that `.team/` exists, iteration is `in-progress`, and at least 2 agents are configured. Supports **resuming** — if `conversation.jsonl` already has messages, picks up where it left off.
+| Command | Description |
+|---------|-------------|
+| `gotg checkpoint [description]` | Create a manual checkpoint |
+| `gotg checkpoints` | List all checkpoints |
+| `gotg restore N` | Restore to checkpoint N |
 
-### `gotg continue [-m MESSAGE] [--max-turns N]`
+### File Approvals
 
-Continue a conversation with optional human input. `-m` injects your message before agents resume. `--max-turns` controls how many more agent turns to run.
+| Command | Description |
+|---------|-------------|
+| `gotg approvals` | Show pending file write requests |
+| `gotg approve <id \| all>` | Approve a pending write |
+| `gotg deny <id> [-m reason]` | Deny a pending write with reason |
 
-### `gotg show`
+### Worktrees & Merge
 
-Replay the conversation log with color-coded agent names.
+| Command | Description |
+|---------|-------------|
+| `gotg worktrees` | List active git worktrees |
+| `gotg commit-worktrees [-m MSG]` | Commit all dirty worktrees |
+| `gotg review [branch] [--layer N] [--stat-only]` | Review agent diffs against main |
+| `gotg merge <branch \| all> [--layer N] [--abort] [--force]` | Merge agent branches into main |
 
-### `gotg advance`
+## Project Structure
 
-Advance the current iteration to the next phase. Phases proceed in order: `grooming` → `planning` → `pre-code-review`. On phase transitions, the coach produces artifacts: `groomed.md` (scope summary from grooming) and `tasks.json` (structured task list from planning).
+After `gotg init`, your project looks like this:
 
-### `gotg model [provider] [model_name]`
-
-View or change model config. Providers: `anthropic`, `openai`, `ollama`.
-
-### `gotg checkpoint [description]`
-
-Create a manual checkpoint of the current iteration state. See [Checkpoints](#checkpoints) below.
-
-### `gotg checkpoints`
-
-List all checkpoints for the current iteration.
-
-### `gotg restore N`
-
-Restore the iteration to checkpoint number N. Prompts to create a safety checkpoint first.
-
-## Checkpoints
-
-GOTG automatically checkpoints iteration state after every `run`, `continue`, and `advance` command. You can also create manual checkpoints at any time. This lets you experiment with prompt changes, roll back failed conversations, and save money on testing.
-
-### How it works
-
-Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<number>/`. Each checkpoint contains a copy of all iteration files (conversation log, groomed.md, tasks.json, etc.) plus a `state.json` with metadata.
-
-```bash
-# See all checkpoints
-gotg checkpoints
-
-#    Phase              Turns   Trigger   Description                    Timestamp
-# ----------------------------------------------------------------------------------------------------
-# 1  grooming           8       auto      Auto after auto                2026-02-07T20:15:33+00:00
-# 2  planning           14      auto      Auto after auto                2026-02-07T20:22:10+00:00
-# 3  planning           14      manual    before prompt experiment       2026-02-07T20:25:00+00:00
 ```
-
-### Manual checkpoints
-
-Save a named snapshot before making changes:
-
-```bash
-gotg checkpoint "before prompt experiment"
-# ... try something ...
-gotg restore 3      # roll back if it didn't work
+my-project/
+  .git/
+  .env                         # API keys (gitignored)
+  .gitignore                   # Auto-configured: .team/, .env, .worktrees/
+  .team/
+    team.json                  # Model, agents, coach, file access, worktree config
+    iteration.json             # Iteration list with current pointer
+    iterations/
+      iter-1/
+        conversation.jsonl     # Append-only conversation log
+        groomed.md             # Created on grooming → planning advance
+        tasks.json             # Created on planning → pre-code-review advance
+        debug.jsonl            # Diagnostic log (auto)
+        approvals.json         # Approval requests (if enabled)
+        checkpoints/           # Checkpoint snapshots
+  .worktrees/                  # Git worktrees (if enabled, gitignored)
+    agent-1-layer-0/
+    agent-2-layer-0/
+  src/                         # Your project code
 ```
-
-### Restoring
-
-When you restore, GOTG asks if you want to create a safety checkpoint of the current state first (in case you want to undo the restore):
-
-```bash
-gotg restore 1
-# Create checkpoint of current state before restoring? [Y/n]
-# Checkpoint 4 created (safety)
-# Restored to checkpoint 1 (phase: grooming, turns: 8)
-```
-
-Restore updates both the iteration files and `iteration.json` (phase, max_turns) so that `gotg run` or `gotg continue` picks up from the right place.
-
-### What gets checkpointed
-
-Everything in the iteration directory except `debug.jsonl` (large diagnostic log) and the `checkpoints/` directory itself. New artifact files added in future versions are automatically included — no configuration needed.
 
 ## Configuration
 
-All configuration lives in `.team/` and is plain JSON — edit with any text editor.
-
-### `.team/model.json`
+All configuration lives in `.team/team.json`:
 
 ```json
 {
-  "provider": "anthropic",
-  "base_url": "https://api.anthropic.com",
-  "model": "claude-sonnet-4-5-20250929",
-  "api_key": "$ANTHROPIC_API_KEY"
+  "model": {
+    "provider": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5-20250929",
+    "api_key": "$ANTHROPIC_API_KEY"
+  },
+  "agents": [
+    {"name": "agent-1", "role": "Software Engineer"},
+    {"name": "agent-2", "role": "Software Engineer"}
+  ],
+  "coach": {
+    "name": "coach",
+    "role": "Agile Coach"
+  },
+  "file_access": {
+    "writable_paths": ["src/**", "tests/**", "docs/**"],
+    "protected_paths": [],
+    "max_file_size_bytes": 1048576,
+    "max_files_per_turn": 10,
+    "enable_approvals": false
+  },
+  "worktrees": {
+    "enabled": false
+  }
 }
 ```
 
-The `api_key` field uses `$VARIABLE` syntax — the actual key is resolved from `.team/.env` first, then environment variables. Supported providers:
+### Model Config
 
-| Provider | base_url | Default model |
-|----------|----------|---------------|
-| `anthropic` | `https://api.anthropic.com` | `claude-sonnet-4-5-20250929` |
-| `openai` | `https://api.openai.com` | `gpt-4o` |
-| `ollama` | `http://localhost:11434` | `qwen2.5-coder:7b` |
+The `api_key` field uses `$VARIABLE` syntax — resolved from `.env` first, then environment variables.
 
-Any OpenAI-compatible API works — just set `base_url` and `model` manually.
+| Provider | Default Model | API Key |
+|----------|---------------|---------|
+| `anthropic` | `claude-sonnet-4-5-20250929` | `ANTHROPIC_API_KEY` |
+| `openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `ollama` | `qwen2.5-coder:7b` | none |
 
-### `.team/.env`
+Any OpenAI-compatible API works — set `base_url` and `model` manually in team.json.
 
-API keys live here (not in model.json):
+### File Access
 
+When `file_access` is configured, agents get `file_read`, `file_write`, and `file_list` tools during conversations.
+
+- **`writable_paths`** — Glob patterns for files agents can write freely (e.g. `src/**`)
+- **`protected_paths`** — Glob patterns that require approval even within writable paths
+- **Hard-denied paths** — `.team/`, `.git/`, `.env*` are always blocked
+- **`enable_approvals`** — When `true`, writes outside `writable_paths` go to a pending queue instead of failing. Review with `gotg approvals`.
+
+### Worktrees
+
+When `worktrees.enabled` is `true`, each agent gets an isolated git worktree (separate branch and working directory). Agents write to their own copy of the codebase without stepping on each other.
+
+```bash
+# Enable in team.json, then:
+gotg run --layer 0             # Creates worktrees, agents work in isolation
+
+# After conversation:
+gotg worktrees                 # See worktree status
+gotg commit-worktrees          # Commit all dirty worktrees
+
+# PM reviews and merges:
+gotg review                    # See diffs of all branches against main
+gotg review --stat-only        # Just file stats, no full diff
+gotg review agent-1/layer-0    # Review a specific branch
+
+gotg merge agent-1/layer-0     # Merge one branch into main
+gotg merge all                 # Merge all unmerged branches in layer 0
+gotg merge all --layer 1       # Merge all in layer 1
+
+# If there's a conflict:
+gotg merge --abort             # Abort and restore clean state
 ```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+
+**Merge safety:**
+- Dirty worktrees block merging — run `gotg commit-worktrees` first, or use `--force` to override
+- Merges use `--no-ff` to create visible merge commits
+- `merge all` stops on the first conflict so you can resolve it before continuing
+- Already-merged branches are skipped with an informative message
+
+**Layer progression:**
+Layers represent dependency tiers in the task graph. Layer 0 tasks have no dependencies. Layer 1 tasks depend on layer 0. After merging layer 0, create layer 1 worktrees — they branch from main and automatically see all layer 0 work.
+
+```bash
+gotg run --layer 0             # Agents work on layer 0 tasks
+gotg commit-worktrees
+gotg review
+gotg merge all                 # Merge layer 0 into main
+
+gotg run --layer 1             # Agents work on layer 1 tasks (see layer 0 work)
+gotg commit-worktrees
+gotg review --layer 1
+gotg merge all --layer 1       # Merge layer 1 into main
 ```
 
-This file is created automatically by `gotg model` when you pick a provider that needs an API key. Keep it out of version control.
+## Checkpoints
 
-### `.team/iteration.json`
+GOTG automatically checkpoints after every `run`, `continue`, and `advance` command. You can also create manual checkpoints at any time.
 
-```json
-{
-  "id": "iter-1",
-  "description": "Design a CLI todo list application...",
-  "status": "in-progress",
-  "max_turns": 10
-}
+Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<N>/`. Each checkpoint contains a copy of all iteration files plus metadata.
+
+```bash
+gotg checkpoints
+#    Phase              Turns   Trigger   Description                    Timestamp
+# ----------------------------------------------------------------------------------------------------
+# 1  grooming           8       auto                                     2026-02-07T20:15:33
+# 2  planning           14      auto                                     2026-02-07T20:22:10
+# 3  planning           14      manual    before prompt experiment       2026-02-07T20:25:00
+
+gotg checkpoint "before prompt experiment"   # Manual snapshot
+gotg restore 3                                # Roll back (prompts for safety checkpoint)
 ```
-
-- `status` must be `"in-progress"` to run
-- `max_turns` counts agent messages only (human messages don't count)
-
-### `.team/agents/*.json`
-
-```json
-{
-  "name": "agent-1",
-  "role": "Software Engineer",
-  "system_prompt": "You are a software engineer working on a collaborative team..."
-}
-```
-
-Agents are loaded alphabetically by filename. The first agent speaks first. Each agent sees their teammates' names and roles in the system prompt, but doesn't know who is human vs AI.
 
 ## Conversation Log Format
 
@@ -294,61 +283,37 @@ Messages are stored as newline-delimited JSON (JSONL):
 {"from":"agent-1","iteration":"iter-1","content":"I think we should store todos as JSON..."}
 {"from":"agent-2","iteration":"iter-1","content":"What about collisions though?"}
 {"from":"human","iteration":"iter-1","content":"Good points. Also consider auth later."}
+{"from":"coach","iteration":"iter-1","content":"Let me summarize what we've agreed on..."}
+{"from":"system","iteration":"iter-1","content":"--- Phase advanced: grooming → planning ---"}
 ```
 
-The log is append-only. You can read it with `gotg show`, or directly with `cat`, `jq`, or any JSONL tool.
+The log is append-only. Read with `gotg show`, or directly with `cat`, `jq`, or any JSONL tool.
 
 ## Development Setup
 
 ```bash
-# Clone the repo
 git clone https://github.com/biff-ai/gotg.git
 cd gotg
-
-# Create a virtualenv (Python 3.10+, 3.11+ recommended)
-python3.11 -m venv .venv        # or: python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-
-# Install in editable mode — code changes take effect immediately
 pip install -e .
 pip install pytest
 
-# Verify
 gotg --help
-pytest -v
+pytest -q
 ```
 
-The editable install (`pip install -e .`) means the `gotg` command in your venv points directly at the source files in `src/gotg/`. You can edit code and re-run `gotg` without reinstalling.
-
-**Important**: The `gotg` command is only available inside the activated venv. Either activate it (`source .venv/bin/activate`) or use the full path (`.venv/bin/gotg`).
-
-### Setting up a test project
-
-```bash
-# Create a scratch project (outside the gotg repo)
-mkdir /tmp/my-test && cd /tmp/my-test
-gotg init .
-
-# Configure the model
-gotg model anthropic
-# Edit .team/.env to add your API key
-
-# Edit .team/iteration.json with your task description, then:
-gotg run --max-turns 4
-gotg show
-gotg continue --max-turns 2 -m "Your feedback here"
-```
+The editable install (`pip install -e .`) means the `gotg` command points directly at source files. Edit code and re-run without reinstalling.
 
 ### Running tests
 
 ```bash
-# From the gotg repo root, with venv activated
-pytest -v
+pytest -q                     # ~508 tests
+pytest tests/test_worktree.py # Just worktree tests
+pytest -k "merge"             # Tests matching "merge"
 ```
 
 ## Using Ollama (local, free)
-
-If you don't want to use an API, you can run models locally with Ollama:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -356,15 +321,15 @@ ollama pull qwen2.5-coder:7b
 ollama serve
 ```
 
-For AMD GPUs (RX 6000/7000 series), you may need:
+For AMD GPUs (RX 6000/7000 series):
 ```bash
 HSA_OVERRIDE_GFX_VERSION=10.3.0 ollama serve
 ```
 
-Then configure your project: `gotg model ollama`. No API key needed.
+Configure: `gotg model ollama`. No API key needed.
 
-Note: Local models produce noticeably lower quality conversations than Anthropic/OpenAI. They work, but expect shorter responses and less nuanced discussion.
+Note: Local models produce noticeably lower quality conversations than Anthropic/OpenAI.
 
 ## Project Background
 
-See [narrative.md](narrative.md) for the full design conversation and architectural decisions behind GOTG. See [docs/](docs/) for technical documentation.
+See [narrative.md](narrative.md) for the full design conversation and architectural decisions behind GOTG. See [docs/](docs/) for iteration specs and technical documentation.
