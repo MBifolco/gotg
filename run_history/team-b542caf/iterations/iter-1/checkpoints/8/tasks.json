@@ -1,0 +1,42 @@
+[
+  {
+    "id": "main-program-loop",
+    "description": "Implement the main program loop that displays the startup message 'Calculator ready. Type 'quit' to exit.', runs continuously with a '> ' prompt, reads user input, detects and handles quit/exit commands (case-insensitive) to terminate the program, handles empty or whitespace-only input with silent re-prompt, calls validation and calculation functions (can use stubs initially), and displays results or error messages.",
+    "done_criteria": "Program loops continuously, displays prompts correctly, handles quit/exit commands and terminates only on those commands, can display mock results and errors from stub functions, handles empty input with silent re-prompt.",
+    "depends_on": [],
+    "assigned_to": null,
+    "status": "pending",
+    "layer": 0
+  },
+  {
+    "id": "input-parsing-validation",
+    "description": "Build input parsing and validation logic that accepts an input string, trims leading/trailing whitespace, splits on whitespace, validates exactly 3 tokens exist, validates the middle token is a valid operator (+, -, *, /), parses the first and third tokens as floats (supporting negative numbers), and returns either parsed components (num1 as float, operator as string, num2 as float) or specific error messages for each validation failure type.",
+    "done_criteria": "Returns valid parsed components for all valid inputs, returns correct specific error messages for each type of invalid input (format, operator, number), handles edge cases including multiple spaces between tokens, negative numbers, and leading/trailing whitespace.",
+    "depends_on": [],
+    "assigned_to": null,
+    "status": "pending",
+    "layer": 0
+  },
+  {
+    "id": "calculation-engine",
+    "description": "Implement the calculation engine that accepts two floats and an operator string, performs the four arithmetic operations (addition, subtraction, multiplication, division), checks for division by zero before dividing and returns an error message if detected, and returns either the calculation result as a float or an error message string.",
+    "done_criteria": "All four operations produce mathematically correct results, division by zero returns the error message without crashing, tested successfully with positive numbers, negative numbers, and decimal numbers.",
+    "depends_on": [],
+    "assigned_to": null,
+    "status": "pending",
+    "layer": 0
+  },
+  {
+    "id": "integration-output-formatting",
+    "description": "Wire the input parsing/validation component and calculation engine into the main program loop, format successful calculations as 'num1 operator num2 = result' (e.g., '5 + 3 = 8'), and pass error messages from validation or calculation to the main loop's display logic.",
+    "done_criteria": "Full end-to-end flow works: user can enter a calculation and see a formatted result or error message, return to prompt after each calculation, perform multiple calculations in one session, and quit successfully.",
+    "depends_on": [
+      "main-program-loop",
+      "input-parsing-validation",
+      "calculation-engine"
+    ],
+    "assigned_to": null,
+    "status": "pending",
+    "layer": 1
+  }
+]

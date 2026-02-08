@@ -1,0 +1,10 @@
+{
+  "number": 6,
+  "phase": "pre-code-review",
+  "status": "in-progress",
+  "max_turns": 50,
+  "turn_count": 28,
+  "timestamp": "2026-02-08T05:03:31.567386+00:00",
+  "description": "list",
+  "trigger": "manual"
+}

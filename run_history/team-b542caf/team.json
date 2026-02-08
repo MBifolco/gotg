@@ -1,0 +1,31 @@
+{
+  "model": {
+    "provider": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5-20250929",
+    "api_key": "$ANTHROPIC_API_KEY"
+  },
+  "agents": [
+    {
+      "name": "agent-1",
+      "role": "Software Engineer"
+    },
+    {
+      "name": "agent-2",
+      "role": "Software Engineer"
+    }
+  ],
+  "coach": {
+    "name": "coach",
+    "role": "Agile Coach"
+  },
+  "file_access": {
+    "writable_paths": ["src/**", "tests/**", "docs/**"],
+    "max_file_size_bytes": 1048576,
+    "max_files_per_turn": 10,
+    "enable_approvals": true
+  },
+  "worktrees": {
+    "enabled": true
+  }
+}

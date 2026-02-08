@@ -1,0 +1,10 @@
+{
+  "number": 14,
+  "phase": "pre-code-review",
+  "status": "in-progress",
+  "max_turns": 50,
+  "turn_count": 43,
+  "timestamp": "2026-02-08T17:24:59.781796+00:00",
+  "description": "Safety before restore to #4",
+  "trigger": "manual"
+}

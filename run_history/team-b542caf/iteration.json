@@ -1,0 +1,13 @@
+{
+  "iterations": [
+    {
+      "id": "iter-1",
+      "title": "",
+      "description": "Create a command line calculator app that supports basic arithmetic operations (addition, subtraction, multiplication, division). The app should take user input for the operation and the numbers, perform the calculation, and display the result.",
+      "status": "in-progress",
+      "phase": "pre-code-review",
+      "max_turns": 50
+    }
+  ],
+  "current": "iter-1"
+}

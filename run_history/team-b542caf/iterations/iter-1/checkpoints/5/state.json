@@ -1,0 +1,10 @@
+{
+  "number": 5,
+  "phase": "pre-code-review",
+  "status": "in-progress",
+  "max_turns": 50,
+  "turn_count": 30,
+  "timestamp": "2026-02-08T04:10:17.307140+00:00",
+  "description": "Auto after auto",
+  "trigger": "auto"
+}
