@@ -114,6 +114,12 @@ def save_iteration_phase(team_dir: Path, iteration_id: str, new_phase: str) -> N
     save_iteration_fields(team_dir, iteration_id, phase=new_phase)
 
 
+def load_file_access(team_dir: Path) -> dict | None:
+    """Read file_access config from team.json. Returns None if not configured."""
+    team_config = json.loads((team_dir / "team.json").read_text())
+    return team_config.get("file_access")
+
+
 def save_model_config(team_dir: Path, model_config: dict) -> None:
     team_path = team_dir / "team.json"
     team_config = json.loads(team_path.read_text())

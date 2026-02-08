@@ -6,7 +6,7 @@ from pathlib import Path
 from gotg.agent import build_prompt, build_coach_prompt
 from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
-    load_agents, load_coach, load_model_config,
+    load_agents, load_coach, load_model_config, load_file_access,
     ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
@@ -57,6 +57,7 @@ def run_conversation(
     model_config: dict,
     max_turns_override: int | None = None,
     coach: dict | None = None,
+    fileguard=None,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
@@ -95,6 +96,9 @@ def run_conversation(
     print(f"Phase: {iteration.get('phase', 'grooming')}")
     if coach:
         print(f"Coach: {coach['name']} (facilitating)")
+    if fileguard:
+        writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
+        print(f"File tools: enabled (writable: {writable})")
     print(f"Turns: {turn}/{max_turns}")
     print("---")
 
@@ -106,18 +110,64 @@ def run_conversation(
             "agent": agent["name"],
             "messages": prompt,
         })
-        response = chat_completion(
-            base_url=model_config["base_url"],
-            model=model_config["model"],
-            messages=prompt,
-            api_key=model_config.get("api_key"),
-            provider=model_config.get("provider", "ollama"),
-        )
+
+        if fileguard:
+            from gotg.model import agentic_completion
+            from gotg.tools import FILE_TOOLS, execute_file_tool, format_tool_operation
+
+            write_count = 0
+
+            def tool_executor(name, inp):
+                nonlocal write_count
+                if name == "file_write":
+                    write_count += 1
+                    if write_count > fileguard.max_files_per_turn:
+                        return f"Error: write limit reached ({fileguard.max_files_per_turn} per turn)"
+                return execute_file_tool(name, inp, fileguard)
+
+            result = agentic_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=prompt,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+                tools=FILE_TOOLS,
+                tool_executor=tool_executor,
+            )
+            response_text = result["content"]
+
+            # Log file operations as system messages
+            for op in result["operations"]:
+                op_msg = {
+                    "from": "system",
+                    "iteration": iteration["id"],
+                    "content": format_tool_operation(op),
+                }
+                append_message(log_path, op_msg)
+                print(render_message(op_msg))
+                print()
+                history.append(op_msg)
+
+            # Debug log full tool details
+            if result["operations"]:
+                append_debug(debug_path, {
+                    "turn": turn,
+                    "agent": agent["name"],
+                    "tool_operations": result["operations"],
+                })
+        else:
+            response_text = chat_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=prompt,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+            )
 
         msg = {
             "from": agent["name"],
             "iteration": iteration["id"],
-            "content": response,
+            "content": response_text,
         }
         append_message(log_path, msg)
         print(render_message(msg))
@@ -194,7 +244,13 @@ def cmd_run(args):
 
     _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach)
+    file_access = load_file_access(team_dir)
+    fileguard = None
+    if file_access:
+        from gotg.fileguard import FileGuard
+        fileguard = FileGuard(team_dir.parent, file_access)
+
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard)
     _auto_checkpoint(iter_dir, iteration)
 
 
@@ -298,6 +354,12 @@ def cmd_continue(args):
 
     _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
 
+    file_access = load_file_access(team_dir)
+    fileguard = None
+    if file_access:
+        from gotg.fileguard import FileGuard
+        fileguard = FileGuard(team_dir.parent, file_access)
+
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
 
@@ -321,7 +383,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard)
     _auto_checkpoint(iter_dir, iteration)
 
 

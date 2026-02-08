@@ -1722,11 +1722,204 @@ Using git under the hood was considered — it would handle snapshotting, restor
 
 ---
 
-## Current State (Post-Checkpoint-Restore)
+## 39. Agent File Safety: The First Security Boundary
+
+### The Question
+
+With the phase system complete through pre-code-review, agents need tools to actually produce code. File read/write is the minimum — but it's also gotg's first real safety concern. The question: how do we keep agents from operating outside the project?
+
+### Research: What the Industry Says
+
+Three bodies of work informed the design:
+
+**NVIDIA AI Red Team (February 2026)** published mandatory controls for sandboxing agentic coding workflows, based on red-teaming Claude Code, Cursor, and similar tools. Their three mandatory controls: block writes outside the workspace, block writes to configuration files, and control network egress. Their key insight: application-level controls alone are insufficient — once an agent spawns a subprocess, the orchestrator loses visibility. OS-level enforcement is the real boundary.
+
+**OWASP Top 10 for Agentic Applications (2026)** established the industry threat taxonomy. Relevant items: ASI02 (Tool Misuse — agents using legitimate tools in unsafe ways), ASI03 (Identity & Privilege Abuse — agents operating beyond intended scope), ASI05 (Unexpected Code Execution). Core principle: **least agency** — only grant the minimum autonomy required to perform safe, bounded tasks.
+
+**Claude Code's permission model** is the closest reference implementation. It uses a layered approach: permissions (should this tool run at all?) plus an OS-level sandbox using macOS Seatbelt / Linux bubblewrap (if it runs, what can it touch?). Default is read-only; writes require explicit permission. Configurable per-project via `settings.json` with allow/deny rules. Internal data shows sandboxing reduces permission prompts by 84%.
+
+### gotg's Threat Model
+
+gotg's threats differ from Claude Code's. Claude Code defends against prompt injection from malicious repos and untrusted pull requests. gotg's agents operate in a closed loop — the primary risks are:
+
+1. **Accidental scope escape** — agent writes outside project directory via path traversal or symlink following
+2. **Config file corruption** — agent modifies `.team/` system files, conversation logs, or coach artifacts
+3. **Runaway execution** — agent with bash access enters loops or spawns long-running processes
+4. **Cross-agent interference** — Agent A modifies files Agent B is working on
+5. **Prompt injection via file content** — agent reads a file containing instructions that redirect its behavior
+
+What gotg does NOT need to defend against yet: network exfiltration (no network tools), credential theft (no secrets in project), supply chain attacks (no package installation), multi-tenant isolation (single user).
+
+### The Design: Three Layers
+
+**Layer 1: Tool Definition.** Agents only see the tools you give them. Initial tool set: `file_read`, `file_write`, `file_list`. No bash, no delete, no git. Each tool accepts relative paths only — the system resolves against the project root.
+
+**Layer 2: Path Validation (FileGuard).** Before any tool executes, `FileGuard` validates the resolved path. Relative paths only (reject absolute, reject `..`). Resolve and verify containment within project root. `.team/**` and `.git/**` hard-denied for writes (non-configurable). `.env` / `.env.*` hard-denied. Configurable `writable_paths` and `protected_paths` in `team.json` via a new `file_access` section.
+
+**Layer 3: Execution Sandbox.** For the first iteration, the simplest sandbox is not giving agents bash at all. File tools cover most implementation needs. When bash is added later, Docker containers provide OS-level isolation: no network, bounded resources, non-root user, project mounted read-write, everything else read-only.
+
+### CRUD Permission Design
+
+| Operation | Default | Scope | Notes |
+|-----------|---------|-------|-------|
+| Read | Allow | Within project | Agents need context; no secrets in project |
+| Create | Allow within writable paths | `src/**`, `tests/**`, `docs/**` | New files in expected locations auto-allow |
+| Update | Allow within writable paths | Same as create | Same rules for existing files |
+| Delete | Deny | N/A | No delete tool initially |
+
+### Configuration in team.json
+
+A new `file_access` section in `team.json` defines writable paths, protected paths, enabled tools, approval requirements, and limits (max file size, max files per turn, max total writes per task). The `protected_paths` list always includes `.team/**` regardless of user config — a hard-coded safety floor.
+
+### Key Decisions
+
+**Writable paths: global for now, per-agent later.** Per-agent scoping maps naturally to task assignments, but wiring it requires coupling to `tasks.json` before that system is proven with file tools. Start global. When agents step on each other's files — and they will — that's the evidence-driven signal to add scoping. It becomes a natural feature of the layer-based execution model.
+
+**File size limits: 1MB per file, 10 per turn, 50 per task.** The risk isn't malicious — it's an agent dumping an entire data structure in a debug loop. These are guesses. Log actuals from first runs and adjust.
+
+**Config file definition: protect the pattern, not the name.** `.team/**`, `.git/**`, and `.env*` are hard-denied. Everything else is writable within the configured paths. If a project needs additional protection (e.g., `Dockerfile`), the PM adds it to `protected_paths`. This avoids maintaining an incomplete universal list.
+
+### The Audit Trail Is Free
+
+gotg's architecture provides observability by default — every tool call is a message in the JSONL log. The conversation log IS the audit trail. No separate logging infrastructure needed.
+
+---
+
+## 40. Structured Approval System
+
+### The Problem
+
+When agents try to write outside `writable_paths` but still within the project (e.g., creating `package.json` at project root), the PM needs to approve or deny. The question: how does approval surface?
+
+### Why Not Message Parsing
+
+The first instinct — inject a system message and parse the PM's response — has the same fragility as in-band signaling for phase completion (Iteration 5b). "I think we should approve this approach" could get parsed as an approval. The lesson was already learned: use structured, out-of-band mechanisms for control flow.
+
+### The Design: Approval Queue + CLI Commands
+
+Same pattern as `gotg advance`. System writes pending requests to `.team/iterations/<id>/approvals.json`. Run pauses. PM reviews and decides via dedicated commands.
+
+Flow:
+1. Agent calls `file_write("package.json", content)`
+2. FileGuard sees path requires approval
+3. System writes request to `approvals.json` with content preview
+4. System injects message: `[SYSTEM] Write to package.json requires PM approval. Run paused.`
+5. PM reviews: `gotg approvals` shows pending requests
+6. PM decides: `gotg approve <id>` or `gotg deny <id> -m "reason"`
+7. `gotg continue` resumes — approved writes execute, denials inject reason into conversation
+
+Three new CLI commands:
+- `gotg approvals` — show pending requests with content preview
+- `gotg approve <id>` — approve a pending request (also: `gotg approve all`)
+- `gotg deny <id> -m "reason"` — deny with reason injected as system message
+
+Approvals file becomes part of the audit trail. No message parsing anywhere.
+
+---
+
+## 41. Git Worktrees: Parallel Agent Execution Without Locking
+
+### The Locking Debate
+
+The initial proposal for preventing cross-agent file conflicts was a checkout/locking system — agents acquire exclusive write access to files, similar to database locks. The PM pushed back: locking constrains parallelization and forces task decomposition to be file-aware rather than feature-aware. Two agents working on related features will naturally touch some of the same files, and that's fine. Software teams already solved this problem — it's called branching.
+
+### Why Not Just Git Checkout
+
+A single git repository has one working tree. `git checkout` switches the whole thing. Two agents on different branches simultaneously need two separate filesystem views. Cloning the repo per agent works but duplicates the entire `.git` history.
+
+### Git Worktree: The Solved Problem
+
+`git worktree add` creates a separate working directory linked to the same repository, checked out on a different branch. No full clone, no duplicated history. All worktrees share the same object store — the only duplication is the working files themselves (megabytes for a typical code project). Worktrees are ephemeral: created at layer start, destroyed at layer end.
+
+This is already the established pattern for parallel AI coding — Cursor and Claude Code users run multiple instances in separate worktrees. The gotg innovation is that the **system** manages worktrees transparently. Agents never know they exist.
+
+### The Flow
+
+```
+project/                          # main worktree, main branch
+├── .git/                         # the actual repo (shared)
+├── .team/                        # gotg system files
+├── src/
+└── tests/
+
+.worktrees/                       # sibling directory, managed by gotg
+├── agent-1-T1-api-routes/        # worktree on branch agent-1/T1
+│   ├── .git                      # file (pointer back to project/.git)
+│   ├── src/
+│   └── tests/
+└── agent-2-T2-data-layer/        # worktree on branch agent-2/T2
+    ├── .git
+    ├── src/
+    └── tests/
+```
+
+1. Layer starts → system runs `git worktree add` per agent, branching from current main
+2. Agents work → FileGuard resolves paths relative to agent's worktree root
+3. Layer completes → system commits each worktree
+4. PM reviews diffs: `git diff main..agent-1/T1`
+5. PM merges into main
+6. System runs `git worktree remove` to clean up
+7. Next layer starts from updated main
+
+### Key Properties
+
+**Agents stay dumb.** They call `file_read` and `file_write` with relative paths. The system maps to the right worktree directory. Agents don't know about git, branches, or worktrees.
+
+**Conflicts are merge-time, not write-time.** Two agents can independently modify the same file. At merge time, if there's a conflict, the PM sees a real git conflict. No locking, no constraining parallelization.
+
+**Layer isolation is natural.** Layer 0 agents see main. Layer 1 agents see main + layer 0's merged work. The layer system already encodes dependencies — worktrees just make the isolation concrete.
+
+**`.team/` stays in main worktree only.** Agent worktrees don't have system files. FileGuard denies access regardless, and sparse checkout can exclude them.
+
+**Git is infrastructure, not an agent tool.** Agents never get git tools at any phase. The system manages branching the same way it manages the conversation log — transparently, as part of the runtime.
+
+---
+
+## 42. Code Review Phase: Agents Review Each Other's Diffs
+
+### Why Diffs Change Everything
+
+Without worktrees, code review would be agents reading whole files and commenting — with no structure for what's new versus what was already there. With worktrees, the review artifact is a git diff. That's how every engineering team on earth does code review.
+
+### The Review Flow
+
+1. Implementation phase completes for a layer
+2. System generates diffs: `git diff main..agent-1/T1` and `git diff main..agent-2/T2`
+3. All diffs injected into the review conversation as context — same pattern as groomed scope → planning, planning artifacts → implementation
+4. **All implementation agents participate** — reviewing each other's work, not a separate reviewer
+5. Coach facilitates review convergence using the same pattern as grooming and planning
+6. Coach signals review completion via tool call
+
+### Why Cross-Review
+
+Agent 1 built the API routes. Agent 2 built the data layer. Agent 2 reviewing Agent 1's diff can say "this won't work with my data layer because I defined the schema differently." That's integration review — the highest-value kind of review and the one most teams skip. Each agent has context on the adjacent component that a separate reviewer wouldn't have.
+
+### Why All Diffs Visible to All Agents
+
+Both agents need to see both diffs during review. Agent 1 needs Agent 2's diff to do integration review, and vice versa. The system injects all diffs from the layer, not just "your diff for your review." It's a team review, not isolated PR approvals.
+
+### Layer Ordering Handles Dependencies
+
+Layer 1 review happens after layer 0 is merged into main. Reviewers see layer 1 changes in the context of the merged foundation — exactly right. The layer system already encodes this; review just inherits it.
+
+### Review Outcomes
+
+If review passes: PM gets final review (actual diffs + agents' review conversation as context), then merges.
+
+If changes needed: agents return to their worktrees, make fixes, commit, new diffs generated for re-review. Same worktree, same branch — just additional commits.
+
+### The Coach's Role Is Consistent
+
+Across every phase, the coach does the same thing: facilitate convergence. In grooming: scope convergence. In planning: task decomposition convergence. In review: review convergence — are concerns addressed, is the code ready? The coach doesn't review code. The coach knows when the review is done.
+
+---
+
+## Current State (Post-File-Safety-Design)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
 - Nine commands: `init`, `run`, `continue`, `show`, `model`, `advance`, `checkpoint`, `checkpoints`, `restore`
+- Planned commands (Iterations 9-14): `approvals`, `approve`, `deny`, `review`, `merge`
 - `continue` command with human message injection (`-m`)
 - `--max-turns` override on both `run` and `continue`
 - Nested iteration directory structure (`.team/iterations/<id>/`)
@@ -1783,8 +1976,14 @@ Using git under the hood was considered — it would handle snapshotting, restor
 - ✅ **Iteration 6: `tasks.json` generation and prompt caching** — complete, layer computation working, cache hits confirmed
 - ✅ **Iteration 7: Pre-code-review prompt tuning** — complete, phase-specific facilitation, all 11 tasks reviewed layer-by-layer
 - ✅ **Iteration 8: Checkpoint/restore** — complete, discovery-based backup, auto + manual checkpoints, restore with safety prompt
+- ⬜ **Iteration 9: File tools + FileGuard** — `file_read`, `file_write`, `file_list` with path validation, `.team/`/`.git/`/`.env` hard-denied, `file_access` config in `team.json`
+- ⬜ **Iteration 10: Structured approval system** — `approvals.json` queue, `gotg approvals`/`approve`/`deny` commands, denial reasons as system messages
+- ⬜ **Iteration 11: Git worktree infrastructure** — branch-per-agent, worktree lifecycle (create/commit/remove), FileGuard resolves to worktree root, agents unaware
+- ⬜ **Iteration 12: Merge workflow + PM review** — `gotg review` (diffs), `gotg merge` (per-branch or all), conflict reporting, layer-to-layer progression
+- ⬜ **Iteration 13: Pre-code review with diffs** — all diffs injected as context, agents cross-review each other's work, coach facilitates review convergence
+- ⬜ **Iteration 14: End-to-end layer execution** — full cycle orchestrator: worktree setup → implementation → review → merge → next layer
 
-All three behavioral hypotheses validated. Tool infrastructure established. Phase system complete through pre-code-review. Checkpoint/restore enables cost-effective experimentation. 283 tests.
+All three behavioral hypotheses validated. Tool infrastructure established. Phase system complete through pre-code-review. Checkpoint/restore enables cost-effective experimentation. 283 tests. Iterations 9-14 designed — agent file safety, worktrees, and code review.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -1820,25 +2019,37 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - **Task assignment is a PM gate, not an agent decision** — blocking pre-code-review on unassigned tasks prevents agents from proposing approaches for tasks nobody owns
 - **Layer-by-layer review mirrors layer-by-layer execution** — reviewing foundation tasks before dependent tasks produces better interface alignment
 - **Discovery-based backup prevents silent data loss** — hardcoded file lists go stale when new artifacts are added; scanning with an exclude list ensures new files are automatically protected
+- **Application-level path validation is necessary but not sufficient** — once an agent spawns a subprocess, the orchestrator loses visibility; OS-level enforcement (Docker, bubblewrap) is the real boundary for bash tools
+- **The conversation log is a free audit trail** — every tool call is a message in the JSONL log; no separate logging infrastructure needed for file operation observability
+- **Git worktrees solve parallel agent isolation without constraining task decomposition** — agents work in separate filesystem views branched from main; conflicts detected at merge, not prevented at write
+- **Locking constrains parallelization; branching enables it** — file checkout/locking forces task decomposition to be file-aware; git branching allows decomposition by feature/responsibility, which is how real teams work
+- **Agents should be unaware of infrastructure** — agents call `file_write` with relative paths; the system handles worktree mapping, git branching, and merging transparently; this matches the principle that agents handle substance, the system handles process
+- **Cross-review beats separate reviewers** — the agent who built the adjacent component has the most context on integration points; cross-review catches interface mismatches that a dedicated reviewer would miss
+- **Diffs constrain review scope naturally** — without diffs, reviewing agents critique code that existed before the current task; diffs focus review on what actually changed, which is what review should be
+- **Structured approvals follow the same pattern as phase advancement** — `gotg approve`/`gotg deny` mirror `gotg advance`; structured in, structured out, no message parsing
 
 ### Development Strategy
-- **Phase system complete through pre-code-review** — grooming, planning, and pre-code-review all validated with real conversations
-- **Next frontier: code generation** — agents need tools (file I/O, bash) to produce code from reviewed designs
-- All behavioral hypotheses validated — remaining work is extending proven patterns to new phases
-- Tool infrastructure established — `signal_phase_complete` pattern ready for engineering agent tools
+- **Iteration 9 next** — file tools + FileGuard, the minimum viable agent tooling
+- Iterations 9-10 work without git — validate file tools and safety in isolation before worktrees add complexity
+- Iteration 11 adds worktrees underneath without changing the agent experience — same `file_write` call, different directory resolution
+- Iterations 12-13 connect merge workflow and agent cross-review to the worktree infrastructure
+- Iteration 14 is the integration test — full pipeline from task assignment through code review and merge
+- Each iteration adds one capability and validates it before the next builds on top
+- Phase system complete through pre-code-review — remaining work is extending proven patterns to new phases (implementation, code review with diffs)
 - Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
 - Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
-- Agent verbosity in planning phase is a known optimization lever — agents respond to prompt tuning, not worth working on now
+- Agent verbosity in planning phase is a known optimization lever — not worth pulling yet
 
 ### Deferred (Intentionally)
 - Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
 - Agent verbosity optimization in planning phase (known lever, not worth pulling yet)
-- Human approval gate for agent tool calls (needed when engineering agents get bash/file tools, not for coach signal tool)
-- Code generation phase — agents produce code from reviewed designs (next major milestone)
-- Agent tool access: file I/O, bash (after phase system is solid)
-- Agent full autonomy: git, testing, deployment (after basic tool access works)
-- TUI chat interface (Textual — after phase system is validated with CLI)
+- Per-agent writable path scoping (planned for when agents step on each other's files — evidence-driven trigger)
+- Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient — Iteration 9 tests this)
+- File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
+- Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
+- Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
+- TUI chat interface (Textual — after file tools and worktrees are validated with CLI)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Narrator layer implementation (consolidated messages + @mentions work well)
@@ -1874,3 +2085,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 21. **Use out-of-band signaling for control flow** — in-band signals (special strings in text) are fragile because models reference them conversationally; tool calls are structurally unambiguous and let agents discuss the signal freely without triggering it
 22. **Phase-specific facilitation beats generic facilitation** — the definition of "done" differs per phase; a coach that tracks scope items in grooming must track task coverage in pre-code-review; generic prompts cause premature completion signals
 23. **Prefer exclude lists over include lists for backup** — discovery-based approaches (scan everything, exclude known exceptions) are more robust than enumeration (list specific files); new artifacts are automatically protected without code changes
+24. **Least agency, not least functionality** — give agents the minimum tools and permissions to do their job; expand based on observed need, not anticipated need
+25. **Infrastructure should be invisible to agents** — agents handle substance (code, design, review); the system handles process (branching, merging, file routing, approvals); mixing the two produces worse outcomes in both
+26. **Branching beats locking for parallel work** — locking constrains task decomposition to file boundaries; branching allows decomposition by feature/responsibility and detects conflicts at merge time, which is how real engineering teams work
+27. **Cross-review produces integration quality** — the agent who built the adjacent component catches interface mismatches that a dedicated reviewer would miss; code review is a team conversation, not isolated approvals

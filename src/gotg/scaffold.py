@@ -258,6 +258,11 @@ def init_project(path: Path) -> None:
             "name": "coach",
             "role": "Agile Coach",
         },
+        "file_access": {
+            "writable_paths": ["src/**", "tests/**", "docs/**"],
+            "max_file_size_bytes": 1048576,
+            "max_files_per_turn": 10,
+        },
     }, indent=2) + "\n")
 
     # iteration.json: list format with current pointer

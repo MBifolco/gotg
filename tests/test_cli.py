@@ -1406,3 +1406,160 @@ def test_cmd_restore_invalid_number(tmp_path, capsys):
         with patch("gotg.cli.find_team_dir", return_value=team):
             with pytest.raises(SystemExit):
                 main()
+
+
+# --- File tools integration ---
+
+def test_run_conversation_no_fileguard_backward_compat(tmp_path):
+    """run_conversation without fileguard works exactly as before."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 2}
+
+    with patch("gotg.cli.chat_completion", return_value="response"):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=None)
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    assert len(messages) == 2
+    assert all(m["content"] == "response" for m in messages)
+
+
+def test_run_conversation_with_fileguard_uses_agentic(tmp_path):
+    """When fileguard is provided, run_conversation uses agentic_completion."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 1}
+
+    from gotg.fileguard import FileGuard
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+
+    mock_result = {
+        "content": "I wrote a file.",
+        "operations": [
+            {"name": "file_write", "input": {"path": "src/main.py", "content": "hello"}, "result": "Written: src/main.py (5 bytes)"},
+        ],
+    }
+
+    with patch("gotg.model.agentic_completion", return_value=mock_result) as mock_agentic:
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
+
+    mock_agentic.assert_called_once()
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # Should have system message for file op + agent message
+    assert any(m["from"] == "system" and "[file_write]" in m["content"] for m in messages)
+    assert any(m["from"] == "agent-1" and m["content"] == "I wrote a file." for m in messages)
+
+
+def test_run_conversation_fileguard_prints_status(tmp_path, capsys):
+    """File tools status should be printed at conversation start."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 1}
+
+    from gotg.fileguard import FileGuard
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**", "tests/**"]})
+
+    mock_result = {"content": "done", "operations": []}
+    with patch("gotg.model.agentic_completion", return_value=mock_result):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
+
+    output = capsys.readouterr().out
+    assert "File tools: enabled" in output
+    assert "src/**" in output
+
+
+def test_run_conversation_fileguard_write_limit(tmp_path):
+    """Per-turn write limit should be enforced via tool_executor closure."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 1}
+
+    from gotg.fileguard import FileGuard
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"], "max_files_per_turn": 2})
+
+    # The agentic_completion mock will capture the tool_executor
+    captured_executor = {}
+
+    def mock_agentic(**kwargs):
+        captured_executor["fn"] = kwargs["tool_executor"]
+        return {"content": "done", "operations": []}
+
+    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
+
+    executor = captured_executor["fn"]
+    # Create src/ so writes succeed
+    (tmp_path / "src").mkdir()
+
+    # First two writes should succeed (within limit)
+    result1 = executor("file_write", {"path": "src/a.py", "content": "a"})
+    assert "Written" in result1
+    result2 = executor("file_write", {"path": "src/b.py", "content": "b"})
+    assert "Written" in result2
+
+    # Third write should be blocked by counter
+    result3 = executor("file_write", {"path": "src/c.py", "content": "c"})
+    assert "write limit reached" in result3
+
+
+def test_cmd_run_loads_file_access(tmp_path, monkeypatch):
+    """cmd_run should load file_access from team.json and construct FileGuard."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation") as mock_run:
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "run"]):
+                main()
+
+    # Verify fileguard was passed
+    call_kwargs = mock_run.call_args
+    fileguard = call_kwargs[1].get("fileguard") if call_kwargs[1] else None
+    # If positional, check the args
+    if fileguard is None and len(call_kwargs[0]) > 6:
+        fileguard = call_kwargs[0][6]
+    assert fileguard is not None
+    assert fileguard.writable_paths == ["src/**"]
+
+
+def test_cmd_run_no_file_access_passes_none(tmp_path, monkeypatch):
+    """Without file_access in team.json, fileguard should be None."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation") as mock_run:
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "run"]):
+                main()
+
+    call_kwargs = mock_run.call_args
+    fileguard = call_kwargs[1].get("fileguard") if call_kwargs[1] else None
+    assert fileguard is None

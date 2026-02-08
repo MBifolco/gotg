@@ -241,3 +241,14 @@ def test_coach_facilitation_pre_code_review_blocks_early_completion():
     from gotg.scaffold import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["pre-code-review"].lower()
     assert "do not signal" in prompt or "do not signal completion" in prompt
+
+
+def test_init_creates_file_access_in_team_json(tmp_path):
+    init_project(tmp_path)
+    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+    assert "file_access" in team_json
+    fa = team_json["file_access"]
+    assert "writable_paths" in fa
+    assert "src/**" in fa["writable_paths"]
+    assert fa["max_file_size_bytes"] == 1048576
+    assert fa["max_files_per_turn"] == 10

@@ -5,7 +5,7 @@ import pytest
 
 from gotg.config import (
     load_model_config, load_agents, load_coach, load_iteration,
-    read_dotenv, ensure_dotenv_key,
+    load_file_access, read_dotenv, ensure_dotenv_key,
     get_iteration_dir, get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
@@ -445,3 +445,29 @@ def test_save_iteration_fields_preserves_other_fields(team_dir):
 def test_save_iteration_fields_missing_id_raises(team_dir):
     with pytest.raises(SystemExit):
         save_iteration_fields(team_dir, "nonexistent", phase="planning")
+
+
+# --- load_file_access ---
+
+def test_load_file_access_returns_config(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [],
+        "file_access": {
+            "writable_paths": ["src/**", "tests/**"],
+            "max_file_size_bytes": 500000,
+            "max_files_per_turn": 5,
+        },
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    result = load_file_access(team)
+    assert result is not None
+    assert result["writable_paths"] == ["src/**", "tests/**"]
+    assert result["max_file_size_bytes"] == 500000
+
+
+def test_load_file_access_returns_none_when_absent(team_dir):
+    result = load_file_access(team_dir)
+    assert result is None

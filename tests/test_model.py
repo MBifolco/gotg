@@ -285,6 +285,7 @@ def test_openai_returns_dict_with_tool_calls(mock_post):
             "message": {
                 "content": "I'll call the tool.",
                 "tool_calls": [{
+                    "id": "call_123",
                     "function": {
                         "name": "my_tool",
                         "arguments": json.dumps({"arg": "value"}),
@@ -336,7 +337,7 @@ def test_anthropic_returns_dict_with_tool_calls(mock_post):
     resp.json.return_value = {
         "content": [
             {"type": "text", "text": "I'll signal completion."},
-            {"type": "tool_use", "name": "my_tool", "input": {"arg": "value"}},
+            {"type": "tool_use", "id": "tu_456", "name": "my_tool", "input": {"arg": "value"}},
         ]
     }
     resp.raise_for_status = MagicMock()
@@ -482,3 +483,251 @@ def test_openai_no_cache_control(mock_post):
     # No message should have cache_control
     for msg in body["messages"]:
         assert isinstance(msg["content"], str)
+
+
+# --- Tool call IDs ---
+
+@patch("gotg.model.httpx.post")
+def test_openai_tool_calls_include_id(mock_post):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": "text",
+                "tool_calls": [{
+                    "id": "call_abc",
+                    "function": {"name": "my_tool", "arguments": "{}"},
+                }],
+            }
+        }]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+    result = chat_completion("http://localhost", "m", [{"role": "user", "content": "hi"}], tools=SAMPLE_TOOLS)
+    assert result["tool_calls"][0]["id"] == "call_abc"
+
+
+@patch("gotg.model.httpx.post")
+def test_anthropic_tool_calls_include_id(mock_post):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [
+            {"type": "text", "text": "text"},
+            {"type": "tool_use", "id": "tu_xyz", "name": "my_tool", "input": {}},
+        ]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+    result = chat_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "hi"}],
+        api_key="sk", provider="anthropic", tools=SAMPLE_TOOLS,
+    )
+    assert result["tool_calls"][0]["id"] == "tu_xyz"
+
+
+# --- agentic_completion ---
+
+from gotg.model import agentic_completion
+
+
+def _mock_anthropic_text_response(text):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": text}],
+        "usage": {},
+    }
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _mock_anthropic_tool_response(text, tool_uses):
+    """Build a mock Anthropic response with text + tool_use blocks."""
+    content = [{"type": "text", "text": text}]
+    for tu in tool_uses:
+        content.append({
+            "type": "tool_use",
+            "id": tu["id"],
+            "name": tu["name"],
+            "input": tu["input"],
+        })
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"content": content, "usage": {}}
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_no_tool_calls_returns_text(mock_post):
+    mock_post.return_value = _mock_anthropic_text_response("Just text")
+    result = agentic_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "hi"}],
+        api_key="sk", provider="anthropic",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "ok",
+    )
+    assert result["content"] == "Just text"
+    assert result["operations"] == []
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_executes_tools_and_returns_final(mock_post):
+    """First call returns tool_use, second returns text-only."""
+    mock_post.side_effect = [
+        _mock_anthropic_tool_response("Let me read that.", [
+            {"id": "tu_1", "name": "file_read", "input": {"path": "src/main.py"}},
+        ]),
+        _mock_anthropic_text_response("Here's the file content."),
+    ]
+    calls = []
+
+    def executor(name, inp):
+        calls.append((name, inp))
+        return "print('hello')"
+
+    result = agentic_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "read src/main.py"}],
+        api_key="sk", provider="anthropic",
+        tools=SAMPLE_TOOLS, tool_executor=executor,
+    )
+    assert result["content"] == "Here's the file content."
+    assert len(result["operations"]) == 1
+    assert result["operations"][0]["name"] == "file_read"
+    assert result["operations"][0]["result"] == "print('hello')"
+    assert len(calls) == 1
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_multiple_rounds(mock_post):
+    """Agent calls tools twice before producing final text."""
+    mock_post.side_effect = [
+        _mock_anthropic_tool_response("Reading...", [
+            {"id": "tu_1", "name": "file_list", "input": {"path": "."}},
+        ]),
+        _mock_anthropic_tool_response("Now reading file...", [
+            {"id": "tu_2", "name": "file_read", "input": {"path": "src/a.py"}},
+        ]),
+        _mock_anthropic_text_response("Done."),
+    ]
+    result = agentic_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "explore"}],
+        api_key="sk", provider="anthropic",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "result",
+    )
+    assert result["content"] == "Done."
+    assert len(result["operations"]) == 2
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_respects_max_rounds(mock_post):
+    """If max_rounds is reached, returns last text."""
+    # Always return tool calls — should stop after max_rounds
+    mock_post.return_value = _mock_anthropic_tool_response("Still going", [
+        {"id": "tu_x", "name": "file_read", "input": {"path": "x"}},
+    ])
+    result = agentic_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "loop"}],
+        api_key="sk", provider="anthropic",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "data",
+        max_rounds=3,
+    )
+    assert result["content"] == "Still going"
+    assert len(result["operations"]) == 3
+    assert mock_post.call_count == 3
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_sends_tool_results_back(mock_post):
+    """Verify tool results are sent back to the API in the correct format."""
+    mock_post.side_effect = [
+        _mock_anthropic_tool_response("Reading...", [
+            {"id": "tu_1", "name": "file_read", "input": {"path": "a.py"}},
+        ]),
+        _mock_anthropic_text_response("Done."),
+    ]
+    agentic_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "read a.py"}],
+        api_key="sk", provider="anthropic",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "file content",
+    )
+    # Second call should include assistant + tool_result messages
+    second_call_body = mock_post.call_args_list[1][1]["json"]
+    messages = second_call_body["messages"]
+    # Last two messages: assistant (with tool_use) + user (with tool_result)
+    assistant_msg = messages[-2]
+    assert assistant_msg["role"] == "assistant"
+    # Content should be the raw content blocks
+    assert any(b["type"] == "tool_use" for b in assistant_msg["content"])
+    tool_result_msg = messages[-1]
+    assert tool_result_msg["role"] == "user"
+    assert tool_result_msg["content"][0]["type"] == "tool_result"
+    assert tool_result_msg["content"][0]["tool_use_id"] == "tu_1"
+    assert tool_result_msg["content"][0]["content"] == "file content"
+
+
+# --- agentic_completion (OpenAI path) ---
+
+def _mock_openai_text_response(text):
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{"message": {"content": text}}]
+    }
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _mock_openai_tool_response(text, tool_calls):
+    """Build a mock OpenAI response with tool_calls."""
+    message = {"content": text, "tool_calls": [
+        {
+            "id": tc["id"],
+            "type": "function",
+            "function": {"name": tc["name"], "arguments": json.dumps(tc["input"])},
+        }
+        for tc in tool_calls
+    ]}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"choices": [{"message": message}]}
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_openai_no_tool_calls(mock_post):
+    mock_post.return_value = _mock_openai_text_response("Just text")
+    result = agentic_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "hi"}],
+        provider="openai",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "ok",
+    )
+    assert result["content"] == "Just text"
+    assert result["operations"] == []
+
+
+@patch("gotg.model.httpx.post")
+def test_agentic_openai_executes_tools(mock_post):
+    mock_post.side_effect = [
+        _mock_openai_tool_response("Reading...", [
+            {"id": "call_1", "name": "file_read", "input": {"path": "a.py"}},
+        ]),
+        _mock_openai_text_response("Done."),
+    ]
+    result = agentic_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "read"}],
+        provider="openai",
+        tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "content",
+    )
+    assert result["content"] == "Done."
+    assert len(result["operations"]) == 1
