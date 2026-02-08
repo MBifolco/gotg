@@ -3,7 +3,6 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from gotg.conversation import read_log
 
 
 CHECKPOINT_EXCLUDE = {"debug.jsonl", "checkpoints"}
@@ -38,8 +37,18 @@ def _count_agent_turns(iter_dir: Path) -> int:
     log_path = iter_dir / "conversation.jsonl"
     if not log_path.exists():
         return 0
-    messages = read_log(log_path)
-    return sum(1 for msg in messages if msg["from"] not in ("human", "coach", "system"))
+    count = 0
+    for line in log_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+            if msg.get("from") not in ("human", "coach", "system"):
+                count += 1
+        except (json.JSONDecodeError, AttributeError):
+            pass  # skip malformed lines
+    return count
 
 
 def create_checkpoint(

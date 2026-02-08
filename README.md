@@ -159,9 +159,71 @@ Continue a conversation with optional human input. `-m` injects your message bef
 
 Replay the conversation log with color-coded agent names.
 
+### `gotg advance`
+
+Advance the current iteration to the next phase. Phases proceed in order: `grooming` → `planning` → `pre-code-review`. On phase transitions, the coach produces artifacts: `groomed.md` (scope summary from grooming) and `tasks.json` (structured task list from planning).
+
 ### `gotg model [provider] [model_name]`
 
 View or change model config. Providers: `anthropic`, `openai`, `ollama`.
+
+### `gotg checkpoint [description]`
+
+Create a manual checkpoint of the current iteration state. See [Checkpoints](#checkpoints) below.
+
+### `gotg checkpoints`
+
+List all checkpoints for the current iteration.
+
+### `gotg restore N`
+
+Restore the iteration to checkpoint number N. Prompts to create a safety checkpoint first.
+
+## Checkpoints
+
+GOTG automatically checkpoints iteration state after every `run`, `continue`, and `advance` command. You can also create manual checkpoints at any time. This lets you experiment with prompt changes, roll back failed conversations, and save money on testing.
+
+### How it works
+
+Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<number>/`. Each checkpoint contains a copy of all iteration files (conversation log, groomed.md, tasks.json, etc.) plus a `state.json` with metadata.
+
+```bash
+# See all checkpoints
+gotg checkpoints
+
+#    Phase              Turns   Trigger   Description                    Timestamp
+# ----------------------------------------------------------------------------------------------------
+# 1  grooming           8       auto      Auto after auto                2026-02-07T20:15:33+00:00
+# 2  planning           14      auto      Auto after auto                2026-02-07T20:22:10+00:00
+# 3  planning           14      manual    before prompt experiment       2026-02-07T20:25:00+00:00
+```
+
+### Manual checkpoints
+
+Save a named snapshot before making changes:
+
+```bash
+gotg checkpoint "before prompt experiment"
+# ... try something ...
+gotg restore 3      # roll back if it didn't work
+```
+
+### Restoring
+
+When you restore, GOTG asks if you want to create a safety checkpoint of the current state first (in case you want to undo the restore):
+
+```bash
+gotg restore 1
+# Create checkpoint of current state before restoring? [Y/n]
+# Checkpoint 4 created (safety)
+# Restored to checkpoint 1 (phase: grooming, turns: 8)
+```
+
+Restore updates both the iteration files and `iteration.json` (phase, max_turns) so that `gotg run` or `gotg continue` picks up from the right place.
+
+### What gets checkpointed
+
+Everything in the iteration directory except `debug.jsonl` (large diagnostic log) and the `checkpoints/` directory itself. New artifact files added in future versions are automatically included — no configuration needed.
 
 ## Configuration
 

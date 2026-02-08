@@ -1626,11 +1626,107 @@ When engineering agents eventually get tools (bash, file I/O), the PM will need 
 
 ---
 
-## Current State (Post-Tool-Call-Validation)
+## 36. Iteration 6: `tasks.json` Generation and Prompt Caching
+
+### Implementation
+
+Iteration 6 delivered two independent pieces: structured task extraction from planning conversations, and Anthropic prompt caching for cost reduction.
+
+**`tasks.json` generation.** When `gotg advance` moves from planning to pre-code-review, the coach reads the planning conversation and produces a structured JSON task list — same artifact-generation pattern as `groomed.md` from grooming. Each task has `id`, `description`, `done_criteria`, `depends_on`, `assigned_to` (null — PM assigns), and `status`. The system computes `layer` from the dependency graph: layer 0 = no dependencies, layer N = max(dependency layers) + 1. Code-fence stripping handles the common LLM behavior of wrapping JSON in markdown. If the coach produces invalid JSON, the raw output is saved to `tasks_raw.txt` for manual correction, and the phase still advances.
+
+**New module: `tasks.py`.** `compute_layers()` implements the layer algorithm — iterative peeling of tasks whose dependencies are all resolved. Raises `ValueError` on cycles or missing dependency references. `format_tasks_summary()` groups tasks by layer for injection into system prompts, with headers like "### Layer 0 (parallel)".
+
+**Task injection.** `run_conversation()` reads `tasks.json` at startup (same pattern as `groomed.md`) and passes the formatted summary to `build_prompt()` and `build_coach_prompt()`. Agents see the full task list with layers, assignments, and dependencies in their system prompt during pre-code-review.
+
+**Prompt caching.** Anthropic's prompt caching (GA since mid-2025) reduces input costs by ~90% on cache hits. Two `cache_control: {"type": "ephemeral"}` markers: one on the system prompt, one on the second-to-last message. No beta header needed. Cache hits ramp up naturally as conversation grows — by the end of a 40+ turn conversation, cache read tokens dominate. OpenAI path untouched.
+
+**Pre-code-review phase prompt.** Added `PHASE_PROMPTS["pre-code-review"]` to `scaffold.py` with DO/DO NOT structure mirroring grooming and planning modes. Initial version told agents to propose implementation approaches for assigned tasks, discuss APIs and data structures, and suggest test strategies.
+
+### Results
+
+The todo-list test project advanced through planning to pre-code-review successfully. The coach extracted 11 tasks from the planning conversation with correct dependency relationships. Layer computation produced sensible ordering: project setup (layer 0) → data structures + CLI parsing (layer 1) → serialization + sort logic (layer 2) → file I/O (layer 3) → all commands (layer 4). Cache hits observed in API responses by the second turn.
+
+---
+
+## 37. Iteration 7: Pre-Code-Review Prompt Tuning
+
+### The Problem
+
+During the first pre-code-review run, two issues emerged:
+
+1. **The coach signaled completion too early.** The coach called `signal_phase_complete` after reviewing only a few tasks, without tracking coverage of the full task list. The facilitation prompt was designed for grooming (where "all scope items resolved" is the criterion) but didn't translate to pre-code-review (where "all tasks discussed" is the criterion).
+
+2. **Agents tried to write full implementations.** The pre-code-review prompt told agents to "propose implementation approaches" but didn't make clear this meant high-level descriptions, not complete code. Agents started writing full function bodies.
+
+### The Design
+
+Three changes, informed by running the phase and observing failures:
+
+**Phase-specific coach facilitation.** Replaced the single `COACH_FACILITATION_PROMPT` with a `COACH_FACILITATION_PROMPTS` dict keyed by phase. Each phase gets a facilitation prompt tuned to its completion criteria:
+- **Grooming:** "List what remains unresolved, ask team to address the most important item" (unchanged)
+- **Planning:** "Note which requirements from the groomed scope don't have corresponding tasks yet"
+- **Pre-code-review:** "Track which tasks have been discussed. Before signaling completion, list EVERY task ID and note whether it has been discussed. If any task has not been discussed, do NOT signal completion."
+
+The pre-code-review coach prompt is the key innovation: instead of asking the coach to track coverage incrementally (which proved too ambitious), it uses a one-time checklist at the end. The coach must enumerate every task ID before it can signal completion.
+
+**Agent prompt tuning.** Rewrote `PHASE_PROMPTS["pre-code-review"]` with several clarifications:
+- Work through tasks **layer by layer**, starting from Layer 0
+- Stay on **one task at a time** — finish reviewing before moving on
+- Propose approaches for **YOUR assigned tasks**; review **TEAMMATE tasks** (not the other way around)
+- Describe **function/method/class signatures**, not full implementations
+- There is a **code review phase after this** — align on approach enough to reduce the likelihood of major changes
+- **Don't write full implementations** — key decisions: file structure, public interfaces, data flow, and anything expensive to change later
+
+**Task assignment gate.** Added `_validate_task_assignments()` — blocks `gotg run` and `gotg continue` in pre-code-review if any tasks have `assigned_to: null`. The PM must assign agents to tasks before the phase can begin.
+
+**DEFAULT_SYSTEM_PROMPT neutralized.** The base system prompt previously contained language like "don't jump to implementation" that conflicted with the pre-code-review phase where agents need to discuss implementation. Removed this language from the base prompt, letting phase-specific prompts drive all behavioral constraints.
+
+### Results
+
+Re-ran pre-code-review with the updated prompts. All 11 tasks were reviewed layer by layer, with agents proposing signatures and data structures rather than complete code. The coach tracked task coverage correctly and only signaled completion after confirming all tasks had been discussed. Cache read tokens reached 56,485 by the final turn, confirming prompt caching was working effectively.
+
+---
+
+## 38. Iteration 8: Checkpoint/Restore
+
+### The Problem
+
+Running conversations through phases costs real money (API calls) and real time. When experimenting with prompt changes or testing new features, there was no way to save intermediate state and roll back. A failed experiment meant re-running the entire conversation from scratch. This is both expensive and slow.
+
+### The Design
+
+Checkpoint/restore treats iteration state as a snapshot that can be saved and restored. The key design decisions:
+
+**Discovery-based backup.** Rather than maintaining a hardcoded list of files to back up (which would silently miss new artifacts), the system discovers all files in the iteration directory and copies everything except an explicit exclude list: `debug.jsonl` (large, diagnostic-only) and the `checkpoints/` subdirectory itself. This means any new artifact file added in future iterations is automatically included without code changes. A safety-net test verifies this: it creates an unexpected `new_artifact.txt`, checkpoints, and asserts it was included.
+
+**Auto + manual checkpoints.** Checkpoints are created automatically after every `run`, `continue`, and `advance` command. Users can also create manual checkpoints via `gotg checkpoint "description"`. Both use a shared auto-incrementing sequence number, scoped per-iteration under `.team/iterations/<id>/checkpoints/<number>/`.
+
+**Pre-restore safety prompt.** `gotg restore N` asks `"Create checkpoint of current state before restoring? [Y/n]"` before overwriting anything. This prevents accidental loss of the current state when the user meant to try a restore but might want to undo it.
+
+**State metadata.** Each checkpoint includes a `state.json` recording: number, phase, status, max_turns, turn_count, timestamp, description, and trigger (auto/manual). This enables `gotg checkpoints` to show a table of all saved states without reading the actual conversation files.
+
+**Restore updates iteration.json.** After copying files back, restore updates the iteration's `phase` and `max_turns` fields to match the checkpoint's state, so `gotg run` or `gotg continue` picks up from the right place.
+
+### Implementation
+
+New module `checkpoint.py` with five functions: `create_checkpoint()`, `list_checkpoints()`, `restore_checkpoint()`, `_iter_files()`, `_next_checkpoint_number()`, plus a resilient `_count_agent_turns()` that skips malformed JSONL lines. Generalized `save_iteration_fields()` in `config.py` to update arbitrary iteration fields atomically (restore needs to set both `phase` and `max_turns`).
+
+Three new CLI commands:
+- `gotg checkpoint [description]` — manual checkpoint
+- `gotg checkpoints` — list all checkpoints with metadata table
+- `gotg restore N` — restore to checkpoint N with safety prompt
+
+### Design Alternative Considered
+
+Using git under the hood was considered — it would handle snapshotting, restoration, and diffing for free. However, the iteration directory contains only a handful of small files, the project root is often already a git repo (nested repos are messy), and the current approach is ~100 lines with no external dependencies. The tradeoff is worth revisiting if diffing or branching checkpoints becomes needed.
+
+---
+
+## Current State (Post-Checkpoint-Restore)
 
 ### What Exists
 - Working Python CLI tool (`gotg`) installable via pip
-- Six commands: `init`, `run`, `continue`, `show`, `model`, `advance`
+- Nine commands: `init`, `run`, `continue`, `show`, `model`, `advance`, `checkpoint`, `checkpoints`, `restore`
 - `continue` command with human message injection (`-m`)
 - `--max-turns` override on both `run` and `continue`
 - Nested iteration directory structure (`.team/iterations/<id>/`)
@@ -1645,11 +1741,23 @@ When engineering agents eventually get tools (bash, file I/O), the PM will need 
 - Coach awareness paragraph in engineering agent prompts — tells agents to let coach handle process management
 - Coach messages don't count toward `--max-turns`
 - Coach rendered in orange (256-color) in terminal output
-- **New:** `signal_phase_complete` tool call — coach signals phase completion via out-of-band tool call instead of in-band string detection. Eliminates false positives from coach referencing the signal in natural language. Tool definition includes Principle #20 check: "Only call this after the team confirms nothing is missing."
-- **New:** `chat_completion()` returns `str | dict` depending on whether tools are provided. Agent calls get strings (zero change). Coach calls get dict with `content` and `tool_calls`. Minimal blast radius — only one call site handles the dict.
-- **New:** Planning mode prompt with DO/DO NOT structure — constrains agents to task decomposition with dependencies and done criteria
-- **New:** `groomed.md` injection into planning phase prompts — read once at conversation start, passed to all agents so they reference agreed scope
-- **New:** API format translation for tools — Anthropic tools go directly in request body, OpenAI wraps in `{"type": "function", "function": {...}}` with JSON string arguments
+- `signal_phase_complete` tool call — coach signals phase completion via out-of-band tool call instead of in-band string detection
+- `chat_completion()` returns `str | dict` depending on whether tools are provided
+- Planning mode prompt with DO/DO NOT structure
+- `groomed.md` injection into planning phase prompts
+- API format translation for tools — Anthropic tools go directly in request body, OpenAI wraps in `{"type": "function", "function": {...}}`
+- **New (Iter 6):** `tasks.json` generation from planning conversations via coach, with `compute_layers()` for dependency-based execution ordering
+- **New (Iter 6):** `tasks.py` module — layer computation and formatted task summary for prompt injection
+- **New (Iter 6):** Task list injection into pre-code-review agent and coach prompts
+- **New (Iter 6):** Anthropic prompt caching — `cache_control` markers on system prompt and second-to-last message, ~90% input cost reduction on cache hits
+- **New (Iter 7):** Phase-specific coach facilitation prompts (`COACH_FACILITATION_PROMPTS` dict) — each phase has tuned completion criteria
+- **New (Iter 7):** Pre-code-review agent prompt — layer-by-layer, one task at a time, propose for YOUR tasks, review teammates', describe signatures not full code
+- **New (Iter 7):** Task assignment validation gate — blocks pre-code-review if any tasks have `assigned_to: null`
+- **New (Iter 7):** Neutralized `DEFAULT_SYSTEM_PROMPT` — removed implementation-avoidance language, phase prompts drive behavior
+- **New (Iter 8):** Checkpoint/restore system — auto-checkpoint after every run/continue/advance, manual via `gotg checkpoint`
+- **New (Iter 8):** Discovery-based backup — all files except `debug.jsonl` and `checkpoints/`, new artifacts automatically included
+- **New (Iter 8):** `gotg restore N` with pre-restore safety prompt, updates iteration.json fields
+- **New (Iter 8):** `save_iteration_fields()` generalized config helper
 - Phase-aware system prompts — grooming mode constrains agents to scope/requirements
 - Base prompt explains phase system to all agents regardless of current phase
 - Phase sequence: grooming → planning → pre-code-review
@@ -1662,7 +1770,7 @@ When engineering agents eventually get tools (bash, file I/O), the PM will need 
 - Debug logging (prompts sent to models, per-iteration directory)
 - Conversation history tracking with commit-id filenames
 - Public GitHub repo: https://github.com/MBifolco/gotg
-- Conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent, phase system test), CLI bookmark manager grooming (3-agent, 15-turn, unfacilitated with coach artifact), CLI pomodoro timer grooming (3-agent, coach-facilitated, early exit), CLI pomodoro timer full run (3-agent, tool-call-based completion, grooming + planning phases, 41 turns)
+- Conversation logs: 7B two-party, Sonnet two-party, Sonnet three-party (separate messages), Sonnet three-party (consolidated), Sonnet three-party (with @mentions), REST API design (directory restructure), CLI todo grooming (2-agent, phase system test), CLI bookmark manager grooming (3-agent, 15-turn, unfacilitated with coach artifact), CLI pomodoro timer grooming (3-agent, coach-facilitated, early exit), CLI pomodoro timer full run (3-agent, tool-call-based completion, grooming + planning phases, 41 turns), CLI todo list full run (2-agent, all three phases including pre-code-review, 11 tasks reviewed layer-by-layer), CLI calculator full run (2-agent, grooming + planning + pre-code-review, 7 tasks)
 
 ### Implementation Plan Progress (Resequenced)
 - ✅ **Iteration 1: Directory restructure** — complete
@@ -1672,10 +1780,11 @@ When engineering agents eventually get tools (bash, file I/O), the PM will need 
 - ✅ **Iteration 4b: Coach-as-facilitator** — complete, third hypothesis validated
 - ✅ **Iteration 5: Artifact injection and planning mode** — complete (mechanical wiring)
 - ✅ **Iteration 5b: Coach tool call for phase completion** — complete, false positive eliminated, tool infrastructure established
-- ⬜ **Iteration 6: `tasks.json` generation and layer-based execution** — next
-- ⬜ **Iteration 7: Pre-code review phase**
+- ✅ **Iteration 6: `tasks.json` generation and prompt caching** — complete, layer computation working, cache hits confirmed
+- ✅ **Iteration 7: Pre-code-review prompt tuning** — complete, phase-specific facilitation, all 11 tasks reviewed layer-by-layer
+- ✅ **Iteration 8: Checkpoint/restore** — complete, discovery-based backup, auto + manual checkpoints, restore with safety prompt
 
-All three behavioral hypotheses validated. Iteration 5/5b established tool infrastructure. Iteration 6 is mechanical wiring — coach produces structured task data from planning conversations, system computes execution layers from dependencies, PM assigns agents per layer.
+All three behavioral hypotheses validated. Tool infrastructure established. Phase system complete through pre-code-review. Checkpoint/restore enables cost-effective experimentation. 283 tests.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -1705,26 +1814,30 @@ All three behavioral hypotheses validated. Iteration 5/5b established tool infra
 - 12-15 turns is a good grooming range for medium-complexity features with 3 agents
 - Prompt architecture is a first-class design concern, not an implementation detail
 - Small prompt conventions can activate large behavioral changes when they align with model training data
+- **Coach facilitation must be phase-specific** — grooming completion ("all scope resolved") differs from pre-code-review completion ("all tasks discussed"); a generic facilitation prompt causes premature signaling
+- **One-time checklist beats incremental tracking** — asking the coach to enumerate every task ID before signaling is more reliable than asking it to maintain a running tally across turns
+- **"Describe, don't implement" requires explicit framing** — agents default to writing full code unless told there's a later code-review phase and that signatures/descriptions are the goal
+- **Task assignment is a PM gate, not an agent decision** — blocking pre-code-review on unassigned tasks prevents agents from proposing approaches for tasks nobody owns
+- **Layer-by-layer review mirrors layer-by-layer execution** — reviewing foundation tasks before dependent tasks produces better interface alignment
+- **Discovery-based backup prevents silent data loss** — hardcoded file lists go stale when new artifacts are added; scanning with an exclude list ensures new files are automatically protected
 
 ### Development Strategy
-- **Iteration 6 next** — `tasks.json` generation with dependency layers and PM assignment (mechanical wiring, high confidence)
-- Coach produces `tasks.json` from planning conversation via `gotg advance` — same pattern as `groomed.md`
-- System computes layers from dependency graph: layer 0 = no deps, layer 1 = all deps in layer 0, etc.
-- PM assigns agents to tasks within each layer; execution proceeds wave by wave
-- Pre-code review follows same layer ordering — can't review T5 without T1 and T4 reviewed first
-- Agent verbosity in planning phase is a known optimization lever — agents respond to prompt tuning, not worth working on now
-- All behavioral hypotheses validated — remaining work is connecting proven pieces
-- Tool infrastructure established — pattern ready for engineering agent tools later
-- Use gotg to build gotg
+- **Phase system complete through pre-code-review** — grooming, planning, and pre-code-review all validated with real conversations
+- **Next frontier: code generation** — agents need tools (file I/O, bash) to produce code from reviewed designs
+- All behavioral hypotheses validated — remaining work is extending proven patterns to new phases
+- Tool infrastructure established — `signal_phase_complete` pattern ready for engineering agent tools
+- Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
+- Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
-- Let real pain points from dogfooding drive the priority stack
+- Agent verbosity in planning phase is a known optimization lever — agents respond to prompt tuning, not worth working on now
 
 ### Deferred (Intentionally)
 - Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
 - Agent verbosity optimization in planning phase (known lever, not worth pulling yet)
 - Human approval gate for agent tool calls (needed when engineering agents get bash/file tools, not for coach signal tool)
-- `tasks.json` generation and layer-based execution (Iteration 6 — next)
-- Pre-code review phase and prompt (Iteration 7)
+- Code generation phase — agents produce code from reviewed designs (next major milestone)
+- Agent tool access: file I/O, bash (after phase system is solid)
+- Agent full autonomy: git, testing, deployment (after basic tool access works)
 - TUI chat interface (Textual — after phase system is validated with CLI)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
@@ -1732,10 +1845,8 @@ All three behavioral hypotheses validated. Iteration 5/5b established tool infra
 - Automated evaluation (after manual rubric is trusted)
 - Implicit signal instrumentation (after evaluation framework is validated)
 - Model capability threshold testing (after evaluation rubric exists)
-- Agent tool access: file I/O, bash (after phase system is solid)
-- Agent full autonomy: git, testing, deployment (after basic tool access works)
 - Context window management / message compression (coach artifacts and facilitation summaries provide natural compression)
-- Prompt caching for API cost optimization (can reduce input costs by 90% on cache hits — growing conversation history is the main cost driver)
+- Checkpoint diffing / branching (revisit if simple file-copy approach proves insufficient — git under the hood)
 - Fine-tuned role models (long-term vision)
 - Human dashboard / attention management (long-term vision)
 
@@ -1761,3 +1872,5 @@ All three behavioral hypotheses validated. Iteration 5/5b established tool infra
 19. **Let the coach manage process, let the engineers manage substance** — process overhead (vote tallying, consensus tracking, decision categorization) belongs to a dedicated facilitator, not to the engineers whose attention should be on the problem
 20. **Drive to closure, but check for completeness** — convergence tracking is powerful but can suppress late-emerging requirements; an explicit "what did we miss?" prompt before completion ensures scope quality without sacrificing efficiency
 21. **Use out-of-band signaling for control flow** — in-band signals (special strings in text) are fragile because models reference them conversationally; tool calls are structurally unambiguous and let agents discuss the signal freely without triggering it
+22. **Phase-specific facilitation beats generic facilitation** — the definition of "done" differs per phase; a coach that tracks scope items in grooming must track task coverage in pre-code-review; generic prompts cause premature completion signals
+23. **Prefer exclude lists over include lists for backup** — discovery-based approaches (scan everything, exclude known exceptions) are more robust than enumeration (list specific files); new artifacts are automatically protected without code changes
