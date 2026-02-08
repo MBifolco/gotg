@@ -234,12 +234,40 @@ COACH_TOOLS = [
 ]
 
 
+def _ensure_gitignore(path: Path) -> None:
+    """Add .team/ and .env to .gitignore so they're never tracked."""
+    gitignore = path / ".gitignore"
+    entries = ["/.team/", ".env"]
+
+    if gitignore.exists():
+        content = gitignore.read_text()
+    else:
+        content = ""
+
+    existing = {line.strip() for line in content.splitlines()}
+    added = [e for e in entries if e not in existing]
+
+    if added:
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += "\n".join(added) + "\n"
+        gitignore.write_text(content)
+
+
 def init_project(path: Path) -> None:
     team_dir = path / ".team"
 
     if team_dir.exists():
         print(f"Error: {team_dir} already exists.", file=sys.stderr)
         raise SystemExit(1)
+
+    # Require git repo
+    if not (path / ".git").exists():
+        print("Error: not a git repository. Run 'git init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Gitignore .team/ and .env before creating them
+    _ensure_gitignore(path)
 
     team_dir.mkdir(parents=True)
 
@@ -265,6 +293,9 @@ def init_project(path: Path) -> None:
             "max_files_per_turn": 10,
             "enable_approvals": False,
         },
+        "worktrees": {
+            "enabled": False,
+        },
     }, indent=2) + "\n")
 
     # iteration.json: list format with current pointer
@@ -289,6 +320,7 @@ def init_project(path: Path) -> None:
     (iter_dir / "conversation.jsonl").touch()
 
     print(f"Initialized .team/ in {path.resolve()}")
+    print("  .gitignore (added .team/, .env)")
     print("  .team/team.json")
     print("  .team/iteration.json")
     print(f"  .team/iterations/{iter_id}/conversation.jsonl")

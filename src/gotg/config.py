@@ -120,6 +120,12 @@ def load_file_access(team_dir: Path) -> dict | None:
     return team_config.get("file_access")
 
 
+def load_worktree_config(team_dir: Path) -> dict | None:
+    """Read worktrees config from team.json. Returns None if not configured."""
+    team_config = json.loads((team_dir / "team.json").read_text())
+    return team_config.get("worktrees")
+
+
 def save_model_config(team_dir: Path, model_config: dict) -> None:
     team_path = team_dir / "team.json"
     team_config = json.loads(team_path.read_text())

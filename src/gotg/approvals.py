@@ -126,20 +126,31 @@ class ApprovalStore:
         return f"a{existing + 1}"
 
 
-def apply_approved_writes(store: ApprovalStore, fileguard: FileGuard) -> list:
+def apply_approved_writes(
+    store: ApprovalStore,
+    fileguard: FileGuard,
+    fileguard_for_agent=None,
+) -> list:
     """Execute approved writes. Returns list of result dicts.
 
     Each result: {"id": str, "path": str, "success": bool, "message": str}
     Approved writes still go through containment + hard-deny checks.
+
+    fileguard_for_agent: optional callable(agent_name) → FileGuard.
+    When provided, uses the returned FileGuard for that agent's writes
+    (e.g., to resolve to agent's worktree instead of project root).
     """
     results = []
     for req in store.get_approved_unapplied():
         path_str = req["path"]
         content = req["content"]
+        fg = fileguard
+        if fileguard_for_agent:
+            fg = fileguard_for_agent(req["requested_by"])
         try:
-            resolved = fileguard.validate_write_approved(path_str)
+            resolved = fg.validate_write_approved(path_str)
             size = len(content.encode())
-            if size > fileguard.max_file_size:
+            if size > fg.max_file_size:
                 results.append({
                     "id": req["id"],
                     "path": path_str,

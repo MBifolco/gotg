@@ -25,6 +25,8 @@ def test_find_team_dir_returns_none_when_missing(tmp_path):
 # --- gotg init via CLI ---
 
 def test_cli_init(tmp_path):
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
     with patch("sys.argv", ["gotg", "init", str(tmp_path)]):
         main()
     assert (tmp_path / ".team").is_dir()
@@ -32,6 +34,8 @@ def test_cli_init(tmp_path):
 
 
 def test_cli_init_defaults_to_cwd(tmp_path, monkeypatch):
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
     monkeypatch.chdir(tmp_path)
     with patch("sys.argv", ["gotg", "init"]):
         main()
@@ -1900,3 +1904,244 @@ def test_cmd_run_without_enable_approvals_no_store(tmp_path, monkeypatch):
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs.get("approval_store") is None
+
+
+# --- Worktree integration ---
+
+def test_run_conversation_with_worktree_map_routes_writes(tmp_path):
+    """Agent file writes should go to their worktree, not project root."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 2}
+
+    from gotg.fileguard import FileGuard
+
+    # Set up two "worktree" directories
+    wt1 = tmp_path / "wt-agent-1"
+    wt1.mkdir()
+    (wt1 / "src").mkdir()
+    wt2 = tmp_path / "wt-agent-2"
+    wt2.mkdir()
+    (wt2 / "src").mkdir()
+
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+    worktree_map = {"agent-1": wt1, "agent-2": wt2}
+
+    # Mock agentic_completion to capture tool_executor and invoke it
+    captured = {}
+
+    def mock_agentic(**kwargs):
+        agent_name = None
+        # Determine which agent by looking at the write path result
+        executor = kwargs["tool_executor"]
+        captured[len(captured)] = executor
+        # Each agent writes a file
+        result = executor("file_write", {"path": "src/output.py", "content": f"from agent"})
+        return {"content": "done", "operations": [
+            {"name": "file_write", "input": {"path": "src/output.py", "content": "from agent"}, "result": result},
+        ]}
+
+    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(),
+                        fileguard=fileguard, worktree_map=worktree_map)
+
+    # Both worktrees should have the file
+    assert (wt1 / "src" / "output.py").exists()
+    assert (wt2 / "src" / "output.py").exists()
+    # Project root should NOT have the file
+    assert not (tmp_path / "src" / "output.py").exists()
+
+
+def test_run_conversation_without_worktree_map_backward_compat(tmp_path):
+    """Without worktree_map, writes go to project root as before."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 1}
+
+    from gotg.fileguard import FileGuard
+    (tmp_path / "src").mkdir()
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+
+    def mock_agentic(**kwargs):
+        executor = kwargs["tool_executor"]
+        result = executor("file_write", {"path": "src/main.py", "content": "hello"})
+        return {"content": "done", "operations": [
+            {"name": "file_write", "input": {"path": "src/main.py", "content": "hello"}, "result": result},
+        ]}
+
+    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(),
+                        fileguard=fileguard, worktree_map=None)
+
+    assert (tmp_path / "src" / "main.py").read_text() == "hello"
+
+
+def test_run_conversation_three_agents_with_worktrees(tmp_path):
+    """Worktree routing works with N>2 agents."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = [
+        {"name": "agent-1", "role": "Software Engineer"},
+        {"name": "agent-2", "role": "Software Engineer"},
+        {"name": "agent-3", "role": "Software Engineer"},
+    ]
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 3}
+
+    from gotg.fileguard import FileGuard
+
+    worktree_map = {}
+    for a in agents:
+        wt = tmp_path / f"wt-{a['name']}"
+        wt.mkdir()
+        (wt / "src").mkdir()
+        worktree_map[a["name"]] = wt
+
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+
+    def mock_agentic(**kwargs):
+        executor = kwargs["tool_executor"]
+        result = executor("file_write", {"path": "src/file.py", "content": "code"})
+        return {"content": "done", "operations": [
+            {"name": "file_write", "input": {"path": "src/file.py", "content": "code"}, "result": result},
+        ]}
+
+    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(),
+                        fileguard=fileguard, worktree_map=worktree_map)
+
+    # All three worktrees should have the file
+    for a in agents:
+        assert (worktree_map[a["name"]] / "src" / "file.py").exists()
+    # Project root should NOT
+    assert not (tmp_path / "src" / "file.py").exists()
+
+
+def test_run_conversation_worktree_map_prints_status(tmp_path, capsys):
+    """Worktree count should be printed at conversation start."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 1}
+
+    from gotg.fileguard import FileGuard
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+    worktree_map = {"agent-1": tmp_path / "wt1", "agent-2": tmp_path / "wt2"}
+
+    mock_result = {"content": "done", "operations": []}
+    with patch("gotg.model.agentic_completion", return_value=mock_result):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(),
+                        fileguard=fileguard, worktree_map=worktree_map)
+
+    output = capsys.readouterr().out
+    assert "Worktrees: 2 active" in output
+
+
+def test_setup_worktrees_disabled(tmp_path, monkeypatch):
+    """cmd_run without worktrees enabled should pass worktree_map=None."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation") as mock_run:
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "run"]):
+                main()
+
+    call_kwargs = mock_run.call_args[1]
+    assert call_kwargs.get("worktree_map") is None
+
+
+def test_setup_worktrees_warns_without_file_access(tmp_path, capsys):
+    """Worktrees enabled without file_access should print a warning."""
+    from gotg.cli import _setup_worktrees
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+
+    class FakeArgs:
+        layer = None
+
+    result = _setup_worktrees(team, [], None, FakeArgs())
+    assert result is None
+    err = capsys.readouterr().err
+    assert "worktrees require file tools" in err
+
+
+def test_cmd_worktrees_no_worktrees(tmp_path, monkeypatch, capsys):
+    """gotg worktrees with no active worktrees prints a message."""
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "team.json").write_text("{}")
+    (team / "iteration.json").write_text(json.dumps({
+        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress", "max_turns": 10}],
+        "current": "iter-1",
+    }))
+    (team / "iterations" / "iter-1").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "worktrees"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "No active worktrees" in output
+
+
+def test_cmd_commit_worktrees_commits_dirty(tmp_path, monkeypatch, capsys):
+    """gotg commit-worktrees should commit dirty worktrees."""
+    import subprocess
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    from gotg.worktree import create_worktree
+    wt = create_worktree(tmp_path, "agent-1", 0)
+    (wt / "new.txt").write_text("new content")
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "team.json").write_text("{}")
+    (team / "iteration.json").write_text(json.dumps({
+        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress", "max_turns": 10}],
+        "current": "iter-1",
+    }))
+    (team / "iterations" / "iter-1").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "commit-worktrees"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "committed" in output
+    assert "agent-1/layer-0" in output

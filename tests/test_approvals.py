@@ -262,3 +262,31 @@ def test_apply_checks_file_size(project):
     results = apply_approved_writes(store, guard)
     assert results[0]["success"] is False
     assert "too large" in results[0]["message"]
+
+
+def test_apply_with_fileguard_for_agent(tmp_path):
+    """fileguard_for_agent callback routes writes to per-agent directories."""
+    # Set up two "worktree" directories
+    wt1 = tmp_path / "wt-agent-1"
+    wt1.mkdir()
+    wt2 = tmp_path / "wt-agent-2"
+    wt2.mkdir()
+
+    guard = FileGuard(tmp_path, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(tmp_path / "approvals.json")
+    store.add_request("README.md", "agent 1 readme", "agent-1", {})
+    store.add_request("README.md", "agent 2 readme", "agent-2", {})
+    store.approve("a1")
+    store.approve("a2")
+
+    def resolver(agent_name):
+        if agent_name == "agent-1":
+            return guard.with_root(wt1)
+        return guard.with_root(wt2)
+
+    results = apply_approved_writes(store, guard, fileguard_for_agent=resolver)
+    assert all(r["success"] for r in results)
+    assert (wt1 / "README.md").read_text() == "agent 1 readme"
+    assert (wt2 / "README.md").read_text() == "agent 2 readme"
+    # Main project root should NOT have the file
+    assert not (tmp_path / "README.md").exists()

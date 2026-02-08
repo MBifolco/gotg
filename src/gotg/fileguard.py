@@ -107,6 +107,16 @@ class FileGuard:
 
         return resolved
 
+    def with_root(self, new_root: Path) -> "FileGuard":
+        """Create a new FileGuard with same config but different project root."""
+        return FileGuard(new_root, {
+            "writable_paths": self.writable_paths,
+            "protected_paths": self.protected_paths,
+            "max_file_size_bytes": self.max_file_size,
+            "max_files_per_turn": self.max_files_per_turn,
+            "enable_approvals": self.enable_approvals,
+        })
+
     def validate_list(self, relative_path: str) -> Path:
         """Validate a list/directory operation. Returns resolved absolute path."""
         return self._resolve_and_contain(relative_path)

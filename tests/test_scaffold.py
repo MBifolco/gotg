@@ -1,34 +1,49 @@
 import json
+import subprocess
 
 import pytest
 
 from gotg.scaffold import init_project
 
 
-def test_init_creates_team_directory(tmp_path):
-    init_project(tmp_path)
-    assert (tmp_path / ".team").is_dir()
+@pytest.fixture
+def git_project(tmp_path):
+    """Create a minimal git repo."""
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True, check=True)
+    return tmp_path
 
 
-def test_init_creates_team_json(tmp_path):
-    init_project(tmp_path)
-    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+def test_init_requires_git_repo(tmp_path):
+    with pytest.raises(SystemExit):
+        init_project(tmp_path)
+
+
+def test_init_creates_team_directory(git_project):
+    init_project(git_project)
+    assert (git_project / ".team").is_dir()
+
+
+def test_init_creates_team_json(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
     assert "model" in team_json
     assert "agents" in team_json
 
 
-def test_init_creates_team_json_model_section(tmp_path):
-    init_project(tmp_path)
-    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+def test_init_creates_team_json_model_section(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
     model = team_json["model"]
     assert model["provider"] == "ollama"
     assert model["base_url"] == "http://localhost:11434"
     assert model["model"] == "qwen2.5-coder:7b"
 
 
-def test_init_creates_team_json_agents_section(tmp_path):
-    init_project(tmp_path)
-    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+def test_init_creates_team_json_agents_section(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
     agents = team_json["agents"]
     assert len(agents) == 2
     assert agents[0]["name"] == "agent-1"
@@ -37,9 +52,9 @@ def test_init_creates_team_json_agents_section(tmp_path):
     assert "system_prompt" not in agents[0]
 
 
-def test_init_creates_iteration_json_list_format(tmp_path):
-    init_project(tmp_path)
-    data = json.loads((tmp_path / ".team" / "iteration.json").read_text())
+def test_init_creates_iteration_json_list_format(git_project):
+    init_project(git_project)
+    data = json.loads((git_project / ".team" / "iteration.json").read_text())
     assert data["current"] == "iter-1"
     assert len(data["iterations"]) == 1
     entry = data["iterations"][0]
@@ -51,29 +66,45 @@ def test_init_creates_iteration_json_list_format(tmp_path):
     assert entry["max_turns"] == 10
 
 
-def test_init_creates_iterations_directory(tmp_path):
-    init_project(tmp_path)
-    assert (tmp_path / ".team" / "iterations" / "iter-1").is_dir()
+def test_init_creates_iterations_directory(git_project):
+    init_project(git_project)
+    assert (git_project / ".team" / "iterations" / "iter-1").is_dir()
 
 
-def test_init_creates_empty_conversation_log(tmp_path):
-    init_project(tmp_path)
-    log = tmp_path / ".team" / "iterations" / "iter-1" / "conversation.jsonl"
+def test_init_creates_empty_conversation_log(git_project):
+    init_project(git_project)
+    log = git_project / ".team" / "iterations" / "iter-1" / "conversation.jsonl"
     assert log.exists()
     assert log.read_text() == ""
 
 
-def test_init_refuses_if_team_exists(tmp_path):
-    (tmp_path / ".team").mkdir()
+def test_init_refuses_if_team_exists(git_project):
+    (git_project / ".team").mkdir()
     with pytest.raises(SystemExit):
-        init_project(tmp_path)
+        init_project(git_project)
 
 
-def test_init_does_not_touch_existing_files(tmp_path):
-    existing = tmp_path / "mycode.py"
+def test_init_does_not_touch_existing_files(git_project):
+    existing = git_project / "mycode.py"
     existing.write_text("print('hello')")
-    init_project(tmp_path)
+    init_project(git_project)
     assert existing.read_text() == "print('hello')"
+
+
+def test_init_creates_gitignore_with_team_and_env(git_project):
+    init_project(git_project)
+    content = (git_project / ".gitignore").read_text()
+    assert "/.team/" in content
+    assert ".env" in content
+
+
+def test_init_appends_to_existing_gitignore(git_project):
+    (git_project / ".gitignore").write_text("*.pyc\n")
+    init_project(git_project)
+    content = (git_project / ".gitignore").read_text()
+    assert "*.pyc" in content
+    assert "/.team/" in content
+    assert ".env" in content
 
 
 def test_default_system_prompt_mentions_pushback():
@@ -110,9 +141,9 @@ def test_grooming_prompt_mentions_redirect():
     assert "redirect" in prompt or "nail down the requirements" in prompt
 
 
-def test_init_creates_team_json_coach_section(tmp_path):
-    init_project(tmp_path)
-    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+def test_init_creates_team_json_coach_section(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
     coach = team_json["coach"]
     assert coach["name"] == "coach"
     assert coach["role"] == "Agile Coach"
@@ -243,9 +274,9 @@ def test_coach_facilitation_pre_code_review_blocks_early_completion():
     assert "do not signal" in prompt or "do not signal completion" in prompt
 
 
-def test_init_creates_file_access_in_team_json(tmp_path):
-    init_project(tmp_path)
-    team_json = json.loads((tmp_path / ".team" / "team.json").read_text())
+def test_init_creates_file_access_in_team_json(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
     assert "file_access" in team_json
     fa = team_json["file_access"]
     assert "writable_paths" in fa
@@ -253,3 +284,10 @@ def test_init_creates_file_access_in_team_json(tmp_path):
     assert fa["max_file_size_bytes"] == 1048576
     assert fa["max_files_per_turn"] == 10
     assert fa["enable_approvals"] is False
+
+
+def test_init_creates_worktrees_config_in_team_json(git_project):
+    init_project(git_project)
+    team_json = json.loads((git_project / ".team" / "team.json").read_text())
+    assert "worktrees" in team_json
+    assert team_json["worktrees"]["enabled"] is False

@@ -7,7 +7,7 @@ from gotg.agent import build_prompt, build_coach_prompt
 from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
     load_agents, load_coach, load_model_config, load_file_access,
-    ensure_dotenv_key, read_dotenv,
+    load_worktree_config, ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
@@ -50,6 +50,44 @@ def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach")
         print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
 
 
+def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args) -> dict | None:
+    """Set up worktrees for agents if configured. Returns worktree_map or None."""
+    worktree_config = load_worktree_config(team_dir)
+    if not worktree_config or not worktree_config.get("enabled"):
+        return None
+
+    if not fileguard:
+        print("Warning: worktrees enabled but file_access not configured — worktrees require file tools.", file=sys.stderr)
+        return None
+
+    from gotg.worktree import ensure_git_repo, create_worktree, ensure_gitignore_entries, WorktreeError
+
+    project_root = team_dir.parent
+    try:
+        ensure_git_repo(project_root)
+    except WorktreeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    for warning in ensure_gitignore_entries(project_root):
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    layer = getattr(args, "layer", None)
+    if layer is None:
+        layer = 0
+
+    worktree_map = {}
+    for agent in agents:
+        try:
+            wt_path = create_worktree(project_root, agent["name"], layer)
+            worktree_map[agent["name"]] = wt_path
+        except WorktreeError as e:
+            print(f"Error creating worktree for {agent['name']}: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+    return worktree_map
+
+
 def run_conversation(
     iter_dir: Path,
     agents: list[dict],
@@ -59,6 +97,7 @@ def run_conversation(
     coach: dict | None = None,
     fileguard=None,
     approval_store=None,
+    worktree_map: dict | None = None,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
@@ -103,6 +142,8 @@ def run_conversation(
     if fileguard:
         writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
         print(f"File tools: enabled (writable: {writable})")
+    if worktree_map:
+        print(f"Worktrees: {len(worktree_map)} active")
     print(f"Turns: {turn}/{max_turns}")
     print("---")
 
@@ -119,15 +160,25 @@ def run_conversation(
             from gotg.model import agentic_completion
             from gotg.tools import FILE_TOOLS, execute_file_tool, format_tool_operation
 
+            # Select per-agent FileGuard when worktrees active.
+            # IMPORTANT: agent_fg must be computed inside the loop because `agent`
+            # changes each iteration. The tool_executor closure captures agent_fg,
+            # and since the closure is re-created each iteration, it gets the right one.
+            # Do NOT refactor tool_executor outside this loop — it would break this.
+            if worktree_map and agent["name"] in worktree_map:
+                agent_fg = fileguard.with_root(worktree_map[agent["name"]])
+            else:
+                agent_fg = fileguard
+
             write_count = 0
 
             def tool_executor(name, inp):
                 nonlocal write_count
                 if name == "file_write":
                     write_count += 1
-                    if write_count > fileguard.max_files_per_turn:
-                        return f"Error: write limit reached ({fileguard.max_files_per_turn} per turn)"
-                return execute_file_tool(name, inp, fileguard, approval_store=approval_store, agent_name=agent["name"])
+                    if write_count > agent_fg.max_files_per_turn:
+                        return f"Error: write limit reached ({agent_fg.max_files_per_turn} per turn)"
+                return execute_file_tool(name, inp, agent_fg, approval_store=approval_store, agent_name=agent["name"])
 
             result = agentic_completion(
                 base_url=model_config["base_url"],
@@ -268,7 +319,9 @@ def cmd_run(args):
             from gotg.approvals import ApprovalStore
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store)
+    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
+
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map)
     _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
@@ -382,12 +435,18 @@ def cmd_continue(args):
             from gotg.approvals import ApprovalStore, apply_approved_writes
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
+    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
+
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
 
     # Apply approved writes and inject denials before resuming
     if approval_store:
-        results = apply_approved_writes(approval_store, fileguard)
+        # When worktrees active, route approved writes to correct agent's worktree
+        fg_for_agent = None
+        if worktree_map:
+            fg_for_agent = lambda name: fileguard.with_root(worktree_map[name]) if name in worktree_map else fileguard
+        results = apply_approved_writes(approval_store, fileguard, fileguard_for_agent=fg_for_agent)
         for r in results:
             result_msg = {
                 "from": "system",
@@ -445,7 +504,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map)
     _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
@@ -764,6 +823,78 @@ def cmd_deny(args):
         raise SystemExit(1)
 
 
+def cmd_worktrees(args):
+    """List active git worktrees."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.worktree import ensure_git_repo, list_active_worktrees, is_worktree_dirty, WorktreeError
+
+    project_root = team_dir.parent
+    try:
+        ensure_git_repo(project_root)
+    except WorktreeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    worktrees = list_active_worktrees(project_root)
+    if not worktrees:
+        print("No active worktrees.")
+        return
+
+    print("Active worktrees:")
+    for wt in worktrees:
+        wt_path = Path(wt["path"])
+        status = "[dirty]" if is_worktree_dirty(wt_path) else "[clean]"
+        branch = wt.get("branch", "unknown")
+        rel_path = wt_path.relative_to(project_root) if wt_path.is_relative_to(project_root) else wt_path
+        print(f"  {branch:<30} {rel_path}/  {status}")
+
+
+def cmd_commit_worktrees(args):
+    """Commit all dirty worktrees."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.worktree import ensure_git_repo, list_active_worktrees, commit_worktree, WorktreeError
+
+    project_root = team_dir.parent
+    try:
+        ensure_git_repo(project_root)
+    except WorktreeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    worktrees = list_active_worktrees(project_root)
+    if not worktrees:
+        print("No active worktrees.")
+        return
+
+    message = args.message or "Agent implementation work"
+    committed = 0
+    for wt in worktrees:
+        wt_path = Path(wt["path"])
+        branch = wt.get("branch", "unknown")
+        try:
+            commit_hash = commit_worktree(wt_path, message)
+            if commit_hash:
+                print(f"{branch}: committed {commit_hash}")
+                committed += 1
+            else:
+                print(f"{branch}: nothing to commit")
+        except WorktreeError as e:
+            print(f"{branch}: error — {e}", file=sys.stderr)
+
+    if committed:
+        print(f"\n{committed} worktree(s) committed.")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -773,12 +904,14 @@ def main():
 
     run_parser = subparsers.add_parser("run", help="Run the agent conversation")
     run_parser.add_argument("--max-turns", type=int, help="Override max_turns from iteration.json")
+    run_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: 0)")
 
     subparsers.add_parser("show", help="Show the conversation log")
 
     continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
     continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
     continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
+    continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: 0)")
 
     subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
 
@@ -802,6 +935,11 @@ def main():
     deny_parser = subparsers.add_parser("deny", help="Deny a pending file write request")
     deny_parser.add_argument("request_id", help="Approval request ID (e.g., 'a1')")
     deny_parser.add_argument("-m", "--message", help="Denial reason")
+
+    subparsers.add_parser("worktrees", help="List active git worktrees")
+
+    commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
+    commit_wt_parser.add_argument("-m", "--message", help="Commit message (default: 'Agent implementation work')")
 
     args = parser.parse_args()
 
@@ -829,6 +967,10 @@ def main():
         cmd_approve(args)
     elif args.command == "deny":
         cmd_deny(args)
+    elif args.command == "worktrees":
+        cmd_worktrees(args)
+    elif args.command == "commit-worktrees":
+        cmd_commit_worktrees(args)
     else:
         parser.print_help()
 

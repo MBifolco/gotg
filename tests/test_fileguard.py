@@ -423,3 +423,36 @@ def test_validate_write_approved_blocks_protected(project):
     guard = _guard(project, protected_paths=["config/**"])
     with pytest.raises(SecurityError, match="Protected path"):
         guard.validate_write_approved("config/settings.yaml")
+
+
+# --- with_root ---
+
+def test_with_root_creates_new_guard(project, tmp_path):
+    guard = _guard(project, enable_approvals=True, protected_paths=["vendor/**"])
+    new_root = tmp_path / "worktree"
+    new_root.mkdir()
+    new_guard = guard.with_root(new_root)
+    assert new_guard.project_root == new_root.resolve()
+    assert new_guard is not guard
+
+
+def test_with_root_preserves_config(project, tmp_path):
+    guard = _guard(project, enable_approvals=True, protected_paths=["vendor/**"])
+    new_root = tmp_path / "worktree"
+    new_root.mkdir()
+    new_guard = guard.with_root(new_root)
+    assert new_guard.writable_paths == guard.writable_paths
+    assert new_guard.protected_paths == guard.protected_paths
+    assert new_guard.max_file_size == guard.max_file_size
+    assert new_guard.max_files_per_turn == guard.max_files_per_turn
+    assert new_guard.enable_approvals == guard.enable_approvals
+
+
+def test_with_root_resolves_to_new_root(project, tmp_path):
+    guard = _guard(project)
+    new_root = tmp_path / "worktree"
+    new_root.mkdir()
+    (new_root / "src").mkdir()
+    new_guard = guard.with_root(new_root)
+    result = new_guard.validate_write("src/main.py")
+    assert result == (new_root / "src" / "main.py").resolve()
