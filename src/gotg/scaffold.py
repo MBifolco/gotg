@@ -260,8 +260,10 @@ def init_project(path: Path) -> None:
         },
         "file_access": {
             "writable_paths": ["src/**", "tests/**", "docs/**"],
+            "protected_paths": [],
             "max_file_size_bytes": 1048576,
             "max_files_per_turn": 10,
+            "enable_approvals": False,
         },
     }, indent=2) + "\n")
 

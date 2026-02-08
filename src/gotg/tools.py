@@ -1,4 +1,7 @@
-from gotg.fileguard import FileGuard, SecurityError
+from gotg.fileguard import (
+    FileGuard, SecurityError,
+    WRITE_ALLOWED, WRITE_APPROVAL_REQUIRED, WRITE_DENIED,
+)
 
 
 FILE_TOOLS = [
@@ -57,13 +60,19 @@ FILE_TOOLS = [
 ]
 
 
-def execute_file_tool(tool_name: str, tool_input: dict, fileguard: FileGuard) -> str:
+def execute_file_tool(
+    tool_name: str,
+    tool_input: dict,
+    fileguard: FileGuard,
+    approval_store=None,
+    agent_name: str = "",
+) -> str:
     """Execute a file tool call. Always returns a string — never raises."""
     try:
         if tool_name == "file_read":
             return _do_file_read(tool_input, fileguard)
         elif tool_name == "file_write":
-            return _do_file_write(tool_input, fileguard)
+            return _do_file_write(tool_input, fileguard, approval_store, agent_name)
         elif tool_name == "file_list":
             return _do_file_list(tool_input, fileguard)
         else:
@@ -86,15 +95,38 @@ def _do_file_read(tool_input: dict, fileguard: FileGuard) -> str:
     return content
 
 
-def _do_file_write(tool_input: dict, fileguard: FileGuard) -> str:
-    path = fileguard.validate_write(tool_input["path"])
+def _do_file_write(tool_input: dict, fileguard: FileGuard, approval_store=None, agent_name: str = "") -> str:
     content = tool_input["content"]
     size = len(content.encode())
     if size > fileguard.max_file_size:
         return f"Error: content too large ({size} bytes, limit {fileguard.max_file_size})"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    return f"Written: {tool_input['path']} ({size} bytes)"
+
+    if approval_store and fileguard.enable_approvals:
+        decision, resolved, reason = fileguard.check_write(tool_input["path"])
+
+        if decision == WRITE_ALLOWED:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(content)
+            return f"Written: {tool_input['path']} ({size} bytes)"
+        elif decision == WRITE_APPROVAL_REQUIRED:
+            req_id = approval_store.add_request(
+                path=tool_input["path"],
+                content=content,
+                requested_by=agent_name,
+                tool_input=tool_input,
+            )
+            return (
+                f"Pending approval [{req_id}]: write to {tool_input['path']} "
+                f"({size} bytes) requires PM approval. "
+                f"The file will be written after approval."
+            )
+        else:
+            return f"Error: {reason}"
+    else:
+        path = fileguard.validate_write(tool_input["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return f"Written: {tool_input['path']} ({size} bytes)"
 
 
 def _do_file_list(tool_input: dict, fileguard: FileGuard) -> str:
@@ -120,6 +152,9 @@ def format_tool_operation(op: dict) -> str:
 
     if result.startswith("Error:"):
         return f"[{name}] DENIED: {path} — {result}"
+
+    if result.startswith("Pending approval"):
+        return f"[{name}] PENDING APPROVAL: {path} — {result}"
 
     if name == "file_read":
         return f"[file_read] {path}"

@@ -252,3 +252,4 @@ def test_init_creates_file_access_in_team_json(tmp_path):
     assert "src/**" in fa["writable_paths"]
     assert fa["max_file_size_bytes"] == 1048576
     assert fa["max_files_per_turn"] == 10
+    assert fa["enable_approvals"] is False

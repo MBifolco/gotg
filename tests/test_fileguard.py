@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from gotg.fileguard import FileGuard, SecurityError, _path_matches_pattern
+from gotg.fileguard import (
+    FileGuard, SecurityError, _path_matches_pattern,
+    WRITE_ALLOWED, WRITE_APPROVAL_REQUIRED, WRITE_DENIED,
+)
 
 
 @pytest.fixture
@@ -305,3 +308,87 @@ def test_custom_limits(project):
     })
     assert guard.max_file_size == 500_000
     assert guard.max_files_per_turn == 5
+
+
+# --- enable_approvals config ---
+
+def test_enable_approvals_defaults_false(project):
+    guard = FileGuard(project, {})
+    assert guard.enable_approvals is False
+
+
+def test_enable_approvals_configurable(project):
+    guard = FileGuard(project, {"enable_approvals": True})
+    assert guard.enable_approvals is True
+
+
+# --- check_write ---
+
+def test_check_write_allowed_for_writable_path(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, resolved, reason = guard.check_write("src/main.py")
+    assert decision == WRITE_ALLOWED
+    assert resolved is not None
+    assert reason == ""
+
+
+def test_check_write_denied_for_hard_deny(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, resolved, reason = guard.check_write(".team/team.json")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_write_denied_for_protected(project):
+    guard = _guard(project, enable_approvals=True, protected_paths=["config/**"])
+    decision, resolved, reason = guard.check_write("config/settings.yaml")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_write_denied_for_containment_failure(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, resolved, reason = guard.check_write("/etc/passwd")
+    assert decision == WRITE_DENIED
+    assert resolved is None
+
+
+def test_check_write_approval_required_when_enabled(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, resolved, reason = guard.check_write("Dockerfile")
+    assert decision == WRITE_APPROVAL_REQUIRED
+    assert resolved is not None
+    assert "not in writable paths" in reason
+
+
+def test_check_write_denied_when_approvals_disabled(project):
+    guard = _guard(project, enable_approvals=False)
+    decision, resolved, reason = guard.check_write("Dockerfile")
+    assert decision == WRITE_DENIED
+    assert "not in writable paths" in reason
+
+
+def test_check_write_denied_when_approvals_not_set(project):
+    guard = _guard(project)
+    decision, resolved, reason = guard.check_write("Dockerfile")
+    assert decision == WRITE_DENIED
+
+
+# --- validate_write_approved ---
+
+def test_validate_write_approved_allows_non_writable(project):
+    guard = _guard(project)
+    result = guard.validate_write_approved("Dockerfile")
+    assert result == (project / "Dockerfile").resolve()
+
+
+def test_validate_write_approved_blocks_hard_deny(project):
+    guard = _guard(project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_write_approved(".team/team.json")
+
+
+def test_validate_write_approved_blocks_protected(project):
+    guard = _guard(project, protected_paths=["config/**"])
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_write_approved("config/settings.yaml")

@@ -10,6 +10,11 @@ class SecurityError(Exception):
 # Always blocked for writes, regardless of user config
 HARD_DENY_DIRS = {".team", ".git"}
 
+# Write check decisions (used by check_write)
+WRITE_ALLOWED = "allowed"
+WRITE_APPROVAL_REQUIRED = "approval_required"
+WRITE_DENIED = "denied"
+
 
 def _path_matches_pattern(rel_str: str, filename: str, pattern: str) -> bool:
     """Check if a relative path matches a pattern.
@@ -33,6 +38,7 @@ class FileGuard:
         self.protected_paths = config.get("protected_paths", [])
         self.max_file_size = config.get("max_file_size_bytes", 1_048_576)
         self.max_files_per_turn = config.get("max_files_per_turn", 10)
+        self.enable_approvals = config.get("enable_approvals", False)
 
     def validate_read(self, relative_path: str) -> Path:
         """Validate a read operation. Returns resolved absolute path."""
@@ -51,6 +57,49 @@ class FileGuard:
 
         if not self._is_writable(rel):
             raise SecurityError(f"Path not in writable paths: {rel}")
+
+        return resolved
+
+    def check_write(self, relative_path: str) -> tuple:
+        """Check a write without raising. Returns (decision, resolved_path, reason).
+
+        decision: WRITE_ALLOWED, WRITE_APPROVAL_REQUIRED, or WRITE_DENIED
+        """
+        try:
+            resolved = self._resolve_and_contain(relative_path)
+        except SecurityError as e:
+            return (WRITE_DENIED, None, str(e))
+
+        rel = resolved.relative_to(self.project_root)
+
+        if self._is_hard_denied(rel):
+            return (WRITE_DENIED, resolved, f"Protected path: {rel}")
+
+        if self._is_protected(rel):
+            return (WRITE_DENIED, resolved, f"Protected path: {rel}")
+
+        if self._is_writable(rel):
+            return (WRITE_ALLOWED, resolved, "")
+
+        # Within project but not in writable_paths
+        if self.enable_approvals:
+            return (WRITE_APPROVAL_REQUIRED, resolved, f"Path not in writable paths: {rel}")
+
+        return (WRITE_DENIED, resolved, f"Path not in writable paths: {rel}")
+
+    def validate_write_approved(self, relative_path: str) -> Path:
+        """Validate a write for an approved request.
+
+        Bypasses writable_paths check but enforces containment, hard-deny, and protected.
+        """
+        resolved = self._resolve_and_contain(relative_path)
+        rel = resolved.relative_to(self.project_root)
+
+        if self._is_hard_denied(rel):
+            raise SecurityError(f"Protected path: {rel}")
+
+        if self._is_protected(rel):
+            raise SecurityError(f"Protected path: {rel}")
 
         return resolved
 

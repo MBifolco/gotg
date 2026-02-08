@@ -205,3 +205,56 @@ def test_format_denied():
     result = format_tool_operation(op)
     assert result.startswith("[file_write] DENIED:")
     assert ".team/team.json" in result
+
+
+def test_format_pending():
+    op = {"name": "file_write", "input": {"path": "Dockerfile", "content": "FROM python"}, "result": "Pending approval [a1]: write to Dockerfile"}
+    result = format_tool_operation(op)
+    assert result.startswith("[file_write] PENDING APPROVAL:")
+    assert "Dockerfile" in result
+
+
+# --- Approval-aware writes ---
+
+def test_write_with_approval_store_writable_succeeds(project):
+    """Writable path writes immediately even with approval store present."""
+    from gotg.approvals import ApprovalStore
+    guard = FileGuard(project, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(project / "approvals.json")
+    result = execute_file_tool("file_write", {"path": "src/main.py", "content": "hello"}, guard, approval_store=store, agent_name="agent-1")
+    assert result.startswith("Written:")
+    assert (project / "src" / "main.py").read_text() == "hello"
+    assert len(store.get_pending()) == 0
+
+
+def test_write_with_approval_store_non_writable_creates_pending(project):
+    """Non-writable path creates pending request."""
+    from gotg.approvals import ApprovalStore
+    guard = FileGuard(project, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(project / "approvals.json")
+    result = execute_file_tool("file_write", {"path": "Dockerfile", "content": "FROM python"}, guard, approval_store=store, agent_name="agent-1")
+    assert "Pending approval" in result
+    assert "[a1]" in result
+    assert not (project / "Dockerfile").exists()
+    pending = store.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["path"] == "Dockerfile"
+    assert pending[0]["requested_by"] == "agent-1"
+
+
+def test_write_with_approval_store_hard_denied_returns_error(project):
+    """Hard-denied path still returns error, not pending."""
+    from gotg.approvals import ApprovalStore
+    guard = FileGuard(project, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(project / "approvals.json")
+    result = execute_file_tool("file_write", {"path": ".team/hack.json", "content": "evil"}, guard, approval_store=store, agent_name="agent-1")
+    assert result.startswith("Error:")
+    assert len(store.get_pending()) == 0
+
+
+def test_write_without_approval_store_unchanged(project):
+    """Without approval_store, non-writable writes fail as before."""
+    guard = FileGuard(project, {"writable_paths": ["src/**"]})
+    result = execute_file_tool("file_write", {"path": "Dockerfile", "content": "FROM python"}, guard)
+    assert result.startswith("Error:")
+    assert not (project / "Dockerfile").exists()

@@ -1563,3 +1563,340 @@ def test_cmd_run_no_file_access_passes_none(tmp_path, monkeypatch):
     call_kwargs = mock_run.call_args
     fileguard = call_kwargs[1].get("fileguard") if call_kwargs[1] else None
     assert fileguard is None
+
+
+# --- Approval system ---
+
+def test_run_conversation_pauses_on_pending_approval(tmp_path, capsys):
+    """Conversation loop should stop when pending approvals exist."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 5}
+
+    from gotg.fileguard import FileGuard
+    from gotg.approvals import ApprovalStore
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    # Simulate: agentic_completion's tool_executor adds pending request, returns result
+    mock_result = {
+        "content": "I tried to write a Dockerfile.",
+        "operations": [
+            {"name": "file_write", "input": {"path": "Dockerfile", "content": "FROM python"}, "result": "Pending approval [a1]: write to Dockerfile"},
+        ],
+    }
+
+    def mock_agentic(**kwargs):
+        # Simulate tool_executor adding pending request during agentic loop
+        store.add_request("Dockerfile", "FROM python", "agent-1", {"path": "Dockerfile", "content": "FROM python"})
+        return mock_result
+
+    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard, approval_store=store)
+
+    output = capsys.readouterr().out
+    assert "Paused" in output
+    assert "pending approval" in output
+    # Should have stopped after 1 turn (not 5)
+    messages = read_log(iter_dir / "conversation.jsonl")
+    agent_msgs = [m for m in messages if m["from"] not in ("system",)]
+    assert len(agent_msgs) == 1
+
+
+def test_run_conversation_no_pause_without_approval_store(tmp_path):
+    """Without approval_store, no pause logic runs even with fileguard."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = _default_agents()
+    iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 2}
+
+    from gotg.fileguard import FileGuard
+    fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+
+    mock_result = {"content": "done", "operations": []}
+
+    with patch("gotg.model.agentic_completion", return_value=mock_result):
+        run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    agent_msgs = [m for m in messages if m["from"] not in ("system",)]
+    assert len(agent_msgs) == 2  # Both turns completed
+
+
+def test_continue_applies_approved_writes(tmp_path, monkeypatch):
+    """gotg continue should apply approved writes before resuming."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"], "enable_approvals": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 50, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    # Create a pending request and approve it
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("Dockerfile", "FROM python:3.12", "agent-1", {"path": "Dockerfile", "content": "FROM python:3.12"})
+    store.approve("a1")
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation"):
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "continue"]):
+                main()
+
+    # File should have been written
+    assert (tmp_path / "Dockerfile").read_text() == "FROM python:3.12"
+    # System message should be in conversation log
+    messages = read_log(iter_dir / "conversation.jsonl")
+    assert any("APPROVED" in m["content"] for m in messages if m["from"] == "system")
+
+
+def test_continue_injects_denial_messages(tmp_path, monkeypatch):
+    """gotg continue should inject denial reasons into conversation."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"], "enable_approvals": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 50, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("Dockerfile", "FROM python:3.12", "agent-1", {"path": "Dockerfile", "content": "FROM python:3.12"})
+    store.deny("a1", "Use src/ directory instead")
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation"):
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "continue"]):
+                main()
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    denial_msgs = [m for m in messages if m["from"] == "system" and "DENIED by PM" in m["content"]]
+    assert len(denial_msgs) == 1
+    assert "Use src/ directory instead" in denial_msgs[0]["content"]
+
+
+def test_cmd_approvals_shows_pending(tmp_path, monkeypatch, capsys):
+    """gotg approvals should list pending requests."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("Dockerfile", "FROM python:3.12", "agent-1", {"path": "Dockerfile", "content": "FROM python:3.12"})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "[a1]" in output
+    assert "Dockerfile" in output
+    assert "agent-1" in output
+
+
+def test_cmd_approvals_empty(tmp_path, monkeypatch, capsys):
+    """gotg approvals with no pending shows 'No pending'."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "No pending" in output
+
+
+def test_cmd_approve_marks_approved(tmp_path, monkeypatch, capsys):
+    """gotg approve a1 should mark request approved."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("Dockerfile", "FROM python", "agent-1", {})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "a1"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Approved" in output
+
+    store2 = ApprovalStore(iter_dir / "approvals.json")
+    assert store2._get("a1")["status"] == "approved"
+
+
+def test_cmd_approve_all(tmp_path, monkeypatch, capsys):
+    """gotg approve all should approve all pending."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("f1.txt", "a", "agent-1", {})
+    store.add_request("f2.txt", "b", "agent-2", {})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "all"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "2 approval(s)" in output
+
+    store2 = ApprovalStore(iter_dir / "approvals.json")
+    assert len(store2.get_pending()) == 0
+
+
+def test_cmd_deny_with_reason(tmp_path, monkeypatch, capsys):
+    """gotg deny a1 -m 'reason' should deny with reason."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("Dockerfile", "FROM python", "agent-1", {})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "deny", "a1", "-m", "Use src/ instead"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "Denied" in output
+    assert "Use src/ instead" in output
+
+    store2 = ApprovalStore(iter_dir / "approvals.json")
+    assert store2._get("a1")["status"] == "denied"
+    assert store2._get("a1")["denial_reason"] == "Use src/ instead"
+
+
+def test_cmd_approve_invalid_id_errors(tmp_path, monkeypatch):
+    """gotg approve bad-id should error."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "bad-id"]):
+        with pytest.raises(SystemExit):
+            main()
+
+
+def test_cmd_run_with_enable_approvals_constructs_store(tmp_path, monkeypatch):
+    """cmd_run with enable_approvals should pass approval_store to run_conversation."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"], "enable_approvals": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation") as mock_run:
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "run"]):
+                main()
+
+    call_kwargs = mock_run.call_args[1]
+    assert call_kwargs.get("approval_store") is not None
+
+
+def test_cmd_run_without_enable_approvals_no_store(tmp_path, monkeypatch):
+    """cmd_run without enable_approvals should pass approval_store=None."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("gotg.cli.run_conversation") as mock_run:
+        with patch("gotg.cli._auto_checkpoint"):
+            with patch("sys.argv", ["gotg", "run"]):
+                main()
+
+    call_kwargs = mock_run.call_args[1]
+    assert call_kwargs.get("approval_store") is None

@@ -58,6 +58,7 @@ def run_conversation(
     max_turns_override: int | None = None,
     coach: dict | None = None,
     fileguard=None,
+    approval_store=None,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
@@ -123,7 +124,7 @@ def run_conversation(
                     write_count += 1
                     if write_count > fileguard.max_files_per_turn:
                         return f"Error: write limit reached ({fileguard.max_files_per_turn} per turn)"
-                return execute_file_tool(name, inp, fileguard)
+                return execute_file_tool(name, inp, fileguard, approval_store=approval_store, agent_name=agent["name"])
 
             result = agentic_completion(
                 base_url=model_config["base_url"],
@@ -175,6 +176,16 @@ def run_conversation(
 
         history.append(msg)
         turn += 1
+
+        # Check for pending approvals — pause conversation if any
+        if approval_store:
+            pending = approval_store.get_pending()
+            if pending:
+                print("---")
+                print(f"Paused: {len(pending)} pending approval(s).")
+                print("Run 'gotg approvals' to review, then 'gotg approve <id>' or 'gotg deny <id> -m reason'.")
+                print("Resume with 'gotg continue'.")
+                return
 
         # Coach injection: after every full rotation of engineering agents
         if coach and turn % num_agents == 0:
@@ -246,11 +257,15 @@ def cmd_run(args):
 
     file_access = load_file_access(team_dir)
     fileguard = None
+    approval_store = None
     if file_access:
         from gotg.fileguard import FileGuard
         fileguard = FileGuard(team_dir.parent, file_access)
+        if file_access.get("enable_approvals"):
+            from gotg.approvals import ApprovalStore
+            approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store)
     _auto_checkpoint(iter_dir, iteration)
 
 
@@ -356,12 +371,53 @@ def cmd_continue(args):
 
     file_access = load_file_access(team_dir)
     fileguard = None
+    approval_store = None
     if file_access:
         from gotg.fileguard import FileGuard
         fileguard = FileGuard(team_dir.parent, file_access)
+        if file_access.get("enable_approvals"):
+            from gotg.approvals import ApprovalStore, apply_approved_writes
+            approval_store = ApprovalStore(iter_dir / "approvals.json")
 
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
+
+    # Apply approved writes and inject denials before resuming
+    if approval_store:
+        results = apply_approved_writes(approval_store, fileguard)
+        for r in results:
+            result_msg = {
+                "from": "system",
+                "iteration": iteration["id"],
+                "content": (
+                    f"[file_write] APPROVED: {r['message']}"
+                    if r["success"]
+                    else f"[file_write] APPROVAL FAILED: {r['message']}"
+                ),
+            }
+            append_message(log_path, result_msg)
+            print(render_message(result_msg))
+            print()
+
+        for req in approval_store.get_denied_uninjected():
+            reason = req.get("denial_reason") or "No reason provided"
+            denial_msg = {
+                "from": "system",
+                "iteration": iteration["id"],
+                "content": (
+                    f"[file_write] DENIED by PM: {req['path']} — {reason}. "
+                    f"(Originally requested by {req['requested_by']})"
+                ),
+            }
+            append_message(log_path, denial_msg)
+            print(render_message(denial_msg))
+            print()
+            approval_store.mark_injected(req["id"])
+
+        remaining = approval_store.get_pending()
+        if remaining:
+            print(f"Warning: {len(remaining)} approval(s) still pending. Resolve before continuing.")
+            print("Run 'gotg approvals' to review.")
 
     # Count current engineering agent turns (not human/coach/system)
     current_agent_turns = sum(1 for msg in history if msg["from"] not in ("human", "coach", "system"))
@@ -383,7 +439,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store)
     _auto_checkpoint(iter_dir, iteration)
 
 
@@ -604,6 +660,100 @@ def cmd_restore(args):
     print(f"Restored to checkpoint {args.number} (phase: {state['phase']}, turns: {state['turn_count']})")
 
 
+def cmd_approvals(args):
+    """Show pending approval requests."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    pending = store.get_pending()
+
+    if not pending:
+        print("No pending approvals.")
+        return
+
+    print(f"Pending approvals ({len(pending)}):")
+    print()
+    for req in pending:
+        content_preview = req["content"][:200]
+        if len(req["content"]) > 200:
+            content_preview += "..."
+        print(f"  [{req['id']}] {req['path']} ({req['content_size']} bytes)")
+        print(f"       Requested by: {req['requested_by']}")
+        print(f"       Preview:")
+        for line in content_preview.split("\n")[:5]:
+            print(f"         {line}")
+        if req["content"].count("\n") > 5:
+            print(f"         ... ({req['content'].count(chr(10))} total lines)")
+        print()
+
+    print("To approve: gotg approve <id>")
+    print("To deny:    gotg deny <id> -m 'reason'")
+    print("To approve all: gotg approve all")
+
+
+def cmd_approve(args):
+    """Approve a pending request or all pending requests."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    if args.request_id == "all":
+        approved = store.approve_all()
+        if not approved:
+            print("No pending approvals to approve.")
+            return
+        for req in approved:
+            print(f"Approved: [{req['id']}] {req['path']}")
+        print(f"\n{len(approved)} approval(s) granted. Run 'gotg continue' to apply writes and resume.")
+    else:
+        try:
+            req = store.approve(args.request_id)
+            print(f"Approved: [{req['id']}] {req['path']}")
+            print("Run 'gotg continue' to apply the write and resume.")
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+
+def cmd_deny(args):
+    """Deny a pending request with a reason."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    reason = args.message or ""
+    try:
+        req = store.deny(args.request_id, reason)
+        print(f"Denied: [{req['id']}] {req['path']}")
+        if reason:
+            print(f"Reason: {reason}")
+        print("Run 'gotg continue' to inject denial into conversation and resume.")
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -634,6 +784,15 @@ def main():
     model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
     model_parser.add_argument("model_name", nargs="?", help="Model name (overrides preset default)")
 
+    subparsers.add_parser("approvals", help="Show pending approval requests")
+
+    approve_parser = subparsers.add_parser("approve", help="Approve a pending file write request")
+    approve_parser.add_argument("request_id", help="Approval request ID (e.g., 'a1') or 'all'")
+
+    deny_parser = subparsers.add_parser("deny", help="Deny a pending file write request")
+    deny_parser.add_argument("request_id", help="Approval request ID (e.g., 'a1')")
+    deny_parser.add_argument("-m", "--message", help="Denial reason")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -654,6 +813,12 @@ def main():
         cmd_checkpoints(args)
     elif args.command == "restore":
         cmd_restore(args)
+    elif args.command == "approvals":
+        cmd_approvals(args)
+    elif args.command == "approve":
+        cmd_approve(args)
+    elif args.command == "deny":
+        cmd_deny(args)
     else:
         parser.print_help()
 

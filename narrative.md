@@ -1914,6 +1914,42 @@ Across every phase, the coach does the same thing: facilitate convergence. In gr
 
 ---
 
+## 43. Grooming vs. Refinement: Pre-Iteration Exploration
+
+### The Problem
+
+In real scrum teams, "grooming" covers two distinct activities. One is refining an established story — taking a rough scope and debating requirements, edge cases, and boundaries until it's sprint-ready. The other is exploring nascent, abstract ideas — brainstorming, poking holes, shaping something vague into something actionable. These might become one story, three stories, or nothing.
+
+gotg currently has only the first kind. The phase called "grooming" is really refinement — it lives inside an iteration, produces `groomed.md`, and feeds directly into planning. If you want to explore a vague idea with the agents, you have to `gotg init` an iteration first, which implies a commitment to building something. That's too much structure for "what if we handled error logging differently?"
+
+### The Rename
+
+| Term | What it is | Where it lives | Output |
+|------|-----------|---------------|--------|
+| **Grooming** | Exploring ideas, pre-iteration | `.team/grooming/<slug>/` | Clarity — maybe becomes iterations, maybe not |
+| **Refinement** | Scoping a committed iteration | `.team/iterations/<id>/` | `refined.md` → feeds planning |
+
+The current phase called "grooming" becomes "refinement." The word changes; the behavior, prompts, and outputs stay the same. This is a mechanical rename across `scaffold.py`, `config.py` (PHASE_ORDER), coach prompts, and phase transition messages. The agents don't care what the phase is called — they care about the instructions. As long as instructions stay identical, behavior is identical.
+
+### Grooming: The New Feature
+
+`gotg groom "how should we handle file conflicts?"` starts a freeform conversation in `.team/grooming/<slug>/`. Same agents, same conversation format, same `gotg continue -m` for human input. But no phase system, no `gotg advance`, no convergence pressure, no artifacts. Just the team exploring an idea.
+
+Key properties:
+- **No iteration lifecycle.** No phases, no planning, no tasks. Just conversation.
+- **Lives outside iterations.** `.team/grooming/` is a sibling of `.team/iterations/`, not nested inside one.
+- **No coach facilitation by default.** Exploration benefits from open-ended discussion, not convergence tracking. The PM can always add the coach manually if they want structure.
+- **No time pressure.** A grooming conversation can span days or weeks. Pick it up whenever you have a new thought.
+- **Multiple concurrent grooming conversations.** Explore several ideas in parallel, each in its own slug directory.
+
+When the idea crystallizes, the PM takes the output and creates iterations manually. Eventually, a `gotg groom-to-iteration` command could have the coach summarize a grooming conversation into an iteration scope — becoming the starting point for refinement. But that's a later convenience, not a launch requirement.
+
+### Sequencing
+
+The refinement rename is low-risk mechanical work — could happen anytime, even mid-iteration-9 development. The grooming feature itself is lower priority than iterations 9–14 (agents need file tools before they need a brainstorming space). Natural slot: after iteration 14 (end-to-end layer execution), when the PM has real experience with the full pipeline and knows what kinds of pre-iteration conversations would have helped.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2027,6 +2063,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - **Cross-review beats separate reviewers** — the agent who built the adjacent component has the most context on integration points; cross-review catches interface mismatches that a dedicated reviewer would miss
 - **Diffs constrain review scope naturally** — without diffs, reviewing agents critique code that existed before the current task; diffs focus review on what actually changed, which is what review should be
 - **Structured approvals follow the same pattern as phase advancement** — `gotg approve`/`gotg deny` mirror `gotg advance`; structured in, structured out, no message parsing
+- **Exploration and convergence need different conversation modes** — the current "grooming" phase is really refinement (convergent, produces `groomed.md`, feeds planning); true grooming is pre-iteration exploration without convergence pressure or artifacts
 
 ### Development Strategy
 - **Iteration 9 next** — file tools + FileGuard, the minimum viable agent tooling
@@ -2042,6 +2079,9 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - Agent verbosity in planning phase is a known optimization lever — not worth pulling yet
 
 ### Deferred (Intentionally)
+- **Refinement rename** — rename current "grooming" phase to "refinement" across scaffold.py, config.py, coach prompts, phase transitions (mechanical, low-risk, can happen anytime)
+- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (after iteration 14)
+- `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature)
 - Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
 - Agent verbosity optimization in planning phase (known lever, not worth pulling yet)
 - Per-agent writable path scoping (planned for when agents step on each other's files — evidence-driven trigger)
@@ -2089,3 +2129,4 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 25. **Infrastructure should be invisible to agents** — agents handle substance (code, design, review); the system handles process (branching, merging, file routing, approvals); mixing the two produces worse outcomes in both
 26. **Branching beats locking for parallel work** — locking constrains task decomposition to file boundaries; branching allows decomposition by feature/responsibility and detects conflicts at merge time, which is how real engineering teams work
 27. **Cross-review produces integration quality** — the agent who built the adjacent component catches interface mismatches that a dedicated reviewer would miss; code review is a team conversation, not isolated approvals
+28. **Separate exploration from commitment** — exploring an idea should not require committing to an iteration; grooming (open-ended, pre-iteration) and refinement (convergent, within an iteration) serve different purposes and need different structures
