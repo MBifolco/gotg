@@ -1950,6 +1950,72 @@ The refinement rename is low-risk mechanical work — could happen anytime, even
 
 ---
 
+## 44. TUI Design Exploration (Grooming)
+
+### Why a TUI
+
+The current CLI is a sequence of discrete commands — `gotg run`, `gotg show`, `gotg continue -m "..."`, `gotg approvals`, `gotg review`. Each command starts a process, does work, prints output, and exits. A TUI (using Textual) would be a persistent interface that wraps all of this into a live session. Conversations stream in real-time. Approvals appear inline. Phase transitions happen without leaving the interface.
+
+### Architecture Decisions
+
+**Async refactor.** The TUI should drive the core loop in-process rather than spawning subprocesses. Textual runs on asyncio, which is a natural fit. This requires refactoring `run_conversation` and the model call chain to be async. Worth doing — the project would likely move to async eventually regardless of the TUI.
+
+**CLI stays as the underlying API.** The TUI wraps the CLI, it doesn't replace it. The CLI remains testable, scriptable, and usable in headless/CI environments. The TUI is the "IDE"; the CLI is the "compiler." First TUI iteration may require refactoring the CLI to abstract away what's necessary to support both interfaces.
+
+**Event-driven state synchronization.** Instead of each panel polling its own files, the core loop emits events directly. `append_message` emits `MessageAdded`. `approval_store.add_request` emits `ApprovalCreated`. Panels subscribe via Textual's reactive system. One central `AppState` object with reactive attributes, panels bind to the slices they care about. No polling, no timing gaps between panels.
+
+### Launch Flow
+
+`gotg init` remains a one-shot scaffolding command — creates `.team/`, prints instructions, exits. A separate command (`gotg ui` or bare `gotg`) launches the TUI. If `.team/` doesn't exist, the TUI refuses with "run `gotg init` first." Keep the TUI as the runtime interface, keep init as the setup command.
+
+On first launch after init, the TUI detects incomplete setup (no model tested, no iteration description, status pending) and guides the user through remaining setup inline — not a modal wizard, just a checklist showing what's configured, what's missing, and letting the user fix it in place. Common path (description, model, start) is frictionless in the TUI. Advanced config (custom prompts, file_access patterns, worktree config) stays in JSON files.
+
+### Home Screen — Three Navigation Modes
+
+The TUI home screen isn't iteration-first. It's a workspace with three modes:
+
+**Iterations** — shows existing iterations with status/phase, lets PM create new ones. Selecting an iteration enters its conversation view.
+
+**Grooming** — shows ongoing grooming conversations (the pre-iteration exploration feature). Selecting one resumes the chat. Creating a new one asks for a topic and starts a freeform conversation with the agents.
+
+**Settings** — (gear icon, not a main column) unified config view for model, agents, coach, file access, worktrees, approvals. Everything in `team.json`. Editable inline for common settings, with an escape hatch to open `team.json` directly.
+
+The Iterations and Grooming columns clarify the relationship between exploration and committed work. A grooming conversation can eventually be promoted to an iteration via a "Create iteration from this conversation" action (the deferred `gotg groom-to-iteration` feature).
+
+### Chat View — Shared Between Grooming and Iterations
+
+Same layout for both modes, with context-appropriate info tiles.
+
+**Left side (primary):**
+- Top: conversation stream, messages flowing in real-time, color-coded by participant. Main viewport, most of the screen.
+- Bottom: text input pinned at bottom. Placeholder: "Message the team..." PM types, hits enter, message injected into conversation.
+
+**Right column — info tiles:**
+- **Conversation tile:** contextual based on mode. Grooming: topic, started date, message count. Iteration: phase badge, turn count, layer info, pending approvals count, worktree status. Phase-specific actions live here (e.g., "Advance" button when coach signals completion).
+- **Participant tiles:** one per agent and coach. Shows name, role, status indicator (speaking/waiting/next). Eventually: a mini activity stream showing tool operations in real-time as the agent works (file_read, file_write calls appearing on the tile before the agent's full response lands in chat). Coach tile could pin the coach's last summary (agreements, unresolved items) as always-visible reference.
+
+### Input/Action Box — Contextual Actions
+
+The input field is always a plain text box. When the system needs a decision, an action bar appears above the input with contextual buttons:
+
+- **Pending approvals:** warning banner with [Review] [Approve All] [Deny All]
+- **Coach signals phase complete:** [Advance to Planning] [Keep Discussing]
+- **Max turns reached:** [Add 5 Turns] [Add 10 Turns]
+
+The action bar is ephemeral — appears when a decision is needed, disappears once resolved. Power users can also use slash commands in the input (`/advance`, `/approve a1`, `/layer 1`) as keyboard shortcuts.
+
+### Tool Operations — Chat vs. Tile Display
+
+When agents perform file operations during an agentic loop, the operations could appear both in the main chat (as system messages) and on the agent's tile (as a live stream). To avoid redundancy, the chat log could show a collapsed summary ("agent-1 performed 3 file operations" expandable on click) while the tile shows the live stream. This separation keeps the chat focused on substance while the tile shows activity.
+
+### Deferred TUI Concerns
+
+- **Agent-produced rich widgets.** Agents producing structured visual output (tables, trees, diagrams) via Textual widgets. Requires defining a markup language or new tool outputs. Interesting but changes the agent-to-system contract. Later iteration.
+- **Iteration-specific screens.** Task boards, layer visualization, merge workflow UI, diff review panel. Design these after the basic chat view is validated.
+- **Full settings editing.** All `team.json` fields editable in the TUI. Start with common settings, expand over time.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2064,6 +2130,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - **Diffs constrain review scope naturally** — without diffs, reviewing agents critique code that existed before the current task; diffs focus review on what actually changed, which is what review should be
 - **Structured approvals follow the same pattern as phase advancement** — `gotg approve`/`gotg deny` mirror `gotg advance`; structured in, structured out, no message parsing
 - **Exploration and convergence need different conversation modes** — the current "grooming" phase is really refinement (convergent, produces `groomed.md`, feeds planning); true grooming is pre-iteration exploration without convergence pressure or artifacts
+- **The TUI is a viewer with interaction hooks, not a controller** — the primary experience is watching a team conversation stream in real-time with the ability to intervene when needed (approvals, messages, phase advances); the CLI remains the underlying API for testability and scripting
 
 ### Development Strategy
 - **Iteration 9 next** — file tools + FileGuard, the minimum viable agent tooling
@@ -2089,7 +2156,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
-- TUI chat interface (Textual — after file tools and worktrees are validated with CLI)
+- TUI chat interface (Textual — after iteration 14; async refactor, event-driven state, three-mode home screen, shared chat view with contextual info tiles and inline action bar; see section 44)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Narrator layer implementation (consolidated messages + @mentions work well)
@@ -2130,3 +2197,4 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 26. **Branching beats locking for parallel work** — locking constrains task decomposition to file boundaries; branching allows decomposition by feature/responsibility and detects conflicts at merge time, which is how real engineering teams work
 27. **Cross-review produces integration quality** — the agent who built the adjacent component catches interface mismatches that a dedicated reviewer would miss; code review is a team conversation, not isolated approvals
 28. **Separate exploration from commitment** — exploring an idea should not require committing to an iteration; grooming (open-ended, pre-iteration) and refinement (convergent, within an iteration) serve different purposes and need different structures
+29. **Surface decisions, don't require memorization** — contextual action bars that appear when the system needs a decision are better than commands the PM must remember; the interface should tell you what's possible right now

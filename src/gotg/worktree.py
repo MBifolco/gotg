@@ -66,14 +66,16 @@ def ensure_gitignore_entries(project_root: Path) -> list[str]:
         gitignore.write_text(content)
 
     # Warn if any of these paths are currently tracked by git
+    # Use `git ls-files -- path` (not --error-unmatch) to catch files *under*
+    # directories like .team/team.json, since git doesn't track directories.
     for check_path in [".team", ".env"]:
         result = _sp.run(
-            ["git", "ls-files", "--error-unmatch", check_path],
+            ["git", "ls-files", "--", check_path],
             cwd=project_root,
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0:
+        if result.stdout.strip():
             warnings.append(
                 f"'{check_path}' is tracked by git. "
                 f"Run 'git rm -r --cached {check_path}' to untrack it."
@@ -230,8 +232,14 @@ def list_active_worktrees(project_root: Path) -> list[dict]:
     return worktrees
 
 
-def diff_branch(project_root: Path, branch: str) -> dict:
+SENSITIVE_PATHS = [".env", ".env.*", ".team/**"]
+
+
+def diff_branch(project_root: Path, branch: str, exclude_paths: list[str] | None = None) -> dict:
     """Return diff of a branch against main (three-dot: changes since divergence).
+
+    Args:
+        exclude_paths: list of pathspec patterns to exclude (e.g. [".env", ".team/**"])
 
     Returns dict with keys:
         branch, stat, diff, files_changed, insertions, deletions, empty
@@ -239,9 +247,14 @@ def diff_branch(project_root: Path, branch: str) -> dict:
     if not _branch_exists(project_root, branch):
         raise WorktreeError(f"Branch '{branch}' does not exist.")
 
-    stat = _git(project_root, "diff", "--stat", f"main...{branch}").stdout
-    full_diff = _git(project_root, "diff", f"main...{branch}").stdout
-    numstat = _git(project_root, "diff", "--numstat", f"main...{branch}").stdout
+    # Build pathspec exclusions: -- ':!.env' ':!.team/**'
+    excludes = []
+    if exclude_paths:
+        excludes = ["--"] + [f":!{p}" for p in exclude_paths]
+
+    stat = _git(project_root, "diff", "--stat", f"main...{branch}", *excludes).stdout
+    full_diff = _git(project_root, "diff", f"main...{branch}", *excludes).stdout
+    numstat = _git(project_root, "diff", "--numstat", f"main...{branch}", *excludes).stdout
 
     files_changed = 0
     insertions = 0
@@ -374,6 +387,95 @@ def abort_merge(project_root: Path) -> None:
     if not is_merge_in_progress(project_root):
         raise WorktreeError("No merge in progress.")
     _git(project_root, "merge", "--abort")
+
+
+MAX_DIFF_CHARS = 50_000
+
+
+def format_diffs_for_prompt(project_root: Path, layer: int) -> str | None:
+    """Format diffs of all layer branches for injection into agent prompts.
+
+    Returns formatted string with stat + diff per branch, or None if no branches.
+    Per-branch budget: MAX_DIFF_CHARS / num_branches. Truncates with marker if exceeded.
+    """
+    branches = list_layer_branches(project_root, layer)
+    if not branches:
+        return None
+
+    per_branch_budget = MAX_DIFF_CHARS // len(branches)
+    parts = []
+    total_files = 0
+    total_ins = 0
+    total_del = 0
+
+    for br in branches:
+        merged = is_branch_merged(project_root, br)
+        label = f" [merged]" if merged else ""
+        header = f"=== {br}{label} ==="
+
+        try:
+            result = diff_branch(project_root, br, exclude_paths=SENSITIVE_PATHS)
+        except WorktreeError:
+            parts.append(f"{header}\n(error reading diff)")
+            continue
+
+        if result["empty"]:
+            parts.append(f"{header}\n(no changes)")
+            continue
+
+        total_files += result["files_changed"]
+        total_ins += result["insertions"]
+        total_del += result["deletions"]
+
+        # Always include stat
+        section = f"{header}\n{result['stat'].rstrip()}"
+
+        # Add diff within budget
+        diff_text = result["diff"].rstrip()
+        if len(diff_text) <= per_branch_budget:
+            section += f"\n\n{diff_text}"
+        else:
+            # Truncate: include as many lines as fit
+            lines = diff_text.splitlines()
+            truncated = []
+            char_count = 0
+            for line in lines:
+                if char_count + len(line) + 1 > per_branch_budget:
+                    break
+                truncated.append(line)
+                char_count += len(line) + 1
+            omitted = len(lines) - len(truncated)
+            section += f"\n\n" + "\n".join(truncated)
+            section += f"\n... ({omitted} lines omitted)"
+
+        parts.append(section)
+
+    summary = f"Layer {layer}: {len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines"
+    parts.append(summary)
+
+    result_text = "\n\n".join(parts)
+
+    # Global cap: if total still exceeds MAX_DIFF_CHARS, fall back to stat-only
+    if len(result_text) > MAX_DIFF_CHARS:
+        stat_parts = []
+        for br in branches:
+            merged = is_branch_merged(project_root, br)
+            label = f" [merged]" if merged else ""
+            header = f"=== {br}{label} ==="
+            try:
+                res = diff_branch(project_root, br, exclude_paths=SENSITIVE_PATHS)
+            except WorktreeError:
+                stat_parts.append(f"{header}\n(error reading diff)")
+                continue
+            if res["empty"]:
+                stat_parts.append(f"{header}\n(no changes)")
+            else:
+                stat_parts.append(f"{header}\n{res['stat'].rstrip()}")
+        stat_parts.append(f"(Diffs truncated to stat-only — total exceeded {MAX_DIFF_CHARS} chars)")
+        stat_parts.append(summary)
+        return "\n\n".join(stat_parts)
+
+    return result_text
 
 
 def cleanup_layer_worktrees(project_root: Path, layer: int) -> list[str]:

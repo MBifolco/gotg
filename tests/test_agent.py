@@ -670,3 +670,70 @@ def test_build_coach_prompt_falls_back_to_default_when_no_phase():
     ])
     system = messages[0]["content"]
     assert COACH_FACILITATION_PROMPT in system
+
+
+# --- code-review phase + diffs injection ---
+
+def test_build_prompt_includes_code_review_phase_prompt():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "code-review", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "CURRENT PHASE: CODE REVIEW" in system
+
+
+def test_build_prompt_injects_diffs_summary():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "code-review", "max_turns": 10,
+    }
+    diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++\n\ndiff --git a/..."
+    messages = build_prompt(agent, iteration, [], diffs_summary=diffs)
+    system = messages[0]["content"]
+    assert "IMPLEMENTATION DIFFS" in system
+    assert "agent-1/layer-0" in system
+
+
+def test_build_prompt_no_diffs_when_none():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "code-review", "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [], diffs_summary=None)
+    system = messages[0]["content"]
+    assert "IMPLEMENTATION DIFFS" not in system
+
+
+def test_build_coach_prompt_injects_diffs_summary():
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "code-review", "max_turns": 10,
+    }
+    diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++"
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ], diffs_summary=diffs)
+    system = messages[0]["content"]
+    assert "IMPLEMENTATION DIFFS" in system
+    assert "agent-1/layer-0" in system
+
+
+def test_build_coach_prompt_code_review_facilitation():
+    from gotg.agent import build_coach_prompt
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
+                 "phase": "code-review", "max_turns": 10}
+    messages = build_coach_prompt(coach, iteration, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+    ])
+    system = messages[0]["content"]
+    assert COACH_FACILITATION_PROMPTS["code-review"] in system
+    assert "concerns" in system.lower()

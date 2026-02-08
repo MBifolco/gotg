@@ -555,7 +555,7 @@ def test_advance_planning_to_pre_code_review(tmp_path):
 
 
 def test_advance_past_last_phase_errors(tmp_path):
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="code-review")
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             with pytest.raises(SystemExit):
@@ -2464,3 +2464,149 @@ def test_cmd_merge_all_handles_worktree_error(tmp_path, monkeypatch, capsys):
     assert "expected 'main'" in output
     # Clean up
     subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True)
+
+
+# --- code-review phase ---
+
+def test_advance_pre_code_review_to_code_review(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "code-review"
+
+
+def test_advance_past_code_review_errors(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="code-review")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+
+def test_run_conversation_passes_diffs_summary(tmp_path):
+    """run_conversation with diffs_summary injects IMPLEMENTATION DIFFS into prompts."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "code-review", "max_turns": 1,
+    }
+
+    diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++"
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), diffs_summary=diffs)
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "IMPLEMENTATION DIFFS" in system_msg
+    assert "agent-1/layer-0" in system_msg
+
+
+def test_run_conversation_no_diffs_no_injection(tmp_path):
+    """run_conversation without diffs_summary has no IMPLEMENTATION DIFFS."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "code-review", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), diffs_summary=None)
+
+    system_msg = captured_prompts[0][0]["content"]
+    assert "IMPLEMENTATION DIFFS" not in system_msg
+
+
+def test_run_conversation_diffs_passed_to_coach(tmp_path):
+    """Coach prompt should also receive diffs_summary."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "code-review", "max_turns": 2,
+    }
+
+    diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++"
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        captured_prompts.append(messages)
+        if tools:
+            return {"content": "response", "tool_calls": []}
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach(),
+                         diffs_summary=diffs)
+
+    # 3rd call is the coach (after agent-1, agent-2)
+    coach_system_msg = captured_prompts[2][0]["content"]
+    assert "IMPLEMENTATION DIFFS" in coach_system_msg
+    assert "agent-1/layer-0" in coach_system_msg
+
+
+def test_coach_completion_last_phase_message(tmp_path, capsys):
+    """Coach signals completion in code-review (last phase) shows 'final phase' message."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "code-review", "max_turns": 2,
+    }
+
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        if tools:
+            return {
+                "content": "All concerns resolved.",
+                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+            }
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    output = capsys.readouterr().out
+    assert "final phase" in output
+    assert "gotg advance" not in output
+
+
+def test_coach_completion_non_last_phase_message(tmp_path, capsys):
+    """Coach signals completion in grooming shows 'gotg advance' message."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+    }
+
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        if tools:
+            return {
+                "content": "All done.",
+                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+            }
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    output = capsys.readouterr().out
+    assert "gotg advance" in output
+    assert "final phase" not in output

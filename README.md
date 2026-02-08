@@ -66,11 +66,12 @@ GOTG puts you in the role of **Product Manager**. AI agents discuss and design b
 
 ### Phases
 
-Every iteration progresses through three phases:
+Every iteration progresses through four phases:
 
 1. **Grooming** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria. No code, no implementation details.
 2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies and done criteria. The coach extracts a structured `tasks.json`.
 3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy. Layer by layer, one task at a time.
+4. **Code-review** — Agents review each other's implementation diffs. The coach tracks open review concerns and signals completion when all are resolved.
 
 The coach facilitates each phase — summarizing progress, flagging gaps, and signaling when the team is ready to advance. You control transitions with `gotg advance`.
 
@@ -90,7 +91,12 @@ gotg advance                                # Coach writes tasks.json
 
 # Phase 3: Pre-code-review
 gotg continue                               # Agents propose implementations
-gotg advance                                # Ready for coding
+gotg advance                                # Move to code review
+
+# Phase 4: Code-review (requires worktrees)
+gotg commit-worktrees                       # Commit agent implementations
+gotg continue                               # Agents review each other's diffs
+# Coach signals completion when all concerns resolved
 ```
 
 ## Commands
@@ -308,7 +314,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~508 tests
+pytest -q                     # ~538 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```

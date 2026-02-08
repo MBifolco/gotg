@@ -291,3 +291,68 @@ def test_init_creates_worktrees_config_in_team_json(git_project):
     team_json = json.loads((git_project / ".team" / "team.json").read_text())
     assert "worktrees" in team_json
     assert team_json["worktrees"]["enabled"] is False
+
+
+# --- code-review phase prompts ---
+
+def test_phase_prompts_has_code_review_key():
+    from gotg.scaffold import PHASE_PROMPTS
+    assert "code-review" in PHASE_PROMPTS
+
+
+def test_code_review_prompt_mentions_diffs():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["code-review"].lower()
+    assert "diffs" in prompt
+
+
+def test_code_review_prompt_mentions_correctness():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["code-review"].lower()
+    assert "correctness" in prompt
+
+
+def test_code_review_prompt_mentions_consistency():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["code-review"].lower()
+    assert "consistency" in prompt
+
+
+def test_code_review_prompt_mentions_redirect():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["code-review"].lower()
+    assert "decided earlier" in prompt
+
+
+def test_code_review_prompt_discourages_replanning():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["code-review"].lower()
+    assert "propose new tasks" in prompt
+
+
+def test_coach_facilitation_prompts_has_code_review():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    assert "code-review" in COACH_FACILITATION_PROMPTS
+
+
+def test_coach_facilitation_code_review_mentions_concerns():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
+    assert "concerns" in prompt
+
+
+def test_coach_facilitation_code_review_mentions_resolved():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
+    assert "resolved" in prompt
+
+
+def test_coach_facilitation_code_review_blocks_early_completion():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
+    assert "do not" in prompt
+
+
+def test_default_system_prompt_mentions_code_review():
+    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    assert "code-review" in DEFAULT_SYSTEM_PROMPT

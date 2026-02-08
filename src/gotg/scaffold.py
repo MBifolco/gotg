@@ -15,8 +15,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "that you must follow. The current phase instructions tell you exactly "
     "what to focus on and what to avoid. Follow them closely.\n\n"
     "The phases are: grooming (understand the problem and define scope), "
-    "planning (break scope into tasks), and pre-code-review (propose "
-    "implementation approaches). Each phase builds on the previous one."
+    "planning (break scope into tasks), pre-code-review (propose "
+    "implementation approaches), and code-review (review implementation "
+    "diffs). Each phase builds on the previous one."
 )
 
 
@@ -92,6 +93,29 @@ PHASE_PROMPTS = {
         "- Skip ahead to higher-layer tasks before finishing lower layers\n\n"
         "If a teammate tries to re-open planning decisions, redirect them: "
         "\"That was decided in planning. Let's focus on implementation approach.\""
+    ),
+    "code-review": (
+        "CURRENT PHASE: CODE REVIEW\n\n"
+        "If implementation diffs are included below, review the changes in each "
+        "agent's branch for this layer. If no diffs are present, discuss "
+        "implementation status and any concerns based on what you know so far.\n\n"
+        "You are reviewing your teammates' implementations. Focus on:\n"
+        "- Correctness: Does the code do what the task requires?\n"
+        "- Consistency: Do components work together? Are interfaces compatible?\n"
+        "- Requirements adherence: Does it match the groomed scope?\n"
+        "- Test coverage: Are there tests? Do they cover edge cases?\n"
+        "- Code quality: Naming, structure, duplication, error handling\n\n"
+        "For YOUR implementation:\n"
+        "- Defend your choices when questioned — explain your reasoning\n"
+        "- Acknowledge valid concerns and describe what you would change\n\n"
+        "For TEAMMATE implementations:\n"
+        "- Suggest specific changes — reference file names and describe what should change\n"
+        "- Approve explicitly when you think code is ready\n\n"
+        "DO: Reference specific files/changes from diffs, raise interface mismatch concerns,\n"
+        "    suggest concrete improvements, explicitly approve or request changes\n"
+        "DO NOT: Re-open planning decisions, propose new tasks, write full replacement code,\n"
+        "        rubber-stamp without reviewing\n\n"
+        "Redirect: \"That was decided earlier. Let's focus on reviewing the implementation.\""
     ),
 }
 
@@ -208,6 +232,25 @@ COACH_FACILITATION_PROMPTS = {
         "and reviewed implementation approaches for ALL tasks in the task list\n\n"
         "Keep your messages concise — shorter than the engineers' messages. "
         "The engineers are the experts. You manage the process."
+    ),
+
+    "code-review": (
+        "You are an Agile Coach facilitating code review. You do NOT contribute "
+        "technical opinions.\n\n"
+        "Your job:\n"
+        "1. Track open review concerns — specific issues raised about specific "
+        "branches/files\n"
+        "2. A concern is RESOLVED when the author acknowledges it AND the reviewer "
+        "accepts the resolution (either agree to change or explain why it stays)\n"
+        "3. Periodically summarize: which branches reviewed, open concerns, "
+        "resolved concerns\n"
+        "4. Ensure every branch gets reviewed — direct team to unreviewed branches\n"
+        "5. Before signaling: list ALL open concerns. If any unresolved, do NOT "
+        "signal — direct team to address them\n"
+        "6. Signal completion only when all concerns resolved and every branch "
+        "reviewed. Include outcome: approved (all resolved) or changes-requested "
+        "(with summary)\n\n"
+        "Keep your messages concise. Engineers are experts. You manage the process."
     ),
 }
 

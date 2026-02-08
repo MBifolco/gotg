@@ -388,8 +388,8 @@ def test_save_iteration_phase_missing_id_raises(team_dir):
 
 # --- PHASE_ORDER ---
 
-def test_phase_order_has_three_phases():
-    assert PHASE_ORDER == ["grooming", "planning", "pre-code-review"]
+def test_phase_order_has_four_phases():
+    assert PHASE_ORDER == ["grooming", "planning", "pre-code-review", "code-review"]
 
 
 # --- load_coach ---

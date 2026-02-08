@@ -103,6 +103,31 @@ def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args) -> dic
     return worktree_map
 
 
+def _load_diffs_for_code_review(team_dir: Path, iteration: dict, args) -> str | None:
+    """Load diffs for code-review phase. Returns formatted string or None."""
+    if iteration.get("phase") != "code-review":
+        return None
+
+    worktree_config = load_worktree_config(team_dir)
+    if not worktree_config or not worktree_config.get("enabled"):
+        print("Warning: code-review phase but worktrees not enabled. No diffs to load.", file=sys.stderr)
+        return None
+
+    from gotg.worktree import format_diffs_for_prompt
+
+    layer = getattr(args, "layer", None)
+    if layer is None:
+        layer = 0
+
+    diffs = format_diffs_for_prompt(team_dir.parent, layer)
+    if diffs:
+        print(f"Code review: diffs loaded for layer {layer}")
+    else:
+        print(f"Warning: no branches found for layer {layer}. No diffs to review.", file=sys.stderr)
+
+    return diffs
+
+
 def run_conversation(
     iter_dir: Path,
     agents: list[dict],
@@ -113,6 +138,7 @@ def run_conversation(
     fileguard=None,
     approval_store=None,
     worktree_map: dict | None = None,
+    diffs_summary: str | None = None,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
@@ -164,7 +190,7 @@ def run_conversation(
 
     while turn < max_turns:
         agent = agents[turn % num_agents]
-        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary)
+        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary)
         append_debug(debug_path, {
             "turn": turn,
             "agent": agent["name"],
@@ -258,7 +284,7 @@ def run_conversation(
 
         # Coach injection: after every full rotation of engineering agents
         if coach and turn % num_agents == 0:
-            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary)
+            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary)
             append_debug(debug_path, {
                 "turn": f"coach-after-{turn}",
                 "agent": coach["name"],
@@ -287,7 +313,12 @@ def run_conversation(
             # Early exit: coach signals phase is complete via tool call
             if any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
                 print("---")
-                print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
+                current_phase = iteration.get("phase")
+                if current_phase and current_phase == PHASE_ORDER[-1]:
+                    print("Coach signals phase complete. This is the final phase — iteration is done.")
+                    print("Run `gotg continue` to keep discussing if needed.")
+                else:
+                    print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
                 return
 
     print("---")
@@ -336,7 +367,9 @@ def cmd_run(args):
 
     worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map)
+    diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
+
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
     _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
@@ -452,6 +485,8 @@ def cmd_continue(args):
 
     worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
 
+    diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
+
     log_path = iter_dir / "conversation.jsonl"
     history = read_log(log_path)
 
@@ -519,7 +554,7 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map)
+    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
     _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 

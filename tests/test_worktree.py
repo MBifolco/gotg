@@ -480,3 +480,126 @@ def test_abort_merge_restores_clean_state(git_project):
 def test_abort_merge_no_merge_in_progress(git_project):
     with pytest.raises(WorktreeError, match="No merge in progress"):
         abort_merge(git_project)
+
+
+# --- format_diffs_for_prompt ---
+
+def test_format_diffs_for_prompt_with_changes(git_project):
+    """Branches with changes produce a string with diff content."""
+    from gotg.worktree import format_diffs_for_prompt
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    result = format_diffs_for_prompt(git_project, 0)
+    assert result is not None
+    assert "agent-1/layer-0" in result
+    assert "feature.py" in result
+    assert "feature code" in result
+
+
+def test_format_diffs_for_prompt_empty_branches(git_project):
+    """Branches with no changes show '(no changes)'."""
+    from gotg.worktree import format_diffs_for_prompt
+    create_worktree(git_project, "agent-1", 0)
+    # No changes committed to worktree, but branch exists
+
+    result = format_diffs_for_prompt(git_project, 0)
+    assert result is not None
+    assert "(no changes)" in result
+
+
+def test_format_diffs_for_prompt_no_branches(git_project):
+    """No branches for layer returns None."""
+    from gotg.worktree import format_diffs_for_prompt
+    result = format_diffs_for_prompt(git_project, 0)
+    assert result is None
+
+
+def test_format_diffs_for_prompt_includes_stat(git_project):
+    """Output includes stat lines."""
+    from gotg.worktree import format_diffs_for_prompt
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    result = format_diffs_for_prompt(git_project, 0)
+    assert "1 file changed" in result
+
+
+def test_format_diffs_for_prompt_summary_line(git_project):
+    """Output ends with 'Layer N:' summary."""
+    from gotg.worktree import format_diffs_for_prompt
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    result = format_diffs_for_prompt(git_project, 0)
+    assert "Layer 0:" in result
+    assert "branch(es)" in result
+
+
+def test_format_diffs_for_prompt_large_diff_truncates(git_project):
+    """Diff exceeding budget gets truncated — per-branch or global stat-only."""
+    from gotg.worktree import format_diffs_for_prompt, MAX_DIFF_CHARS
+    wt = create_worktree(git_project, "agent-1", 0)
+    # Generate a large file that exceeds the budget
+    large_content = "\n".join(f"line {i} = 'x' * 100  # padding" for i in range(2000))
+    (wt / "src" / "big.py").write_text(large_content)
+    commit_worktree(wt, "add big file")
+
+    result = format_diffs_for_prompt(git_project, 0)
+    assert result is not None
+    # Either per-branch truncation or global stat-only fallback
+    assert "omitted" in result or "stat-only" in result
+    # Global cap: result should not exceed MAX_DIFF_CHARS
+    assert len(result) <= MAX_DIFF_CHARS
+
+
+# --- diff_branch exclude_paths ---
+
+def test_diff_branch_exclude_paths(git_project):
+    """exclude_paths should filter specified files from diff output."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    (wt / ".env.local").write_text("SECRET=abc")
+    commit_worktree(wt, "add feature and env")
+
+    # Without exclusion, .env.local appears
+    result = diff_branch(git_project, "agent-1/layer-0")
+    assert ".env.local" in result["diff"]
+
+    # With exclusion, .env.local is filtered out
+    result = diff_branch(git_project, "agent-1/layer-0", exclude_paths=[".env.*"])
+    assert ".env.local" not in result["diff"]
+    assert "feature.py" in result["diff"]
+
+
+def test_diff_branch_exclude_paths_none(git_project):
+    """exclude_paths=None should not filter anything."""
+    wt = create_worktree(git_project, "agent-1", 0)
+    (wt / "src" / "feature.py").write_text("feature code")
+    commit_worktree(wt, "add feature")
+
+    result = diff_branch(git_project, "agent-1/layer-0", exclude_paths=None)
+    assert "feature.py" in result["diff"]
+
+
+# --- ensure_gitignore_entries tracked detection ---
+
+def test_ensure_gitignore_entries_warns_tracked_files_under_dir(tmp_path):
+    """Warns when files under .team/ are tracked (not just .team itself)."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    # Create and track a file under .team/
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "team.json").write_text("{}")
+    subprocess.run(["git", "add", ".team/team.json"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    warnings = ensure_gitignore_entries(tmp_path)
+    team_warnings = [w for w in warnings if ".team" in w]
+    assert len(team_warnings) == 1
+    assert "tracked by git" in team_warnings[0]
