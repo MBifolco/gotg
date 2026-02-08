@@ -159,6 +159,39 @@ def test_render_message_system_gets_magenta_color():
     assert "\033[35m" in rendered  # magenta
 
 
+def test_read_log_skips_malformed_json(log_path):
+    """Malformed JSONL lines should be silently skipped, not crash."""
+    lines = [
+        json.dumps({"from": "agent-1", "content": "valid"}),
+        "this is not json{{{",
+        json.dumps({"from": "agent-2", "content": "also valid"}),
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    messages = read_log(log_path)
+    assert len(messages) == 2
+    assert messages[0]["from"] == "agent-1"
+    assert messages[1]["from"] == "agent-2"
+
+
+def test_read_log_all_malformed(log_path):
+    """File with only malformed lines should return empty list."""
+    log_path.write_text("not json\nalso not json\n{incomplete\n")
+    messages = read_log(log_path)
+    assert messages == []
+
+
+def test_read_log_truncated_json(log_path):
+    """Truncated JSON (e.g. from crash mid-write) should be skipped."""
+    lines = [
+        json.dumps({"from": "agent-1", "content": "complete"}),
+        '{"from": "agent-2", "content": "trun',
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    messages = read_log(log_path)
+    assert len(messages) == 1
+    assert messages[0]["from"] == "agent-1"
+
+
 def test_render_message_coach_gets_distinct_color():
     """Coach messages should render with a distinct color (not white default)."""
     msg = {"from": "coach", "iteration": "iter-1", "content": "Team has agreed on X."}

@@ -118,6 +118,37 @@ def test_read_team_dir_allowed(project):
     assert result == (project / ".team" / "team.json").resolve()
 
 
+def test_read_dotenv_blocked(project):
+    guard = _guard(project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_read(".env")
+
+
+def test_read_dotenv_local_blocked(project):
+    guard = _guard(project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_read(".env.local")
+
+
+def test_read_dotenv_production_blocked(project):
+    guard = _guard(project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_read(".env.production")
+
+
+def test_read_suffix_env_blocked(project):
+    guard = _guard(project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_read("config.env")
+
+
+def test_read_git_dir_allowed(project):
+    """Reads are allowed in .git/ — not a security risk like .env."""
+    guard = _guard(project)
+    result = guard.validate_read(".git/config")
+    assert result == (project / ".git" / "config").resolve()
+
+
 def test_read_outside_project_rejected(project):
     guard = _guard(project)
     with pytest.raises(SecurityError):

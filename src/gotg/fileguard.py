@@ -42,7 +42,11 @@ class FileGuard:
 
     def validate_read(self, relative_path: str) -> Path:
         """Validate a read operation. Returns resolved absolute path."""
-        return self._resolve_and_contain(relative_path)
+        resolved = self._resolve_and_contain(relative_path)
+        rel = resolved.relative_to(self.project_root)
+        if self._is_env_file(rel):
+            raise SecurityError(f"Protected path: {rel}")
+        return resolved
 
     def validate_write(self, relative_path: str) -> Path:
         """Validate a write operation. Returns resolved absolute path."""
@@ -132,10 +136,12 @@ class FileGuard:
         parts = rel.parts
         if parts and parts[0] in HARD_DENY_DIRS:
             return True
+        return self._is_env_file(rel)
+
+    def _is_env_file(self, rel: PurePath) -> bool:
+        """Check if path is a .env file (any variant)."""
         name = rel.name
-        if name == ".env" or name.startswith(".env.") or name.endswith(".env"):
-            return True
-        return False
+        return name == ".env" or name.startswith(".env.") or name.endswith(".env")
 
     def _is_protected(self, rel: PurePath) -> bool:
         """Check user-configured protected_paths."""

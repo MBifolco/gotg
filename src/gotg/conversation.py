@@ -18,8 +18,12 @@ def read_log(path: Path) -> list[dict]:
     messages = []
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line:
+        if not line:
+            continue
+        try:
             messages.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass  # skip malformed lines
     return messages
 
 

@@ -139,6 +139,19 @@ def test_count_agent_turns_counts_only_agents(iter_dir):
     assert _count_agent_turns(iter_dir) == 3
 
 
+def test_count_agent_turns_custom_coach_name(iter_dir):
+    """Coach with a renamed name should still be excluded from agent turn count."""
+    _write_conversation(iter_dir, [
+        {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
+        {"from": "scrum-master", "iteration": "iter-1", "content": "facilitation"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "response"},
+    ])
+    # Default coach_name="coach" would count "scrum-master" as agent turn
+    assert _count_agent_turns(iter_dir) == 3
+    # With correct coach_name, scrum-master is excluded
+    assert _count_agent_turns(iter_dir, coach_name="scrum-master") == 2
+
+
 # --- create_checkpoint ---
 
 def test_create_checkpoint_returns_number(iter_dir):

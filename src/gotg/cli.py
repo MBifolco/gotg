@@ -41,10 +41,10 @@ def _validate_task_assignments(iter_dir: Path, phase: str) -> None:
         raise SystemExit(1)
 
 
-def _auto_checkpoint(iter_dir: Path, iteration: dict) -> None:
+def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach") -> None:
     """Create an automatic checkpoint after a command completes."""
     try:
-        number = create_checkpoint(iter_dir, iteration, trigger="auto")
+        number = create_checkpoint(iter_dir, iteration, trigger="auto", coach_name=coach_name)
         print(f"Checkpoint {number} created (auto)")
     except Exception as e:
         print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
@@ -89,7 +89,10 @@ def run_conversation(
         all_participants.append({"name": "human", "role": "Team Member"})
 
     # Count only engineering agent turns (human/coach/system don't affect rotation)
-    turn = sum(1 for msg in history if msg["from"] not in ("human", "coach", "system"))
+    non_agent = {"human", "system"}
+    if coach:
+        non_agent.add(coach["name"])
+    turn = sum(1 for msg in history if msg["from"] not in non_agent)
     num_agents = len(agents)
 
     print(f"Starting conversation: {iteration['id']}")
@@ -266,7 +269,7 @@ def cmd_run(args):
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
     run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store)
-    _auto_checkpoint(iter_dir, iteration)
+    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
 PROVIDER_PRESETS = {
@@ -420,7 +423,10 @@ def cmd_continue(args):
             print("Run 'gotg approvals' to review.")
 
     # Count current engineering agent turns (not human/coach/system)
-    current_agent_turns = sum(1 for msg in history if msg["from"] not in ("human", "coach", "system"))
+    non_agent = {"human", "system"}
+    if coach:
+        non_agent.add(coach["name"])
+    current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
 
     # Inject human message if provided
     if args.message:
@@ -440,7 +446,7 @@ def cmd_continue(args):
         target_total = iteration["max_turns"]
 
     run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store)
-    _auto_checkpoint(iter_dir, iteration)
+    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
 def cmd_show(args):
@@ -585,7 +591,8 @@ def cmd_advance(args):
 
     # Auto-checkpoint with updated phase
     iteration["phase"] = next_phase
-    _auto_checkpoint(iter_dir, iteration)
+    coach_for_cp = load_coach(team_dir)
+    _auto_checkpoint(iter_dir, iteration, coach_name=coach_for_cp["name"] if coach_for_cp else "coach")
 
 
 def cmd_checkpoint(args):
@@ -596,7 +603,8 @@ def cmd_checkpoint(args):
         raise SystemExit(1)
 
     iteration, iter_dir = get_current_iteration(team_dir)
-    number = create_checkpoint(iter_dir, iteration, description=args.description, trigger="manual")
+    coach = load_coach(team_dir)
+    number = create_checkpoint(iter_dir, iteration, description=args.description, trigger="manual", coach_name=coach["name"] if coach else "coach")
     print(f"Checkpoint {number} created")
 
 
@@ -639,12 +647,14 @@ def cmd_restore(args):
         raise SystemExit(1)
 
     # Safety prompt
+    coach = load_coach(team_dir)
     answer = input("Create checkpoint of current state before restoring? [Y/n] ")
     if answer.strip().lower() not in ("n", "no"):
         number = create_checkpoint(
             iter_dir, iteration,
             description=f"Safety before restore to #{args.number}",
             trigger="manual",
+            coach_name=coach["name"] if coach else "coach",
         )
         print(f"Checkpoint {number} created (safety)")
 

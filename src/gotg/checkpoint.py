@@ -32,11 +32,12 @@ def _next_checkpoint_number(iter_dir: Path) -> int:
     return max(numbers) + 1 if numbers else 1
 
 
-def _count_agent_turns(iter_dir: Path) -> int:
+def _count_agent_turns(iter_dir: Path, coach_name: str = "coach") -> int:
     """Count engineering agent turns in conversation.jsonl."""
     log_path = iter_dir / "conversation.jsonl"
     if not log_path.exists():
         return 0
+    non_agent = {"human", "system", coach_name}
     count = 0
     for line in log_path.read_text().splitlines():
         line = line.strip()
@@ -44,7 +45,7 @@ def _count_agent_turns(iter_dir: Path) -> int:
             continue
         try:
             msg = json.loads(line)
-            if msg.get("from") not in ("human", "coach", "system"):
+            if msg.get("from") not in non_agent:
                 count += 1
         except (json.JSONDecodeError, AttributeError):
             pass  # skip malformed lines
@@ -56,6 +57,7 @@ def create_checkpoint(
     iteration: dict,
     description: str | None = None,
     trigger: str = "auto",
+    coach_name: str = "coach",
 ) -> int:
     """Create a checkpoint of the current iteration state. Returns checkpoint number."""
     number = _next_checkpoint_number(iter_dir)
@@ -72,7 +74,7 @@ def create_checkpoint(
         "phase": iteration.get("phase", "grooming"),
         "status": iteration.get("status", "in-progress"),
         "max_turns": iteration.get("max_turns", 0),
-        "turn_count": _count_agent_turns(iter_dir),
+        "turn_count": _count_agent_turns(iter_dir, coach_name=coach_name),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "description": description or f"Auto after {trigger}",
         "trigger": trigger,
