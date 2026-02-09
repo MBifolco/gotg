@@ -58,11 +58,15 @@ def format_tasks_summary(tasks: list[dict]) -> str:
             status = t.get("status", "pending")
             assigned = t.get("assigned_to") or "unassigned"
             dep_str = ", ".join(t["depends_on"]) if t["depends_on"] else "none"
-            parts.append(
+            entry = (
                 f"- **{t['id']}** [{status}] (assigned: {assigned})\n"
                 f"  {t['description']}\n"
                 f"  Done when: {t['done_criteria']}\n"
                 f"  Depends on: {dep_str}"
             )
+            notes = t.get("notes")
+            if notes:
+                entry += f"\n  Notes: {notes}"
+            parts.append(entry)
 
     return "\n".join(parts)

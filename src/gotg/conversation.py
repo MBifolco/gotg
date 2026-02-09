@@ -39,6 +39,15 @@ def append_debug(path: Path, entry: dict) -> None:
         f.flush()
 
 
+def read_phase_history(path: Path) -> list[dict]:
+    """Read conversation log, returning only messages after the last boundary."""
+    all_msgs = read_log(path)
+    for i in range(len(all_msgs) - 1, -1, -1):
+        if all_msgs[i].get("phase_boundary"):
+            return all_msgs[i + 1:]
+    return all_msgs  # No boundary — return full history
+
+
 def render_message(msg: dict) -> str:
     name = msg["from"]
     content = msg["content"]

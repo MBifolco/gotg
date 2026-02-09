@@ -121,3 +121,22 @@ def test_format_shows_unassigned():
     ]
     result = format_tasks_summary(tasks)
     assert "unassigned" in result
+
+
+def test_format_tasks_summary_includes_notes():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "notes": "File: src/main.py. main() -> None."},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Notes: File: src/main.py. main() -> None." in result
+
+
+def test_format_tasks_summary_omits_notes_when_absent():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending"},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Notes:" not in result

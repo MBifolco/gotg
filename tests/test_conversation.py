@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from gotg.conversation import read_log, append_message, render_message
+from gotg.conversation import read_log, read_phase_history, append_message, render_message
 
 
 @pytest.fixture
@@ -190,6 +190,51 @@ def test_read_log_truncated_json(log_path):
     messages = read_log(log_path)
     assert len(messages) == 1
     assert messages[0]["from"] == "agent-1"
+
+
+# --- read_phase_history ---
+
+def test_read_phase_history_returns_after_boundary(log_path):
+    lines = [
+        json.dumps({"from": "agent-1", "content": "old msg"}),
+        json.dumps({"from": "system", "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True}),
+        json.dumps({"from": "system", "content": "--- Phase advanced: grooming → planning ---"}),
+        json.dumps({"from": "agent-1", "content": "new msg"}),
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    msgs = read_phase_history(log_path)
+    assert len(msgs) == 2
+    assert msgs[0]["content"] == "--- Phase advanced: grooming → planning ---"
+    assert msgs[1]["content"] == "new msg"
+
+
+def test_read_phase_history_no_boundary_returns_all(log_path):
+    lines = [
+        json.dumps({"from": "agent-1", "content": "first"}),
+        json.dumps({"from": "agent-2", "content": "second"}),
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    msgs = read_phase_history(log_path)
+    assert len(msgs) == 2
+
+
+def test_read_phase_history_multiple_boundaries_uses_last(log_path):
+    lines = [
+        json.dumps({"from": "agent-1", "content": "phase 1 msg"}),
+        json.dumps({"from": "system", "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True}),
+        json.dumps({"from": "agent-1", "content": "phase 2 msg"}),
+        json.dumps({"from": "system", "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True}),
+        json.dumps({"from": "agent-1", "content": "phase 3 msg"}),
+    ]
+    log_path.write_text("\n".join(lines) + "\n")
+    msgs = read_phase_history(log_path)
+    assert len(msgs) == 1
+    assert msgs[0]["content"] == "phase 3 msg"
+
+
+def test_read_phase_history_empty_file(log_path):
+    log_path.write_text("")
+    assert read_phase_history(log_path) == []
 
 
 def test_render_message_coach_gets_distinct_color():

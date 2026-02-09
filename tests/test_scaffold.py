@@ -215,6 +215,17 @@ def test_coach_planning_prompt_mentions_required_fields():
         assert field in COACH_PLANNING_PROMPT
 
 
+def test_coach_notes_extraction_prompt_exists():
+    from gotg.scaffold import COACH_NOTES_EXTRACTION_PROMPT
+    assert len(COACH_NOTES_EXTRACTION_PROMPT) > 0
+
+
+def test_coach_notes_extraction_prompt_has_placeholders():
+    from gotg.scaffold import COACH_NOTES_EXTRACTION_PROMPT
+    assert "{tasks_json}" in COACH_NOTES_EXTRACTION_PROMPT
+    assert "{conversation}" in COACH_NOTES_EXTRACTION_PROMPT
+
+
 def test_phase_prompts_has_pre_code_review_key():
     from gotg.scaffold import PHASE_PROMPTS
     assert "pre-code-review" in PHASE_PROMPTS

@@ -196,6 +196,23 @@ COACH_PLANNING_PROMPT = (
 )
 
 
+COACH_NOTES_EXTRACTION_PROMPT = (
+    "You observed a pre-code-review discussion between engineers. "
+    "For each task in the JSON below, extract the agreed implementation "
+    "approach as a brief note (2-3 sentences max): files to create/modify, "
+    "public function signatures, and key interface decisions.\n\n"
+    "Output ONLY a valid JSON array with no markdown code fences, no "
+    "commentary, and no text before or after the JSON. Each object must "
+    "have exactly two fields:\n"
+    '- "id": the task id (unchanged)\n'
+    '- "notes": the implementation notes string\n\n'
+    "If a task was not discussed, set notes to an empty string.\n\n"
+    "Task list:\n{tasks_json}\n\n"
+    "Pre-code-review conversation:\n"
+    "=== TRANSCRIPT START ===\n{conversation}\n=== TRANSCRIPT END ==="
+)
+
+
 COACH_FACILITATION_PROMPT = (
     "You are an Agile Coach facilitating this conversation. "
     "You do NOT contribute technical opinions or suggest solutions.\n\n"

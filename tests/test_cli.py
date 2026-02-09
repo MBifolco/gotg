@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments, _auto_checkpoint, _resolve_layer, _setup_worktrees
-from gotg.conversation import read_log, append_message
+from gotg.conversation import read_log, read_phase_history, append_message
 
 
 # --- find_team_dir ---
@@ -536,12 +536,13 @@ def test_advance_grooming_to_planning(tmp_path):
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "planning"
 
-    # Verify system message in log
+    # Verify system messages in log (boundary + transition)
     messages = read_log(iter_dir / "conversation.jsonl")
-    assert len(messages) == 1
-    assert messages[0]["from"] == "system"
-    assert "grooming" in messages[0]["content"]
-    assert "planning" in messages[0]["content"]
+    assert len(messages) == 2
+    assert messages[0].get("phase_boundary") is True
+    assert messages[1]["from"] == "system"
+    assert "grooming" in messages[1]["content"]
+    assert "planning" in messages[1]["content"]
 
 
 def test_advance_planning_to_pre_code_review(tmp_path):
@@ -3417,3 +3418,420 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     coach_msgs = [m for m in messages if m["from"] == "coach"]
     assert len(coach_msgs) == 1
     assert coach_msgs[0]["content"] == "(Phase complete signal sent.)"
+
+
+# --- Iteration 16: History boundary and phase-scoped history ---
+
+def test_advance_writes_history_boundary(tmp_path):
+    """cmd_advance writes a boundary marker before the transition message."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # First message should be boundary, second should be transition
+    assert len(messages) == 2
+    assert messages[0]["content"] == "--- HISTORY BOUNDARY ---"
+    assert messages[1]["content"].startswith("--- Phase advanced:")
+
+
+def test_advance_boundary_has_metadata(tmp_path):
+    """Boundary marker includes from_phase and to_phase metadata."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    boundary = messages[0]
+    assert boundary.get("phase_boundary") is True
+    assert boundary.get("from_phase") == "planning"
+    assert boundary.get("to_phase") == "pre-code-review"
+
+
+def test_advance_prints_turns_reset(tmp_path, capsys):
+    """cmd_advance prints 'Turns reset for new phase.' after advancing."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    captured = capsys.readouterr()
+    assert "Turns reset for new phase." in captured.out
+
+
+def test_next_layer_writes_history_boundary(tmp_path):
+    """cmd_next_layer writes a boundary marker with layer metadata."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    boundary = [m for m in messages if m.get("phase_boundary")]
+    assert len(boundary) == 1
+    assert boundary[0].get("layer") == 1
+    assert boundary[0].get("from_phase") == "code-review"
+    assert boundary[0].get("to_phase") == "implementation"
+
+
+def test_task_notes_extracted_on_pre_code_review_advance(tmp_path):
+    """Advancing from pre-code-review extracts task notes via LLM call."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    _add_coach_to_team_json(team)
+    # Write tasks.json and some conversation history
+    tasks = [
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    append_message(iter_dir / "conversation.jsonl",
+                   {"from": "agent-1", "content": "I'll create src/main.py with def run()."})
+
+    notes_response = json.dumps([{"id": "t1", "notes": "File: src/main.py. def run() -> None."}])
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value=notes_response):
+                main()
+
+    updated_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert updated_tasks[0].get("notes") == "File: src/main.py. def run() -> None."
+
+
+def test_task_notes_extraction_handles_bad_json(tmp_path, capsys):
+    """Bad JSON from notes extraction saves raw output and doesn't block advance."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    _add_coach_to_team_json(team)
+    tasks = [
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    append_message(iter_dir / "conversation.jsonl",
+                   {"from": "agent-1", "content": "proposal"})
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", return_value="not valid json {{{"):
+                main()
+
+    # Advance should still succeed
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "implementation"
+    # tasks.json should be unchanged (no notes field)
+    updated_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert "notes" not in updated_tasks[0]
+    # Raw output saved
+    assert (iter_dir / "notes_raw.txt").exists()
+
+
+def test_task_notes_extraction_skips_without_coach(tmp_path):
+    """Without a coach, notes extraction is skipped."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    # No coach in team.json (default helper doesn't add one)
+
+    tasks = [
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # Should advance without calling chat_completion
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "implementation"
+    # No notes added
+    updated_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert "notes" not in updated_tasks[0]
+
+
+def test_run_conversation_uses_phase_history(tmp_path):
+    """run_conversation only sees messages after the last boundary."""
+    iter_dir = _make_iter_dir(tmp_path)
+    log_path = iter_dir / "conversation.jsonl"
+
+    # Write pre-boundary messages (simulating prior phase)
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "old phase msg"})
+    append_message(log_path, {
+        "from": "system", "iteration": "iter-1",
+        "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True,
+    })
+    append_message(log_path, {
+        "from": "system", "iteration": "iter-1",
+        "content": "--- Phase advanced: grooming → planning ---",
+    })
+
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "planning", "max_turns": 1,
+    }
+
+    captured_prompts = []
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        captured_prompts.append(messages)
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config())
+
+    # The old phase message should NOT appear in the prompt
+    system_content = captured_prompts[0][0]["content"]
+    assert "old phase msg" not in system_content
+
+
+def test_continue_uses_phase_history(tmp_path):
+    """cmd_continue counts turns from phase-scoped history only."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    log_path = iter_dir / "conversation.jsonl"
+
+    # Write messages from prior phase + boundary + new phase messages
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "grooming msg 1"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "grooming msg 2"})
+    append_message(log_path, {
+        "from": "system", "iteration": "iter-1",
+        "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True,
+    })
+    append_message(log_path, {
+        "from": "system", "iteration": "iter-1",
+        "content": "--- Phase advanced: grooming → planning ---",
+    })
+
+    # Phase-scoped history has 0 agent turns, so max_turns=1 should allow 1 turn
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        return "response"
+
+    with patch("sys.argv", ["gotg", "continue", "--max-turns", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+                main()
+
+    # Should have added at least 1 agent message in the new phase
+    all_msgs = read_log(log_path)
+    phase_msgs = read_phase_history(log_path)
+    agent_msgs = [m for m in phase_msgs if m["from"] not in ("system", "human")]
+    assert len(agent_msgs) >= 1
+
+
+def test_advance_then_continue_with_message_ordering(tmp_path):
+    """After advance, continue -m injects human msg; kickoff + human both in new phase."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+
+    # Advance grooming → planning
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # Continue with a human message
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        return "response"
+
+    with patch("sys.argv", ["gotg", "continue", "-m", "focus on task splitting", "--max-turns", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+                main()
+
+    # Check phase-scoped history
+    phase_msgs = read_phase_history(iter_dir / "conversation.jsonl")
+    # Should have: transition msg, kickoff (system), human msg, agent response
+    senders = [m["from"] for m in phase_msgs]
+    assert "system" in senders  # transition + kickoff
+    assert "human" in senders  # PM's message
+    human_msg = [m for m in phase_msgs if m["from"] == "human"][0]
+    assert "focus on task splitting" in human_msg["content"]
+
+
+# --- extraction input content tests ---
+
+
+def test_grooming_extraction_excludes_system_and_coach_messages(tmp_path):
+    """Grooming extraction should filter out system and coach messages."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "We need auth."})
+    append_message(log_path, {"from": "system", "iteration": "iter-1", "content": "System kickoff message"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "Good point about auth."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Agreed, JWT."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return "## Summary\nAuth design."
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][1]["content"]
+    assert "We need auth." in user_msg
+    assert "Agreed, JWT." in user_msg
+    assert "System kickoff" not in user_msg
+    assert "Good point about auth." not in user_msg
+
+
+def test_planning_extraction_excludes_system_and_coach_messages(tmp_path):
+    """Planning extraction should filter out system and coach messages."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Task 1: auth module."})
+    append_message(log_path, {"from": "system", "iteration": "iter-1", "content": "--- Phase advanced: grooming → planning ---"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "Excellent, let me verify coverage."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Task 2: API layer."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return json.dumps([
+            {"id": "auth", "description": "Auth", "done_criteria": "Works",
+             "depends_on": [], "assigned_to": None, "status": "pending"},
+        ])
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][1]["content"]
+    assert "Task 1: auth module." in user_msg
+    assert "Task 2: API layer." in user_msg
+    assert "Phase advanced" not in user_msg
+    assert "let me verify coverage" not in user_msg
+
+
+def test_extraction_has_transcript_framing(tmp_path):
+    """Extraction user messages should have TRANSCRIPT START/END delimiters."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Hello."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return "## Summary\nDone."
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][1]["content"]
+    assert user_msg.startswith("=== TRANSCRIPT START ===")
+    assert user_msg.endswith("=== TRANSCRIPT END ===")
+
+
+def test_planning_extraction_uses_phase_history(tmp_path):
+    """Planning extraction should only see messages from the current phase."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="planning")
+    _add_coach_to_team_json(team)
+
+    log_path = iter_dir / "conversation.jsonl"
+    # Grooming phase messages
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "grooming msg"})
+    # Boundary from grooming → planning
+    append_message(log_path, {
+        "from": "system", "iteration": "iter-1",
+        "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True,
+        "from_phase": "grooming", "to_phase": "planning",
+    })
+    # Planning phase messages
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Task: build CLI."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Agreed."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return json.dumps([
+            {"id": "cli", "description": "CLI", "done_criteria": "Works",
+             "depends_on": [], "assigned_to": None, "status": "pending"},
+        ])
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][1]["content"]
+    assert "Task: build CLI." in user_msg
+    assert "Agreed." in user_msg
+    assert "grooming msg" not in user_msg
+
+
+def test_notes_extraction_excludes_system_and_coach_messages(tmp_path):
+    """Notes extraction should filter out system and coach messages."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    _add_coach_to_team_json(team)
+
+    tasks = [
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "I'll use src/main.py."})
+    append_message(log_path, {"from": "system", "iteration": "iter-1", "content": "kickoff message"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "Good, let me verify."})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Interface: def run()."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return json.dumps([{"id": "t1", "notes": "File: src/main.py"}])
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][0]["content"]  # notes uses single user message
+    assert "I'll use src/main.py." in user_msg
+    assert "Interface: def run()." in user_msg
+    assert "kickoff message" not in user_msg
+    assert "let me verify" not in user_msg
+
+
+def test_notes_extraction_has_transcript_framing(tmp_path):
+    """Notes extraction prompt should have TRANSCRIPT START/END delimiters."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    _add_coach_to_team_json(team)
+
+    tasks = [
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    log_path = iter_dir / "conversation.jsonl"
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Proposal."})
+
+    captured = []
+    def mock_completion(**kwargs):
+        captured.append(kwargs.get("messages", []))
+        return json.dumps([{"id": "t1", "notes": "Note."}])
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=lambda **kw: mock_completion(**kw)):
+                main()
+
+    assert len(captured) == 1
+    user_msg = captured[0][0]["content"]  # notes uses single user message
+    assert "=== TRANSCRIPT START ===" in user_msg
+    assert "=== TRANSCRIPT END ===" in user_msg

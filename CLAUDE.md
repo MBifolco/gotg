@@ -7,7 +7,7 @@ GOTG is an AI product and engineering department tool. pip-installable CLI (`got
 - Python 3.11 via pyenv (venv at `.venv/`)
 - Install: `.venv/bin/pip install -e .`
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 609 tests as of iteration 15
+- 633 tests as of iteration 16
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
@@ -43,7 +43,7 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 ```
 
 ## Key Conventions
-- **max_turns** in iteration.json is a TOTAL across all phases (conversation.jsonl is cumulative). Set high enough for all phases (e.g., 90 for 3 phases × 30).
+- **max_turns** in iteration.json is PER PHASE (history resets at phase boundaries). 30 means 30 turns per phase.
 - **Let phases converge naturally** — don't use `--max-turns` flag unless the user asks. The coach calls `signal_phase_complete` when done.
 - **Don't advance phases early** — wait for the coach to signal, then let the user decide.
 - **Don't run phases without being asked** — the user (PM) decides when to run.
@@ -70,10 +70,10 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 4. **implementation** — agents write code using file tools in worktrees
 5. **code-review** — agents review each other's diffs, coach tracks concerns
 
-On advance:
+On advance (each writes a history boundary marker before the transition message):
 - grooming → planning: coach produces `groomed.md`
 - planning → pre-code-review: coach produces `tasks.json` (with computed layers)
-- pre-code-review → implementation: sets `current_layer` to 0
+- pre-code-review → implementation: sets `current_layer` to 0, extracts task notes from pre-code-review conversation
 - implementation → code-review: auto-commits current-layer worktrees
 
 Layer progression: `gotg next-layer` (after merging) → verifies merges, cleans up worktrees, advances to next layer's implementation

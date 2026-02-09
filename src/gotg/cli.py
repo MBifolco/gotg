@@ -11,10 +11,11 @@ from gotg.config import (
     get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
-from gotg.conversation import append_message, append_debug, read_log, render_message
+from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
 from gotg.model import chat_completion
 from gotg.scaffold import (
-    init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT, COACH_TOOLS,
+    init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT,
+    COACH_NOTES_EXTRACTION_PROMPT, COACH_TOOLS,
     should_inject_kickoff, format_phase_kickoff,
 )
 
@@ -158,7 +159,7 @@ def run_conversation(
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
-    history = read_log(log_path)
+    history = read_phase_history(log_path)
     max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
 
     # Load groomed.md artifact if it exists (for planning/later phases)
@@ -531,7 +532,7 @@ def cmd_continue(args):
     diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
 
     log_path = iter_dir / "conversation.jsonl"
-    history = read_log(log_path)
+    history = read_phase_history(log_path)
 
     # Apply approved writes and inject denials before resuming
     if approval_store:
@@ -656,13 +657,16 @@ def cmd_advance(args):
             print("Coach is summarizing the grooming conversation...")
             model_config = load_model_config(team_dir)
             log_path = iter_dir / "conversation.jsonl"
-            history = read_log(log_path)
+            history = read_phase_history(log_path)
+            coach_name = coach.get("name", "coach")
             conversation_text = "\n\n".join(
-                f"[{m['from']}]: {m['content']}" for m in history
+                f"[{m['from']}]: {m['content']}"
+                for m in history
+                if m["from"] not in ("system", coach_name)
             )
             coach_messages = [
                 {"role": "system", "content": COACH_GROOMING_PROMPT},
-                {"role": "user", "content": conversation_text},
+                {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
             ]
             summary = chat_completion(
                 base_url=model_config["base_url"],
@@ -685,13 +689,16 @@ def cmd_advance(args):
             print("Coach is extracting tasks from the planning conversation...")
             model_config = load_model_config(team_dir)
             log_path = iter_dir / "conversation.jsonl"
-            history = read_log(log_path)
+            history = read_phase_history(log_path)
+            coach_name = coach.get("name", "coach")
             conversation_text = "\n\n".join(
-                f"[{m['from']}]: {m['content']}" for m in history
+                f"[{m['from']}]: {m['content']}"
+                for m in history
+                if m["from"] not in ("system", coach_name)
             )
             coach_messages = [
                 {"role": "system", "content": COACH_PLANNING_PROMPT},
-                {"role": "user", "content": conversation_text},
+                {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
             ]
             tasks_json_text = chat_completion(
                 base_url=model_config["base_url"],
@@ -728,9 +735,56 @@ def cmd_advance(args):
                 (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
             coach_ran = True
 
-    # Set current_layer on pre-code-review → implementation
+    # Set current_layer and extract task notes on pre-code-review → implementation
     if current_phase == "pre-code-review" and next_phase == "implementation":
         save_iteration_fields(team_dir, iteration["id"], current_layer=0)
+        coach = load_coach(team_dir)
+        if coach:
+            import json as _json
+            tasks_path = iter_dir / "tasks.json"
+            if tasks_path.exists():
+                print("Coach is extracting task notes from pre-code-review...")
+                model_config = load_model_config(team_dir)
+                log_path_notes = iter_dir / "conversation.jsonl"
+                history_notes = read_phase_history(log_path_notes)
+                coach_name = coach.get("name", "coach")
+                conversation_text = "\n\n".join(
+                    f"[{m['from']}]: {m['content']}"
+                    for m in history_notes
+                    if m["from"] not in ("system", coach_name)
+                )
+                tasks_data = _json.loads(tasks_path.read_text())
+                tasks_json_str = _json.dumps(tasks_data, indent=2)
+                prompt = COACH_NOTES_EXTRACTION_PROMPT.format(
+                    tasks_json=tasks_json_str,
+                    conversation=conversation_text,
+                )
+                notes_text = chat_completion(
+                    base_url=model_config["base_url"],
+                    model=model_config["model"],
+                    messages=[{"role": "user", "content": prompt}],
+                    api_key=model_config.get("api_key"),
+                    provider=model_config.get("provider", "ollama"),
+                )
+                text = notes_text.strip()
+                if text.startswith("```"):
+                    text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                    if text.endswith("```"):
+                        text = text[:-3]
+                    text = text.strip()
+                try:
+                    notes_data = _json.loads(text)
+                    notes_map = {n["id"]: n["notes"] for n in notes_data if n.get("notes")}
+                    for task in tasks_data:
+                        if task["id"] in notes_map:
+                            task["notes"] = notes_map[task["id"]]
+                    tasks_path.write_text(_json.dumps(tasks_data, indent=2) + "\n")
+                    print(f"Updated {tasks_path} with task notes")
+                    coach_ran = True
+                except (_json.JSONDecodeError, KeyError, TypeError) as e:
+                    print(f"Warning: Could not parse task notes: {e}", file=sys.stderr)
+                    (iter_dir / "notes_raw.txt").write_text(notes_text + "\n")
+                    print("Raw output saved to notes_raw.txt for manual review.", file=sys.stderr)
 
     # Auto-commit current-layer worktrees on implementation → code-review
     if current_phase == "implementation" and next_phase == "code-review":
@@ -755,7 +809,18 @@ def cmd_advance(args):
 
     save_iteration_phase(team_dir, iteration["id"], next_phase)
 
+    # Write history boundary before transition message
     log_path = iter_dir / "conversation.jsonl"
+    boundary_msg = {
+        "from": "system",
+        "iteration": iteration["id"],
+        "content": "--- HISTORY BOUNDARY ---",
+        "phase_boundary": True,
+        "from_phase": current_phase,
+        "to_phase": next_phase,
+    }
+    append_message(log_path, boundary_msg)
+
     if tasks_written:
         transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Task list written to tasks.json ---"
     elif coach_ran and current_phase == "grooming":
@@ -771,6 +836,7 @@ def cmd_advance(args):
     print(render_message(msg))
     print()
     print(f"Phase advanced: {current_phase} → {next_phase}")
+    print("Turns reset for new phase.")
 
     # Auto-checkpoint with updated phase
     iteration["phase"] = next_phase
@@ -1317,9 +1383,19 @@ def cmd_next_layer(args):
     # Advance to next layer
     save_iteration_fields(team_dir, iteration["id"], phase="implementation", current_layer=next_layer)
 
-    # Log transition
+    # Log transition with boundary marker
     from gotg.conversation import append_message
     log_path = iter_dir / "conversation.jsonl"
+    boundary_msg = {
+        "from": "system",
+        "iteration": iteration["id"],
+        "content": "--- HISTORY BOUNDARY ---",
+        "phase_boundary": True,
+        "from_phase": "code-review",
+        "to_phase": "implementation",
+        "layer": next_layer,
+    }
+    append_message(log_path, boundary_msg)
     msg = {
         "from": "system",
         "iteration": iteration["id"],
@@ -1330,6 +1406,7 @@ def cmd_next_layer(args):
     print()
     print(f"Advanced to layer {next_layer} (implementation phase).")
     print(f"Layer {next_layer} has {len(next_layer_tasks)} task(s).")
+    print("Turns reset for new phase.")
 
     # Auto-checkpoint
     iteration["phase"] = "implementation"
