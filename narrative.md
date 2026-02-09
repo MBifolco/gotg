@@ -2052,6 +2052,56 @@ This suggests a future direction: gotg could support a "autonomous mode" for imp
 
 ---
 
+## 46. First Full Test Run: The Calculator
+
+### What happened
+
+Ran the full gotg pipeline against a real task: an interactive command-line calculator with REPL, four operators, error handling, and cross-platform support. Two agents (Qwen 2.5 Coder 7B via Ollama), one coach, all five phases (grooming → planning → pre-code-review → implementation → code-review). 165 messages, 36,265 words, ~2.7M estimated input tokens, $9 total cost.
+
+The good news: it worked. Agents produced a working calculator with proper structure — parser, operations module, formatter, REPL skeleton, exit handling, integration. The grooming phase produced a clean scope document. Planning decomposed into 6 tasks across 3 layers. Code review identified real issues. The system held together end-to-end.
+
+### What broke
+
+**Agents couldn't find their workspace.** Twenty DENIED file operations and ten wasted agent turns at the start of implementation because agents didn't know their writable paths (`src/**`). The implementation prompt said "you are working in your own git branch via a worktree" but never said *where to write*. Agents tried `calc.py`, `calculator/calc.py`, `.worktrees/`, `agent-1/`, `test.txt` before stumbling on `src/` by trial and error.
+
+**Worktree isolation blocked cross-layer dependencies.** Agent-2 needed agent-1's `calc.py` for the integration task (layer 2 depends on layers 0-1). But separate worktrees meant agent-2 couldn't read agent-1's files. Fell back to pasting full file contents in the conversation — twice. The coach correctly identified this as "worktree isolation" but couldn't fix it.
+
+**No layer enforcement.** Agents implemented all three layers in a single implementation phase. The prompt said "work layer by layer" but didn't stop them. After everything was done, the system tried to advance through layers 0→1→2 with phase transitions, confusing the agents ("we've already completed all layers").
+
+**Code review couldn't use diffs.** Agents tried `file_read` on each other's files and got DENIED (worktree isolation again). Fell back to pasting code in chat. The diff injection infrastructure may not have been active, or diffs were empty because worktrees weren't properly set up.
+
+**Empty coach messages.** Signal_phase_complete calls with no text content produced blank messages in the conversation log (messages 129, 157, 161).
+
+### The cost problem
+
+$9 for a calculator is untenable. The breakdown reveals why:
+
+**Input tokens dominate.** 99 turns (68 agent + 31 coach), each re-reading the entire conversation history. By the end, each turn ingests 60+ prior messages. Estimated 2.7M input tokens vs 47K output tokens. The history grows linearly and is never trimmed.
+
+**Pre-code-review is 29% of the conversation.** 10,696 words, 91 code blocks, 12 agent turns — most of it implementation-level detail (Python version, typing syntax, function signatures) that agents could work out themselves during implementation. The only genuinely architectural decision was the error handling interface between components.
+
+**Agents repeat each other.** The confirmation ceremony: agent-1 proposes → agent-2 quotes the proposal back, adds "✅ Agreed" per point, then adds 2-3 actual observations → coach summarizes everything both agents already said. Messages routinely have 30-44 bullet points.
+
+**Round-robin wastes turns.** Fixed rotation means agent-2 must speak even when it has nothing to add. Messages like "I'll wait for agent-2" (when there's nothing to wait for) and duplicate "yes, I'm ready for phase completion" confirmations from both agents.
+
+### Findings → Iteration plans
+
+Organized improvements into three iterations (15-17) that build on each other:
+
+**Iteration 15 — Prompt Efficiency:** Conciseness norms in system prompt ("silence means approval"), coach kickoff messages (template-injected, zero API cost) that tell agents exactly what to do, writable paths in prompts, compressed pre-code-review (interface-only, one round), layer enforcement in implementation prompt. Expected: 50-70% reduction in agent verbosity.
+
+**Iteration 16 — History Management:** Phase boundary markers in conversation.jsonl. `read_phase_history` loads only current-phase messages. Artifacts (groomed.md, tasks.json with notes) carry forward the compressed output of prior phases. Expected: 60-70% reduction in input tokens.
+
+**Iteration 17 — Coach-Directed Flow:** Replace round-robin with coach-controlled turns via `direct_speaker` tool. Coach decides who speaks and what they address. Eliminates empty confirmation turns. `request_admin_input` tool for coach pause. Expected: 30-50% fewer agent turns.
+
+Combined estimate: $9 → $1-2 for equivalent task.
+
+### Key insight
+
+> Principle #31: **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2114,14 +2164,17 @@ This suggests a future direction: gotg could support a "autonomous mode" for imp
 - ✅ **Iteration 6: `tasks.json` generation and prompt caching** — complete, layer computation working, cache hits confirmed
 - ✅ **Iteration 7: Pre-code-review prompt tuning** — complete, phase-specific facilitation, all 11 tasks reviewed layer-by-layer
 - ✅ **Iteration 8: Checkpoint/restore** — complete, discovery-based backup, auto + manual checkpoints, restore with safety prompt
-- ⬜ **Iteration 9: File tools + FileGuard** — `file_read`, `file_write`, `file_list` with path validation, `.team/`/`.git/`/`.env` hard-denied, `file_access` config in `team.json`
-- ⬜ **Iteration 10: Structured approval system** — `approvals.json` queue, `gotg approvals`/`approve`/`deny` commands, denial reasons as system messages
-- ⬜ **Iteration 11: Git worktree infrastructure** — branch-per-agent, worktree lifecycle (create/commit/remove), FileGuard resolves to worktree root, agents unaware
-- ⬜ **Iteration 12: Merge workflow + PM review** — `gotg review` (diffs), `gotg merge` (per-branch or all), conflict reporting, layer-to-layer progression
-- ⬜ **Iteration 13: Pre-code review with diffs** — all diffs injected as context, agents cross-review each other's work, coach facilitates review convergence
-- ⬜ **Iteration 14: End-to-end layer execution** — full cycle orchestrator: worktree setup → implementation → review → merge → next layer
+- ✅ **Iteration 9: File tools + FileGuard** — complete
+- ✅ **Iteration 10: Structured approval system** — complete
+- ✅ **Iteration 11: Git worktree infrastructure** — complete
+- ✅ **Iteration 12: Merge workflow + PM review** — complete
+- ✅ **Iteration 13: Code review with diffs** — complete
+- ⬜ **Iteration 14: End-to-end layer execution** — planned, 5-phase system with implementation phase, current_layer tracking, next-layer command
+- ⬜ **Iteration 15: Prompt efficiency & agent awareness** — planned, conciseness norms, coach kickoff messages, writable path injection, compressed pre-code-review, layer enforcement in prompts
+- ⬜ **Iteration 16: History management** — planned, phase boundary markers, phase-scoped history loading, task notes extraction, ~60-70% input token reduction
+- ⬜ **Iteration 17: Coach-directed conversation flow** — planned, direct_speaker tool, request_admin_input tool, coach controls turn order, eliminates round-robin waste
 
-All three behavioral hypotheses validated. Tool infrastructure established. Phase system complete through pre-code-review. Checkpoint/restore enables cost-effective experimentation. 283 tests. Iterations 9-14 designed — agent file safety, worktrees, and code review.
+First full test run complete (calculator, $9). Iterations 9-13 working. Three optimization iterations (15-17) designed from test run analysis — target: $9 → $1-2 for equivalent task.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -2168,15 +2221,16 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - **Exploration and convergence need different conversation modes** — the current "grooming" phase is really refinement (convergent, produces `groomed.md`, feeds planning); true grooming is pre-iteration exploration without convergence pressure or artifacts
 - **The TUI is a viewer with interaction hooks, not a controller** — the primary experience is watching a team conversation stream in real-time with the ability to intervene when needed (approvals, messages, phase advances); the CLI remains the underlying API for testability and scripting
 - **Structure and autonomy serve different phases of the same project** — design phases (grooming, planning, code review) benefit from structured conversation and human oversight; implementation phases could benefit from Carlini-style autonomous execution where tests steer the agents and the human steps back
+- **Input tokens are the cost driver, not output tokens** — in a multi-agent conversation, each turn re-reads the full history; 99 turns reading an ever-growing log produced ~2.7M input tokens vs ~47K output; history trimming at phase boundaries is the single highest-leverage cost intervention
 
 ### Development Strategy
-- **Iteration 9 next** — file tools + FileGuard, the minimum viable agent tooling
-- Iterations 9-10 work without git — validate file tools and safety in isolation before worktrees add complexity
-- Iteration 11 adds worktrees underneath without changing the agent experience — same `file_write` call, different directory resolution
-- Iterations 12-13 connect merge workflow and agent cross-review to the worktree infrastructure
-- Iteration 14 is the integration test — full pipeline from task assignment through code review and merge
-- Each iteration adds one capability and validates it before the next builds on top
-- Phase system complete through pre-code-review — remaining work is extending proven patterns to new phases (implementation, code review with diffs)
+- **Iteration 14 next** — end-to-end layer execution, completing the implementation pipeline
+- Iterations 15-17 optimize conversation efficiency based on first full test run findings
+- Iteration 15 (prompts) is low-risk, high-impact — all prompt text changes, minimal structural changes
+- Iteration 16 (history) is medium-risk — changes how history is loaded but doesn't change what's stored
+- Iteration 17 (directed flow) is the biggest structural change — replaces the conversation loop's turn mechanics
+- Combined target: 80%+ cost reduction ($9 → $1-2) for a medium-complexity task
+- After optimization iterations: second full test run to validate improvements before TUI work
 - Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
 - Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
@@ -2184,25 +2238,19 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 
 ### Deferred (Intentionally)
 - **Refinement rename** — rename current "grooming" phase to "refinement" across scaffold.py, config.py, coach prompts, phase transitions (mechanical, low-risk, can happen anytime)
-- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (after iteration 14)
+- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (after optimization iterations)
 - `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature)
 - Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
-- Agent verbosity optimization in planning phase (known lever, not worth pulling yet)
-- Per-agent writable path scoping (planned for when agents step on each other's files — evidence-driven trigger)
-- Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient — Iteration 9 tests this)
+- Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient)
 - File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
-- TUI chat interface (Textual — after iteration 14; async refactor, event-driven state, three-mode home screen, shared chat view with contextual info tiles and inline action bar; see section 44)
+- TUI chat interface (Textual — after optimization iterations; async refactor, event-driven state, three-mode home screen, shared chat view with contextual info tiles and inline action bar; see section 44)
 - Autonomous implementation mode — Carlini-style test-driven agent execution during implementation phase with minimal PM oversight; agents pick tasks, write code, run tests in a loop; structured phases retained for design work (see section 45)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
-- Narrator layer implementation (consolidated messages + @mentions work well)
 - Automated evaluation (after manual rubric is trusted)
-- Implicit signal instrumentation (after evaluation framework is validated)
-- Model capability threshold testing (after evaluation rubric exists)
-- Context window management / message compression (coach artifacts and facilitation summaries provide natural compression)
-- Checkpoint diffing / branching (revisit if simple file-copy approach proves insufficient — git under the hood)
+- Context window management beyond phase boundaries (sliding window within long phases, message summarization for very long implementation runs)
 - Fine-tuned role models (long-term vision)
 - Human dashboard / attention management (long-term vision)
 
@@ -2237,3 +2285,4 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 28. **Separate exploration from commitment** — exploring an idea should not require committing to an iteration; grooming (open-ended, pre-iteration) and refinement (convergent, within an iteration) serve different purposes and need different structures
 29. **Surface decisions, don't require memorization** — contextual action bars that appear when the system needs a decision are better than commands the PM must remember; the interface should tell you what's possible right now
 30. **Match coordination overhead to problem structure** — well-specified, test-driven problems can run with minimal coordination (git + tests); ambiguous, requirements-driven problems need structured collaboration (phases + facilitation + human oversight); the same project may need both at different stages
+31. **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls
