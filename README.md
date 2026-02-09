@@ -2,55 +2,6 @@
 
 GOTG is an AI product and engineering department. We've taken real-world experience working with high-performing engineering teams and distilled it into a development tool built for AI-assisted software development. Instead of treating AI as a tool inside your editor, GOTG treats AI agents as team members with roles, autonomy, and communication responsibilities. This isn't multiple agents working on isolated tasks — it's AI agents and humans collaborating like real engineering teams, following a structure that ensures higher quality and safer products.
 
-## Quick Start
-
-```bash
-# Clone and install (requires Python 3.10+)
-git clone https://github.com/biff-ai/gotg.git
-cd gotg
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-# Initialize a project (must be a git repo)
-mkdir /tmp/my-project && cd /tmp/my-project
-git init
-gotg init .
-
-# Configure your model
-gotg model anthropic          # uses Claude Sonnet (recommended)
-# or: gotg model ollama       # uses local Ollama
-```
-
-Edit your API key into `.env`:
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Edit `.team/iteration.json` — set `description` and `status`:
-```json
-{
-  "iterations": [
-    {
-      "id": "iter-1",
-      "title": "",
-      "description": "Design a CLI todo list application...",
-      "status": "in-progress",
-      "phase": "grooming",
-      "max_turns": 10
-    }
-  ],
-  "current": "iter-1"
-}
-```
-
-```bash
-gotg run                      # Agents discuss the task
-gotg show                     # Replay the conversation
-gotg continue -m "Feedback"   # Inject your input and resume
-gotg advance                  # Move to the next phase
-```
-
 ## Prerequisites
 
 - **Python 3.10+** (3.11+ recommended)
@@ -60,44 +11,254 @@ gotg advance                  # Move to the next phase
   - **OpenAI API key**
   - **Ollama** running locally (free, no API key needed)
 
+## Install
+
+```bash
+git clone https://github.com/biff-ai/gotg.git
+cd gotg
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+## End-to-End Walkthrough
+
+This walks through the complete lifecycle of a project — from blank repo to working code. You are the **Product Manager**. AI agents discuss, design, and implement. You steer the conversation, review their work, and control every transition.
+
+### 1. Initialize
+
+```bash
+mkdir my-project && cd my-project
+git init -b main
+
+# Need at least one commit (worktrees branch from HEAD)
+echo "# my-project" > README.md
+git add README.md && git commit -m "init"
+
+gotg init .
+gotg model anthropic
+```
+
+Edit `.env` with your API key:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### 2. Configure the iteration
+
+Edit `.team/iteration.json` — set your task `description`, set `status` to `"in-progress"`, and raise `max_turns`:
+
+```json
+{
+  "iterations": [
+    {
+      "id": "iter-1",
+      "title": "CLI todo app",
+      "description": "Build a CLI todo list application in Python. Support add, list, complete, and delete operations. Store todos in a JSON file.",
+      "status": "in-progress",
+      "phase": "grooming",
+      "max_turns": 90
+    }
+  ],
+  "current": "iter-1"
+}
+```
+
+> **max_turns is cumulative** — it's a total across all phases (the conversation log doesn't reset between phases). Set it high enough for the entire iteration. 90 is a reasonable starting point for 5 phases.
+
+### 3. Enable worktrees
+
+Edit `.team/team.json` — set `worktrees.enabled` to `true`:
+
+```json
+{
+  "worktrees": {
+    "enabled": true
+  }
+}
+```
+
+This gives each agent an isolated git branch and working directory during implementation. Without worktrees, agents can still discuss and plan but can't write code in isolation.
+
+### 4. Phase 1: Grooming
+
+Agents discuss *what* to build — requirements, scope, edge cases, acceptance criteria. No implementation details.
+
+```bash
+gotg run                                    # Agents start discussing
+gotg show                                   # Read the conversation
+gotg continue -m "Also handle error cases"  # Inject your feedback, agents respond
+gotg continue                               # Let them keep going
+```
+
+The coach facilitates and eventually calls `signal_phase_complete` when scope is nailed down. You'll see:
+```
+Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.
+```
+
+When you're satisfied:
+```bash
+gotg advance                                # Coach writes groomed.md, moves to planning
+```
+
+### 5. Phase 2: Planning
+
+Agents break the agreed scope into concrete tasks with dependencies and done criteria.
+
+```bash
+gotg continue                               # Agents plan tasks
+# Coach signals when the task list looks complete
+gotg advance                                # Coach extracts tasks.json
+```
+
+The advance produces `.team/iterations/iter-1/tasks.json` with computed dependency layers:
+
+```json
+[
+  {"id": "T1", "description": "Create storage layer", "depends_on": [], "assigned_to": "", "layer": 0, ...},
+  {"id": "T2", "description": "Create CLI parser", "depends_on": [], "assigned_to": "", "layer": 0, ...},
+  {"id": "T3", "description": "Wire CLI to storage", "depends_on": ["T1", "T2"], "assigned_to": "", "layer": 1, ...}
+]
+```
+
+**You must assign agents before continuing.** Edit `tasks.json` and fill in `assigned_to` for each task:
+
+```json
+{"id": "T1", "assigned_to": "agent-1", ...},
+{"id": "T2", "assigned_to": "agent-2", ...},
+{"id": "T3", "assigned_to": "agent-1", ...}
+```
+
+### 6. Phase 3: Pre-code-review
+
+Agents propose implementation approaches — file structure, interfaces, test strategy. One task at a time, layer by layer. No actual code yet.
+
+```bash
+gotg continue                               # Agents discuss approaches
+# Coach signals when all tasks have been discussed
+gotg advance                                # Moves to implementation, sets current_layer=0
+```
+
+### 7. Phase 4: Implementation (layer 0)
+
+Agents write code using file tools (`file_read`, `file_write`, `file_list`) in their own git worktrees. Each agent works on an isolated branch.
+
+```bash
+gotg continue                               # Agents write code
+```
+
+The header confirms the setup:
+```
+Phase: implementation (layer 0)
+File tools: enabled (writable: src/**, tests/**, docs/**)
+Worktrees: 2 active
+```
+
+Run `gotg continue` as many times as needed until agents finish their layer 0 tasks. The coach periodically checks progress and signals when all agents confirm completion.
+
+When ready:
+```bash
+gotg advance                                # Auto-commits dirty worktrees, moves to code-review
+```
+
+You'll see output like:
+```
+Auto-committed agent-1/layer-0: abc1234
+Auto-committed agent-2/layer-0: def5678
+Phase advanced: implementation → code-review
+```
+
+### 8. Phase 5: Code-review (layer 0)
+
+Agents review each other's diffs. The coach tracks open concerns and signals when all are resolved.
+
+```bash
+gotg continue                               # Agents review each other's code
+```
+
+When the coach signals completion:
+```
+Coach signals code review complete.
+Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.
+```
+
+Now you review and merge:
+
+```bash
+gotg review                                 # See all diffs for the current layer
+gotg review --stat-only                     # Just file stats
+gotg review agent-1/layer-0                 # Review a specific branch
+
+gotg merge all                              # Merge all branches into main
+```
+
+> If `merge` reports "uncommitted changes on main", commit any local changes first (`git add -A && git commit -m "..."`) before merging.
+
+### 9. Next layer
+
+After merging, advance to the next dependency layer:
+
+```bash
+gotg next-layer
+```
+
+This command:
+- Verifies all branches for the current layer are merged
+- Checks for uncommitted changes in worktrees (blocks if dirty)
+- Removes current-layer worktrees
+- Sets phase to `implementation` with the next layer number
+
+If there are more layers, repeat from step 7. If all layers are complete:
+```
+All layers complete (through layer 1). Iteration is done.
+Edit .team/iteration.json to set status to 'done' when ready.
+```
+
+### 10. Done
+
+Edit `.team/iteration.json` and set `status` to `"done"` when you're satisfied.
+
+Your code is on `main` with a clean git history:
+```
+$ git log --oneline
+abc1234 Merge agent-1/layer-1 into main
+def5678 Implementation complete
+111aaaa Merge agent-2/layer-0 into main
+222bbbb Merge agent-1/layer-0 into main
+333cccc init
+```
+
 ## How It Works
 
 GOTG puts you in the role of **Product Manager**. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. You steer the conversation with feedback and control when to advance.
 
 ### Phases
 
-Every iteration progresses through four phases:
+Every iteration progresses through five phases:
 
-1. **Grooming** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria. No code, no implementation details.
+1. **Grooming** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria.
 2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies and done criteria. The coach extracts a structured `tasks.json`.
-3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy. Layer by layer, one task at a time.
-4. **Code-review** — Agents review each other's implementation diffs. The coach tracks open review concerns and signals completion when all are resolved.
+3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy.
+4. **Implementation** — Agents write code for their assigned tasks using file tools in isolated worktrees. The coach tracks progress and signals when all agents confirm completion.
+5. **Code-review** — Agents review each other's implementation diffs. The coach tracks open review concerns and signals completion when all are resolved.
 
 The coach facilitates each phase — summarizing progress, flagging gaps, and signaling when the team is ready to advance. You control transitions with `gotg advance`.
 
-### The PM Workflow
+### Layer cycle
 
-```bash
-# Phase 1: Grooming
-gotg run                                    # Agents discuss requirements
-gotg show                                   # Read what they said
-gotg continue -m "Also handle offline mode" # Steer the scope
-gotg advance                                # Coach writes groomed.md, move to planning
+Tasks are organized into dependency layers. Layer 0 tasks have no dependencies. Layer 1 tasks depend on layer 0, and so on.
 
-# Phase 2: Planning
-gotg continue                               # Agents break scope into tasks
-gotg advance                                # Coach writes tasks.json
-# Edit tasks.json to assign agents, then:
+Each layer cycles through: **implementation → code-review → merge → next-layer**
 
-# Phase 3: Pre-code-review
-gotg continue                               # Agents propose implementations
-gotg advance                                # Move to code review
+After merging a layer into main, the next layer's worktrees branch from the updated main and automatically see all previous work.
 
-# Phase 4: Code-review (requires worktrees)
-gotg commit-worktrees                       # Commit agent implementations
-gotg continue                               # Agents review each other's diffs
-# Coach signals completion when all concerns resolved
-```
+### How conversations work
+
+- The conversation log (`conversation.jsonl`) is **cumulative across all phases** — it doesn't reset. Agents carry context from grooming through code review.
+- `max_turns` in `iteration.json` is a **total** agent turn count. Set it high enough for all phases. If you run out, increase it in `iteration.json` and `gotg continue`.
+- `gotg continue --max-turns N` adds N turns from the current point (relative), regardless of the total.
+- The coach speaks after every full rotation of agents. It has a `signal_phase_complete` tool to recommend advancing.
+- Human messages (`gotg continue -m "..."`) are injected before the next agent turn.
 
 ## Commands
 
@@ -106,11 +267,21 @@ gotg continue                               # Agents review each other's diffs
 | Command | Description |
 |---------|-------------|
 | `gotg init [path]` | Initialize `.team/` in a git repo (defaults to current directory) |
-| `gotg run [--max-turns N]` | Start the agent conversation |
-| `gotg continue [-m MSG] [--max-turns N]` | Resume with optional human input |
+| `gotg run [--max-turns N] [--layer N]` | Start the agent conversation |
+| `gotg continue [-m MSG] [--max-turns N] [--layer N]` | Resume with optional human input |
 | `gotg show` | Replay the conversation log |
 | `gotg advance` | Advance to the next phase |
+| `gotg next-layer` | Advance to the next task layer (after merging) |
 | `gotg model [provider] [model]` | View or change model config |
+
+### Worktrees & Merge
+
+| Command | Description |
+|---------|-------------|
+| `gotg worktrees` | List active git worktrees with dirty/clean status |
+| `gotg commit-worktrees [-m MSG]` | Commit all dirty worktrees |
+| `gotg review [branch] [--layer N] [--stat-only]` | Review agent diffs against main |
+| `gotg merge <branch \| all> [--layer N] [--abort] [--force]` | Merge agent branches into main |
 
 ### Checkpoints
 
@@ -118,7 +289,7 @@ gotg continue                               # Agents review each other's diffs
 |---------|-------------|
 | `gotg checkpoint [description]` | Create a manual checkpoint |
 | `gotg checkpoints` | List all checkpoints |
-| `gotg restore N` | Restore to checkpoint N |
+| `gotg restore N` | Restore to checkpoint N (prompts for safety checkpoint) |
 
 ### File Approvals
 
@@ -127,15 +298,6 @@ gotg continue                               # Agents review each other's diffs
 | `gotg approvals` | Show pending file write requests |
 | `gotg approve <id \| all>` | Approve a pending write |
 | `gotg deny <id> [-m reason]` | Deny a pending write with reason |
-
-### Worktrees & Merge
-
-| Command | Description |
-|---------|-------------|
-| `gotg worktrees` | List active git worktrees |
-| `gotg commit-worktrees [-m MSG]` | Commit all dirty worktrees |
-| `gotg review [branch] [--layer N] [--stat-only]` | Review agent diffs against main |
-| `gotg merge <branch \| all> [--layer N] [--abort] [--force]` | Merge agent branches into main |
 
 ## Project Structure
 
@@ -191,7 +353,7 @@ All configuration lives in `.team/team.json`:
     "enable_approvals": false
   },
   "worktrees": {
-    "enabled": false
+    "enabled": true
   }
 }
 ```
@@ -219,53 +381,34 @@ When `file_access` is configured, agents get `file_read`, `file_write`, and `fil
 
 ### Worktrees
 
-When `worktrees.enabled` is `true`, each agent gets an isolated git worktree (separate branch and working directory). Agents write to their own copy of the codebase without stepping on each other.
+When `worktrees.enabled` is `true`, each agent gets an isolated git worktree during implementation and code-review phases. Each worktree is a separate branch and working directory — agents write to their own copy of the codebase without stepping on each other.
 
-```bash
-# Enable in team.json, then:
-gotg run --layer 0             # Creates worktrees, agents work in isolation
-
-# After conversation:
-gotg worktrees                 # See worktree status
-gotg commit-worktrees          # Commit all dirty worktrees
-
-# PM reviews and merges:
-gotg review                    # See diffs of all branches against main
-gotg review --stat-only        # Just file stats, no full diff
-gotg review agent-1/layer-0    # Review a specific branch
-
-gotg merge agent-1/layer-0     # Merge one branch into main
-gotg merge all                 # Merge all unmerged branches in layer 0
-gotg merge all --layer 1       # Merge all in layer 1
-
-# If there's a conflict:
-gotg merge --abort             # Abort and restore clean state
-```
+Worktrees are created automatically when entering implementation or code-review phases. They require:
+- At least one commit on `main`
+- HEAD on `main` (not a detached HEAD or other branch)
+- `file_access` configured (worktrees use file tools)
 
 **Merge safety:**
-- Dirty worktrees block merging — run `gotg commit-worktrees` first, or use `--force` to override
+- Dirty worktrees block `gotg merge` — run `gotg commit-worktrees` first, or use `--force` to override
+- Dirty worktrees block `gotg next-layer` — commit or discard changes first
 - Merges use `--no-ff` to create visible merge commits
 - `merge all` stops on the first conflict so you can resolve it before continuing
-- Already-merged branches are skipped with an informative message
+- Already-merged branches are skipped
 
-**Layer progression:**
-Layers represent dependency tiers in the task graph. Layer 0 tasks have no dependencies. Layer 1 tasks depend on layer 0. After merging layer 0, create layer 1 worktrees — they branch from main and automatically see all layer 0 work.
+**Manual worktree commands** (for when you need direct control):
 
 ```bash
-gotg run --layer 0             # Agents work on layer 0 tasks
-gotg commit-worktrees
-gotg review
-gotg merge all                 # Merge layer 0 into main
-
-gotg run --layer 1             # Agents work on layer 1 tasks (see layer 0 work)
-gotg commit-worktrees
-gotg review --layer 1
-gotg merge all --layer 1       # Merge layer 1 into main
+gotg worktrees                 # See worktree status (dirty/clean)
+gotg commit-worktrees          # Commit all dirty worktrees
+gotg commit-worktrees -m "WIP" # With a custom commit message
+gotg review agent-1/layer-0    # Review a specific branch
+gotg merge agent-1/layer-0     # Merge one branch
+gotg merge --abort             # Abort in-progress merge
 ```
 
 ## Checkpoints
 
-GOTG automatically checkpoints after every `run`, `continue`, and `advance` command. You can also create manual checkpoints at any time.
+GOTG automatically checkpoints after every `run`, `continue`, `advance`, and `next-layer` command. You can also create manual checkpoints at any time.
 
 Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<N>/`. Each checkpoint contains a copy of all iteration files plus metadata.
 
@@ -314,7 +457,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~538 tests
+pytest -q                     # ~582 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```

@@ -1,13 +1,13 @@
 # CLAUDE.md — Project Context for Claude Code
 
 ## What This Is
-GOTG is an AI product and engineering department tool. pip-installable CLI (`gotg`) that runs structured conversations between AI agents following real engineering team processes (grooming → planning → pre-code-review). Terminal-based, JSONL conversation log, `.team/` directory per project (like `.git/`).
+GOTG is an AI product and engineering department tool. pip-installable CLI (`gotg`) that runs structured conversations between AI agents following real engineering team processes (grooming → planning → pre-code-review → implementation → code-review). Terminal-based, JSONL conversation log, `.team/` directory per project (like `.git/`).
 
 ## Development Environment
 - Python 3.11 via pyenv (venv at `.venv/`)
 - Install: `.venv/bin/pip install -e .`
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 218 tests as of iteration 6
+- 575 tests as of iteration 14
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
@@ -67,7 +67,13 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 1. **grooming** — define scope and requirements (no implementation talk)
 2. **planning** — break scope into tasks with dependencies
 3. **pre-code-review** — discuss implementation approaches before writing code
+4. **implementation** — agents write code using file tools in worktrees
+5. **code-review** — agents review each other's diffs, coach tracks concerns
 
 On advance:
 - grooming → planning: coach produces `groomed.md`
 - planning → pre-code-review: coach produces `tasks.json` (with computed layers)
+- pre-code-review → implementation: sets `current_layer` to 0
+- implementation → code-review: auto-commits current-layer worktrees
+
+Layer progression: `gotg next-layer` (after merging) → verifies merges, cleans up worktrees, advances to next layer's implementation

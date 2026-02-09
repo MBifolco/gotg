@@ -23,19 +23,23 @@ def find_team_dir(cwd: Path) -> Path | None:
     return None
 
 
-def _validate_task_assignments(iter_dir: Path, phase: str) -> None:
-    """Check that all tasks are assigned before entering pre-code-review."""
-    if phase != "pre-code-review":
+def _validate_task_assignments(iter_dir: Path, phase: str, current_layer: int | None = None) -> None:
+    """Check that relevant tasks are assigned before entering pre-code-review or implementation."""
+    if phase not in ("pre-code-review", "implementation"):
         return
     import json as _json
     tasks_path = iter_dir / "tasks.json"
     if not tasks_path.exists():
-        print("Error: pre-code-review requires tasks.json. Run 'gotg advance' from planning first.", file=sys.stderr)
+        print(f"Error: {phase} requires tasks.json. Run 'gotg advance' from planning first.", file=sys.stderr)
         raise SystemExit(1)
     tasks = _json.loads(tasks_path.read_text())
+    # In implementation, only check current-layer tasks
+    if phase == "implementation" and current_layer is not None:
+        tasks = [t for t in tasks if t.get("layer") == current_layer]
     unassigned = [t["id"] for t in tasks if not t.get("assigned_to")]
     if unassigned:
-        print("Error: all tasks must be assigned before starting pre-code-review.", file=sys.stderr)
+        scope = f"layer {current_layer} tasks" if phase == "implementation" and current_layer is not None else "all tasks"
+        print(f"Error: {scope} must be assigned before starting {phase}.", file=sys.stderr)
         print(f"Unassigned tasks: {', '.join(unassigned)}", file=sys.stderr)
         print("Edit .team/iterations/<id>/tasks.json to assign agents.", file=sys.stderr)
         raise SystemExit(1)
@@ -50,10 +54,23 @@ def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach")
         print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
 
 
-def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args) -> dict | None:
+def _resolve_layer(args, iteration: dict) -> int:
+    """Resolve current layer: --layer CLI flag > iteration state > 0."""
+    cli_layer = getattr(args, "layer", None)
+    if cli_layer is not None:
+        return cli_layer
+    return iteration.get("current_layer", 0)
+
+
+def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args, iteration: dict) -> dict | None:
     """Set up worktrees for agents if configured. Returns worktree_map or None."""
     worktree_config = load_worktree_config(team_dir)
     if not worktree_config or not worktree_config.get("enabled"):
+        return None
+
+    # Only set up worktrees in phases that use them
+    phase = iteration.get("phase", "grooming")
+    if phase not in ("implementation", "code-review"):
         return None
 
     if not fileguard:
@@ -87,9 +104,7 @@ def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args) -> dic
     for warning in ensure_gitignore_entries(project_root):
         print(f"Warning: {warning}", file=sys.stderr)
 
-    layer = getattr(args, "layer", None)
-    if layer is None:
-        layer = 0
+    layer = _resolve_layer(args, iteration)
 
     worktree_map = {}
     for agent in agents:
@@ -115,9 +130,7 @@ def _load_diffs_for_code_review(team_dir: Path, iteration: dict, args) -> str | 
 
     from gotg.worktree import format_diffs_for_prompt
 
-    layer = getattr(args, "layer", None)
-    if layer is None:
-        layer = 0
+    layer = _resolve_layer(args, iteration)
 
     diffs = format_diffs_for_prompt(team_dir.parent, layer)
     if diffs:
@@ -177,7 +190,12 @@ def run_conversation(
 
     print(f"Starting conversation: {iteration['id']}")
     print(f"Task: {iteration['description']}")
-    print(f"Phase: {iteration.get('phase', 'grooming')}")
+    phase = iteration.get('phase', 'grooming')
+    current_layer = iteration.get('current_layer')
+    if current_layer is not None:
+        print(f"Phase: {phase} (layer {current_layer})")
+    else:
+        print(f"Phase: {phase}")
     if coach:
         print(f"Coach: {coach['name']} (facilitating)")
     if fileguard:
@@ -314,7 +332,10 @@ def run_conversation(
             if any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
                 print("---")
                 current_phase = iteration.get("phase")
-                if current_phase and current_phase == PHASE_ORDER[-1]:
+                if current_phase == "code-review":
+                    print("Coach signals code review complete.")
+                    print("Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.")
+                elif current_phase == PHASE_ORDER[-1]:
                     print("Coach signals phase complete. This is the final phase — iteration is done.")
                     print("Run `gotg continue` to keep discussing if needed.")
                 else:
@@ -353,7 +374,7 @@ def cmd_run(args):
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
+    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
 
     file_access = load_file_access(team_dir)
     fileguard = None
@@ -365,7 +386,7 @@ def cmd_run(args):
             from gotg.approvals import ApprovalStore
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
+    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args, iteration)
 
     diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
 
@@ -471,7 +492,7 @@ def cmd_continue(args):
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"))
+    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
 
     file_access = load_file_access(team_dir)
     fileguard = None
@@ -483,7 +504,7 @@ def cmd_continue(args):
             from gotg.approvals import ApprovalStore, apply_approved_writes
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args)
+    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args, iteration)
 
     diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
 
@@ -599,6 +620,8 @@ def cmd_advance(args):
 
     if idx >= len(PHASE_ORDER) - 1:
         print(f"Error: cannot advance past {current_phase}.", file=sys.stderr)
+        if current_phase == "code-review":
+            print("Hint: Run 'gotg next-layer' to advance to the next layer after merging.", file=sys.stderr)
         raise SystemExit(1)
 
     next_phase = PHASE_ORDER[idx + 1]
@@ -677,7 +700,36 @@ def cmd_advance(args):
                 print(f"Warning: Coach produced invalid JSON: {e}", file=sys.stderr)
                 print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
                 (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
+            except (ValueError, KeyError) as e:
+                print(f"Warning: Coach produced valid JSON but bad task structure: {e}", file=sys.stderr)
+                print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
+                (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
             coach_ran = True
+
+    # Set current_layer on pre-code-review → implementation
+    if current_phase == "pre-code-review" and next_phase == "implementation":
+        save_iteration_fields(team_dir, iteration["id"], current_layer=0)
+
+    # Auto-commit current-layer worktrees on implementation → code-review
+    if current_phase == "implementation" and next_phase == "code-review":
+        worktree_config = load_worktree_config(team_dir)
+        if worktree_config and worktree_config.get("enabled"):
+            from gotg.worktree import list_active_worktrees, commit_worktree, is_worktree_dirty, WorktreeError
+            project_root = team_dir.parent
+            layer = iteration.get("current_layer", 0)
+            layer_suffix = f"/layer-{layer}"
+            for wt in list_active_worktrees(project_root):
+                branch = wt.get("branch", "")
+                if not branch.endswith(layer_suffix):
+                    continue  # skip worktrees from other layers
+                wt_path = Path(wt["path"])
+                if is_worktree_dirty(wt_path):
+                    try:
+                        commit_hash = commit_worktree(wt_path, "Implementation complete")
+                        if commit_hash:
+                            print(f"Auto-committed {branch}: {commit_hash}")
+                    except WorktreeError as e:
+                        print(f"Warning: could not auto-commit {branch}: {e}", file=sys.stderr)
 
     save_iteration_phase(team_dir, iteration["id"], next_phase)
 
@@ -893,13 +945,16 @@ def cmd_review(args):
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
+    iteration, _ = get_current_iteration(team_dir)
+    layer = args.layer if args.layer is not None else iteration.get("current_layer", 0)
+
     if args.branch:
         branches = [args.branch]
     else:
-        branches = list_layer_branches(project_root, args.layer)
+        branches = list_layer_branches(project_root, layer)
 
     if not branches:
-        print(f"No branches found for layer {args.layer}.")
+        print(f"No branches found for layer {layer}.")
         return
 
     total_files = 0
@@ -935,7 +990,7 @@ def cmd_review(args):
     if args.branch:
         print(f"{len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
     else:
-        print(f"Layer {args.layer}: {len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
+        print(f"Layer {layer}: {len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
 
 
 def cmd_merge(args):
@@ -979,16 +1034,19 @@ def cmd_merge(args):
         print("Commit or stash changes before merging.", file=sys.stderr)
         raise SystemExit(1)
 
+    iteration, _ = get_current_iteration(team_dir)
+    layer = args.layer if args.layer is not None else iteration.get("current_layer", 0)
+
     if args.branch == "all":
-        branches = list_layer_branches(project_root, args.layer)
+        branches = list_layer_branches(project_root, layer)
         if not branches:
-            print(f"No branches found for layer {args.layer}.")
+            print(f"No branches found for layer {layer}.")
             return
 
         # Filter out already-merged branches
         unmerged = [br for br in branches if not is_branch_merged(project_root, br)]
         if not unmerged:
-            print(f"All {len(branches)} branch(es) in layer {args.layer} already merged.")
+            print(f"All {len(branches)} branch(es) in layer {layer} already merged.")
             return
 
         # Check for dirty worktrees (hard block unless --force)
@@ -1126,6 +1184,138 @@ def cmd_commit_worktrees(args):
         print(f"\n{committed} worktree(s) committed.")
 
 
+def cmd_next_layer(args):
+    """Advance to the next task layer after merging."""
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = get_current_iteration(team_dir)
+    if iteration.get("status") != "in-progress":
+        print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    current_phase = iteration.get("phase", "grooming")
+    if current_phase != "code-review":
+        print(f"Error: next-layer requires code-review phase, currently in '{current_phase}'.", file=sys.stderr)
+        raise SystemExit(1)
+
+    current_layer = iteration.get("current_layer", 0)
+    next_layer = current_layer + 1
+
+    worktree_config = load_worktree_config(team_dir)
+    if worktree_config and worktree_config.get("enabled"):
+        from gotg.worktree import (
+            ensure_git_repo, list_layer_branches, is_branch_merged,
+            cleanup_layer_worktrees, list_active_worktrees,
+            is_worktree_dirty, WorktreeError,
+        )
+        import subprocess as _sp
+
+        project_root = team_dir.parent
+        try:
+            ensure_git_repo(project_root)
+        except WorktreeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+        # Verify HEAD is on main
+        head_result = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=project_root, capture_output=True, text=True,
+        )
+        current_branch = head_result.stdout.strip()
+        if current_branch != "main":
+            print(
+                f"Error: HEAD is on '{current_branch}', expected 'main'. "
+                "Switch to main before running next-layer.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        # Verify all branches for current layer are merged
+        layer_branches = list_layer_branches(project_root, current_layer)
+        unmerged = [br for br in layer_branches if not is_branch_merged(project_root, br)]
+        if unmerged:
+            print(f"Error: unmerged branches for layer {current_layer}:", file=sys.stderr)
+            for br in unmerged:
+                print(f"  {br}", file=sys.stderr)
+            print("Merge all branches before advancing: gotg merge all", file=sys.stderr)
+            raise SystemExit(1)
+
+        # Block on dirty worktrees to avoid losing uncommitted work
+        layer_suffix = f"/layer-{current_layer}"
+        dirty_wts = []
+        for wt in list_active_worktrees(project_root):
+            branch = wt.get("branch", "")
+            if branch.endswith(layer_suffix) and is_worktree_dirty(Path(wt["path"])):
+                dirty_wts.append(branch)
+        if dirty_wts:
+            print(f"Error: dirty worktrees for layer {current_layer}:", file=sys.stderr)
+            for br in dirty_wts:
+                print(f"  {br}", file=sys.stderr)
+            print("Commit or discard changes before advancing: gotg commit-worktrees", file=sys.stderr)
+            raise SystemExit(1)
+
+        # Clean up current layer worktrees
+        try:
+            removed = cleanup_layer_worktrees(project_root, current_layer)
+            for wt_path in removed:
+                print(f"Removed worktree: {wt_path}")
+        except WorktreeError as e:
+            print(f"Warning: worktree cleanup failed: {e}", file=sys.stderr)
+
+    # Check if next layer has tasks
+    import json as _json
+    tasks_path = iter_dir / "tasks.json"
+    if not tasks_path.exists():
+        print("Error: tasks.json not found.", file=sys.stderr)
+        raise SystemExit(1)
+    tasks = _json.loads(tasks_path.read_text())
+
+    # Recompute layers if any task is missing the stored layer field
+    if any("layer" not in t for t in tasks):
+        from gotg.tasks import compute_layers
+        try:
+            layers = compute_layers(tasks)
+            for t in tasks:
+                t["layer"] = layers[t["id"]]
+        except (ValueError, KeyError) as e:
+            print(f"Warning: could not compute layers: {e}", file=sys.stderr)
+
+    next_layer_tasks = [t for t in tasks if t.get("layer") == next_layer]
+
+    if not next_layer_tasks:
+        print(f"All layers complete (through layer {current_layer}). Iteration is done.")
+        print("Edit .team/iteration.json to set status to 'done' when ready.")
+        return
+
+    # Advance to next layer
+    save_iteration_fields(team_dir, iteration["id"], phase="implementation", current_layer=next_layer)
+
+    # Log transition
+    from gotg.conversation import append_message
+    log_path = iter_dir / "conversation.jsonl"
+    msg = {
+        "from": "system",
+        "iteration": iteration["id"],
+        "content": f"--- Layer {current_layer} complete. Advancing to layer {next_layer} (implementation) ---",
+    }
+    append_message(log_path, msg)
+    print(render_message(msg))
+    print()
+    print(f"Advanced to layer {next_layer} (implementation phase).")
+    print(f"Layer {next_layer} has {len(next_layer_tasks)} task(s).")
+
+    # Auto-checkpoint
+    iteration["phase"] = "implementation"
+    iteration["current_layer"] = next_layer
+    coach = load_coach(team_dir)
+    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -1135,14 +1325,14 @@ def main():
 
     run_parser = subparsers.add_parser("run", help="Run the agent conversation")
     run_parser.add_argument("--max-turns", type=int, help="Override max_turns from iteration.json")
-    run_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: 0)")
+    run_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
 
     subparsers.add_parser("show", help="Show the conversation log")
 
     continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
     continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
     continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
-    continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: 0)")
+    continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
 
     subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
 
@@ -1168,17 +1358,19 @@ def main():
     deny_parser.add_argument("-m", "--message", help="Denial reason")
 
     review_parser = subparsers.add_parser("review", help="Review agent diffs against main")
-    review_parser.add_argument("--layer", type=int, default=0, help="Layer to review (default: 0)")
+    review_parser.add_argument("--layer", type=int, default=None, help="Layer to review (default: current layer)")
     review_parser.add_argument("--stat-only", action="store_true", help="Show only file stats, not full diff")
     review_parser.add_argument("branch", nargs="?", default=None, help="Specific branch to review")
 
     merge_parser = subparsers.add_parser("merge", help="Merge an agent branch into main")
     merge_parser.add_argument("branch", nargs="?", default=None, help="Branch name or 'all'")
-    merge_parser.add_argument("--layer", type=int, default=0, help="Layer for 'merge all' (default: 0)")
+    merge_parser.add_argument("--layer", type=int, default=None, help="Layer for 'merge all' (default: current layer)")
     merge_parser.add_argument("--abort", action="store_true", help="Abort in-progress merge")
     merge_parser.add_argument("--force", action="store_true", help="Merge even if worktree has uncommitted changes")
 
     subparsers.add_parser("worktrees", help="List active git worktrees")
+
+    subparsers.add_parser("next-layer", help="Advance to the next task layer after merging")
 
     commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
     commit_wt_parser.add_argument("-m", "--message", help="Commit message (default: 'Agent implementation work')")
@@ -1217,6 +1409,8 @@ def main():
         cmd_merge(args)
     elif args.command == "worktrees":
         cmd_worktrees(args)
+    elif args.command == "next-layer":
+        cmd_next_layer(args)
     elif args.command == "commit-worktrees":
         cmd_commit_worktrees(args)
     else:

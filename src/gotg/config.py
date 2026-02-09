@@ -93,7 +93,7 @@ def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
     return iteration, iter_dir
 
 
-PHASE_ORDER = ["grooming", "planning", "pre-code-review", "code-review"]
+PHASE_ORDER = ["grooming", "planning", "pre-code-review", "implementation", "code-review"]
 
 
 def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:

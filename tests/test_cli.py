@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments, _auto_checkpoint
+from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments, _auto_checkpoint, _resolve_layer, _setup_worktrees
 from gotg.conversation import read_log, append_message
 
 
@@ -2082,7 +2082,8 @@ def test_setup_worktrees_warns_without_file_access(tmp_path, capsys):
     class FakeArgs:
         layer = None
 
-    result = _setup_worktrees(team, [], None, FakeArgs())
+    iteration = {"phase": "implementation"}
+    result = _setup_worktrees(team, [], None, FakeArgs(), iteration)
     assert result is None
     err = capsys.readouterr().err
     assert "worktrees require file tools" in err
@@ -2468,14 +2469,14 @@ def test_cmd_merge_all_handles_worktree_error(tmp_path, monkeypatch, capsys):
 
 # --- code-review phase ---
 
-def test_advance_pre_code_review_to_code_review(tmp_path):
+def test_advance_pre_code_review_to_implementation(tmp_path):
     team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
 
     data = json.loads((team / "iteration.json").read_text())
-    assert data["iterations"][0]["phase"] == "code-review"
+    assert data["iterations"][0]["phase"] == "implementation"
 
 
 def test_advance_past_code_review_errors(tmp_path):
@@ -2562,8 +2563,8 @@ def test_run_conversation_diffs_passed_to_coach(tmp_path):
     assert "agent-1/layer-0" in coach_system_msg
 
 
-def test_coach_completion_last_phase_message(tmp_path, capsys):
-    """Coach signals completion in code-review (last phase) shows 'final phase' message."""
+def test_coach_completion_code_review_message(tmp_path, capsys):
+    """Coach signals completion in code-review shows merge/next-layer message."""
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -2583,7 +2584,9 @@ def test_coach_completion_last_phase_message(tmp_path, capsys):
                          _default_model_config(), coach=_default_coach())
 
     output = capsys.readouterr().out
-    assert "final phase" in output
+    assert "code review complete" in output
+    assert "gotg merge" in output
+    assert "gotg next-layer" in output
     assert "gotg advance" not in output
 
 
@@ -2610,3 +2613,703 @@ def test_coach_completion_non_last_phase_message(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "gotg advance" in output
     assert "final phase" not in output
+
+
+# --- _resolve_layer ---
+
+def test_resolve_layer_cli_override():
+    """CLI --layer flag overrides iteration state."""
+    class FakeArgs:
+        layer = 3
+    iteration = {"current_layer": 1}
+    assert _resolve_layer(FakeArgs(), iteration) == 3
+
+
+def test_resolve_layer_from_iteration_state():
+    """Falls back to iteration.current_layer when no CLI flag."""
+    class FakeArgs:
+        layer = None
+    iteration = {"current_layer": 2}
+    assert _resolve_layer(FakeArgs(), iteration) == 2
+
+
+def test_resolve_layer_defaults_to_zero():
+    """Defaults to 0 when neither CLI nor iteration state has a layer."""
+    class FakeArgs:
+        layer = None
+    iteration = {}
+    assert _resolve_layer(FakeArgs(), iteration) == 0
+
+
+# --- phase-gated worktree setup ---
+
+def test_setup_worktrees_skips_grooming_phase(tmp_path):
+    """_setup_worktrees returns None for grooming phase even with worktrees enabled."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}],
+        "worktrees": {"enabled": True},
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+
+    class FakeArgs:
+        layer = None
+
+    from gotg.fileguard import FileGuard
+    fg = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+    iteration = {"phase": "grooming"}
+    result = _setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, FakeArgs(), iteration)
+    assert result is None
+
+
+def test_setup_worktrees_active_in_implementation_phase(tmp_path):
+    """_setup_worktrees creates worktrees in implementation phase."""
+    import subprocess
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}],
+        "worktrees": {"enabled": True},
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+
+    class FakeArgs:
+        layer = None
+
+    from gotg.fileguard import FileGuard
+    fg = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
+    iteration = {"phase": "implementation"}
+    result = _setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, FakeArgs(), iteration)
+    assert result is not None
+    assert "agent-1" in result
+
+
+# --- advance: implementation phase ---
+
+def test_advance_implementation_to_code_review(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="implementation")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "code-review"
+
+
+def test_advance_sets_current_layer_zero(tmp_path):
+    """Advancing pre-code-review → implementation sets current_layer=0."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="pre-code-review")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "implementation"
+    assert data["iterations"][0]["current_layer"] == 0
+
+
+def test_advance_implementation_auto_commits_worktrees(tmp_path, capsys):
+    """Advancing implementation → code-review auto-commits dirty worktrees for current layer."""
+    import subprocess
+
+    # Set up git repo with a worktree
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "implementation", "max_turns": 10, "current_layer": 0},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    # Create a worktree and make it dirty
+    from gotg.worktree import create_worktree
+    wt_path = create_worktree(tmp_path, "agent-1", 0)
+    (wt_path / "new.txt").write_text("code")
+    subprocess.run(["git", "add", "-A"], cwd=wt_path, capture_output=True, check=True)
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "Auto-committed" in output
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "code-review"
+
+
+def test_advance_auto_commit_only_current_layer(tmp_path, capsys):
+    """Auto-commit on advance only affects worktrees matching current layer."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+        "file_access": {"writable_paths": ["src/**"]},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "implementation", "max_turns": 10, "current_layer": 1},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    # Create worktrees for layer 0 and layer 1, both dirty
+    from gotg.worktree import create_worktree, is_worktree_dirty
+    wt0 = create_worktree(tmp_path, "agent-1", 0)
+    (wt0 / "old.txt").write_text("old code")
+    subprocess.run(["git", "add", "-A"], cwd=wt0, capture_output=True, check=True)
+
+    wt1 = create_worktree(tmp_path, "agent-1", 1)
+    (wt1 / "new.txt").write_text("new code")
+    subprocess.run(["git", "add", "-A"], cwd=wt1, capture_output=True, check=True)
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    # Layer 1 worktree should be auto-committed
+    assert "agent-1/layer-1" in output
+    # Layer 0 worktree should NOT be auto-committed (still dirty)
+    assert is_worktree_dirty(wt0)
+
+
+def test_advance_past_code_review_hints_next_layer(tmp_path, capsys):
+    """Advancing past code-review includes hint about next-layer."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="code-review")
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+    err = capsys.readouterr().err
+    assert "next-layer" in err
+
+
+# --- coach completion messages ---
+
+def test_coach_completion_implementation_suggests_advance(tmp_path, capsys):
+    """Coach signals completion in implementation shows 'gotg advance' message."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "implementation", "max_turns": 2,
+    }
+
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        if tools:
+            return {
+                "content": "All tasks done.",
+                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+            }
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    output = capsys.readouterr().out
+    assert "gotg advance" in output
+    assert "gotg next-layer" not in output
+
+
+# --- cmd_next_layer ---
+
+def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", tasks=None):
+    """Helper to create a .team/ dir for next-layer tests."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": phase, "max_turns": 10,
+         "current_layer": current_layer},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    if tasks is None:
+        tasks = [
+            {"id": "T1", "description": "Task 1", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+            {"id": "T2", "description": "Task 2", "layer": 1, "status": "todo", "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"},
+        ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    return team, iter_dir
+
+
+def test_next_layer_requires_code_review_phase(tmp_path, capsys):
+    """next-layer errors if not in code-review phase."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, phase="implementation")
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+    err = capsys.readouterr().err
+    assert "code-review" in err
+
+
+def test_next_layer_advances_to_layer_1(tmp_path, capsys):
+    """next-layer increments layer and sets phase to implementation."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["current_layer"] == 1
+    assert data["iterations"][0]["phase"] == "implementation"
+
+    output = capsys.readouterr().out
+    assert "layer 1" in output.lower()
+
+
+def test_next_layer_all_layers_complete_with_hint(tmp_path, capsys):
+    """next-layer with no more layers prints completion message with hint."""
+    tasks = [
+        {"id": "T1", "description": "Task 1", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+    ]
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0, tasks=tasks)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "All layers complete" in output
+    assert "done" in output.lower()
+
+    # Phase should NOT have changed
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "code-review"
+
+
+def test_next_layer_logs_transition_message(tmp_path):
+    """next-layer writes a system message to conversation.jsonl."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    assert len(messages) >= 1
+    system_msgs = [m for m in messages if m["from"] == "system"]
+    assert any("layer 0" in m["content"].lower() and "layer 1" in m["content"].lower() for m in system_msgs)
+
+
+def test_next_layer_auto_checkpoints(tmp_path):
+    """next-layer creates an auto checkpoint."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # Check that a checkpoint was created
+    cp_dir = iter_dir / "checkpoints"
+    assert cp_dir.exists()
+    assert len(list(cp_dir.iterdir())) >= 1
+
+
+def test_next_layer_verifies_head_on_main(tmp_path, capsys):
+    """next-layer errors if HEAD is not on main."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "checkout", "-b", "other"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "code-review", "max_turns": 10,
+         "current_layer": 0},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+             {"id": "T2", "description": "y", "layer": 1, "status": "todo", "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"}]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+    err = capsys.readouterr().err
+    assert "main" in err
+
+    # Clean up
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True)
+
+
+def test_next_layer_blocks_on_unmerged_branches(tmp_path, capsys):
+    """next-layer errors if branches for current layer are not merged."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Create an unmerged branch for layer 0
+    subprocess.run(["git", "checkout", "-b", "agent-1/layer-0"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "new.txt").write_text("y")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "work"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "code-review", "max_turns": 10,
+         "current_layer": 0},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+             {"id": "T2", "description": "y", "layer": 1, "status": "todo", "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"}]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+    err = capsys.readouterr().err
+    assert "unmerged" in err.lower()
+    assert "agent-1/layer-0" in err
+
+
+def test_next_layer_cleans_up_worktrees(tmp_path, capsys):
+    """next-layer removes worktrees for the completed layer."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Create and merge a worktree for layer 0
+    from gotg.worktree import create_worktree, commit_worktree, merge_branch
+    wt_path = create_worktree(tmp_path, "agent-1", 0)
+    (wt_path / "code.txt").write_text("code")
+    commit_worktree(wt_path, "work")
+    merge_branch(tmp_path, "agent-1/layer-0")
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "code-review", "max_turns": 10,
+         "current_layer": 0},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+             {"id": "T2", "description": "y", "layer": 1, "status": "todo", "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"}]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    assert wt_path.exists()
+
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "Removed worktree" in output
+
+
+# --- review/merge layer resolution ---
+
+def test_review_defaults_to_current_layer(tmp_path, capsys):
+    """gotg review defaults to current_layer from iteration state."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Create a branch for layer 2
+    subprocess.run(["git", "checkout", "-b", "agent-1/layer-2"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "new.txt").write_text("code")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "work"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True, check=True)
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "code-review", "max_turns": 10,
+         "current_layer": 2},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    with patch("sys.argv", ["gotg", "review"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    output = capsys.readouterr().out
+    assert "Layer 2" in output
+    assert "agent-1/layer-2" in output
+
+
+# --- Codex review fixes ---
+
+def test_advance_planning_catches_bad_task_structure(tmp_path, capsys):
+    """compute_layers errors (ValueError/KeyError) are caught like JSONDecodeError."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    # Need a coach in team.json so the planning→pre-code-review coach runs
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "coach": {"name": "coach", "role": "Agile Coach"},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "planning", "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+
+    # Coach returns valid JSON but with bad dependency references
+    bad_tasks = json.dumps([
+        {"id": "T1", "description": "x", "depends_on": ["NONEXISTENT"], "assigned_to": "", "status": "todo", "done_criteria": "done"},
+    ])
+
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+        return bad_tasks
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+                main()
+
+    err = capsys.readouterr().err
+    assert "bad task structure" in err.lower()
+    assert (iter_dir / "tasks_raw.txt").exists()
+
+    # Phase should still advance (advance isn't blocked by bad structure)
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["phase"] == "pre-code-review"
+
+
+def test_next_layer_recomputes_missing_layers(tmp_path, capsys):
+    """next-layer recomputes layers when stored layer field is missing."""
+    # Tasks without stored layer field (simulating pre-iter-14 tasks.json)
+    tasks = [
+        {"id": "T1", "description": "x", "depends_on": [], "assigned_to": "agent-1", "status": "done", "done_criteria": "done"},
+        {"id": "T2", "description": "y", "depends_on": ["T1"], "assigned_to": "agent-1", "status": "todo", "done_criteria": "done"},
+    ]
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0, tasks=tasks)
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            main()
+
+    # Should recompute: T1=layer0, T2=layer1 → next layer (1) has tasks
+    data = json.loads((team / "iteration.json").read_text())
+    assert data["iterations"][0]["current_layer"] == 1
+    assert data["iterations"][0]["phase"] == "implementation"
+
+
+def test_validate_task_assignments_message_mentions_phase(tmp_path, capsys):
+    """Error message mentions the actual phase, not always pre-code-review."""
+    iter_dir = tmp_path / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    tasks = [
+        {"id": "T1", "description": "x", "depends_on": [], "assigned_to": "", "status": "todo", "done_criteria": "done", "layer": 0},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with pytest.raises(SystemExit):
+        _validate_task_assignments(iter_dir, "implementation", current_layer=0)
+
+    err = capsys.readouterr().err
+    assert "implementation" in err
+
+
+def test_validate_task_assignments_scopes_to_current_layer(tmp_path, capsys):
+    """In implementation, only current-layer tasks are checked for assignment."""
+    iter_dir = tmp_path / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    tasks = [
+        {"id": "T1", "description": "x", "depends_on": [], "assigned_to": "agent-1", "status": "done", "done_criteria": "done", "layer": 0},
+        {"id": "T2", "description": "y", "depends_on": ["T1"], "assigned_to": "", "status": "todo", "done_criteria": "done", "layer": 1},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    # Layer 0 — T1 is assigned, T2 is layer 1 so not checked
+    _validate_task_assignments(iter_dir, "implementation", current_layer=0)
+    # Should not raise — layer 0 tasks are all assigned
+
+    # Layer 1 — T2 is unassigned
+    with pytest.raises(SystemExit):
+        _validate_task_assignments(iter_dir, "implementation", current_layer=1)
+
+    err = capsys.readouterr().err
+    assert "layer 1" in err
+    assert "T2" in err
+
+
+def test_run_header_shows_layer(tmp_path, capsys):
+    """run_conversation header shows current layer when set."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "implementation", "max_turns": 0,
+        "current_layer": 2,
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="x"):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    output = capsys.readouterr().out
+    assert "layer 2" in output.lower()
+
+
+def test_run_header_no_layer_without_current_layer(tmp_path, capsys):
+    """run_conversation header doesn't show layer info when not set."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "grooming", "max_turns": 0,
+    }
+
+    with patch("gotg.cli.chat_completion", return_value="x"):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    output = capsys.readouterr().out
+    assert "layer" not in output.lower()
+
+
+def test_next_layer_blocks_on_dirty_worktrees(tmp_path, capsys):
+    """next-layer errors if current-layer worktrees have uncommitted changes."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Create worktree, commit some work, then merge into main
+    from gotg.worktree import create_worktree, commit_worktree, merge_branch
+    wt_path = create_worktree(tmp_path, "agent-1", 0)
+    (wt_path / "code.txt").write_text("done")
+    commit_worktree(wt_path, "work")
+    merge_branch(tmp_path, "agent-1/layer-0")
+
+    # Now make worktree dirty again (uncommitted changes)
+    (wt_path / "extra.txt").write_text("oops")
+
+    team = tmp_path / ".team"
+    team.mkdir()
+    team_config = {
+        "model": {"provider": "ollama", "base_url": "http://localhost:11434", "model": "m"},
+        "agents": [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}],
+        "worktrees": {"enabled": True},
+    }
+    (team / "team.json").write_text(json.dumps(team_config))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "code-review", "max_turns": 10,
+         "current_layer": 0},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done", "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"},
+             {"id": "T2", "description": "y", "layer": 1, "status": "todo", "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"}]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+
+    with patch("sys.argv", ["gotg", "next-layer"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+    err = capsys.readouterr().err
+    assert "dirty" in err.lower()
+    assert "agent-1/layer-0" in err

@@ -247,6 +247,7 @@ def test_coach_facilitation_prompts_dict_exists():
     assert "grooming" in COACH_FACILITATION_PROMPTS
     assert "planning" in COACH_FACILITATION_PROMPTS
     assert "pre-code-review" in COACH_FACILITATION_PROMPTS
+    assert "implementation" in COACH_FACILITATION_PROMPTS
 
 
 def test_coach_facilitation_prompts_grooming_is_default():
@@ -356,3 +357,64 @@ def test_coach_facilitation_code_review_blocks_early_completion():
 def test_default_system_prompt_mentions_code_review():
     from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
     assert "code-review" in DEFAULT_SYSTEM_PROMPT
+
+
+# --- implementation phase prompts ---
+
+def test_phase_prompts_has_implementation_key():
+    from gotg.scaffold import PHASE_PROMPTS
+    assert "implementation" in PHASE_PROMPTS
+
+
+def test_implementation_prompt_mentions_file_tools():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"].lower()
+    assert "file_read" in prompt
+    assert "file_write" in prompt
+
+
+def test_implementation_prompt_mentions_assigned_tasks():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"].lower()
+    assert "assigned" in prompt
+
+
+def test_implementation_prompt_mentions_tests():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"].lower()
+    assert "test" in prompt
+
+
+def test_implementation_prompt_mentions_redirect():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"].lower()
+    assert "settled" in prompt
+
+
+def test_implementation_prompt_discourages_cross_task():
+    from gotg.scaffold import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"].lower()
+    assert "outside your assigned" in prompt or "different layer" in prompt
+
+
+def test_coach_facilitation_prompts_has_implementation():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    assert "implementation" in COACH_FACILITATION_PROMPTS
+
+
+def test_coach_facilitation_implementation_tracks_completion():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["implementation"].lower()
+    assert "status" in prompt
+    assert "complete" in prompt
+
+
+def test_coach_facilitation_implementation_blocks_early_signal():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    prompt = COACH_FACILITATION_PROMPTS["implementation"].lower()
+    assert "do not signal" in prompt or "do not" in prompt
+
+
+def test_default_system_prompt_mentions_implementation():
+    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    assert "implementation" in DEFAULT_SYSTEM_PROMPT
