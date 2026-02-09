@@ -13,7 +13,10 @@ from gotg.config import (
 )
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.model import chat_completion
-from gotg.scaffold import init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT, COACH_TOOLS
+from gotg.scaffold import (
+    init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT, COACH_TOOLS,
+    should_inject_kickoff, format_phase_kickoff,
+)
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -206,9 +209,23 @@ def run_conversation(
     print(f"Turns: {turn}/{max_turns}")
     print("---")
 
+    # Inject phase kickoff message if starting a fresh phase
+    if should_inject_kickoff(history, phase):
+        kickoff_text = format_phase_kickoff(phase, agents, iteration, fileguard, iter_dir)
+        if kickoff_text:
+            kickoff_msg = {
+                "from": "system",
+                "iteration": iteration["id"],
+                "content": kickoff_text,
+            }
+            append_message(log_path, kickoff_msg)
+            print(render_message(kickoff_msg))
+            print()
+            history.append(kickoff_msg)
+
     while turn < max_turns:
         agent = agents[turn % num_agents]
-        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary)
+        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary, fileguard=fileguard, worktree_map=worktree_map)
         append_debug(debug_path, {
             "turn": turn,
             "agent": agent["name"],
@@ -318,6 +335,11 @@ def run_conversation(
             )
             coach_text = coach_response["content"]
             coach_tool_calls = coach_response.get("tool_calls", [])
+
+            # Fallback for empty coach messages with signal_phase_complete
+            if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
+                coach_text = "(Phase complete signal sent.)"
+
             coach_msg = {
                 "from": coach["name"],
                 "iteration": iteration["id"],

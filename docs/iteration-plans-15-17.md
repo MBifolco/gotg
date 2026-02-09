@@ -50,77 +50,81 @@ lists, or checkbox formatting in your messages. Do not use emoji.
 
 **Risk:** Agents may become too terse and miss important disagreements. Mitigated by: the coach still summarizes and tracks unresolved items. If something was silently approved but shouldn't have been, code review catches it.
 
-#### 2. Coach kickoff messages per phase (scaffold.py + cli.py)
+#### 2. System kickoff messages per phase (scaffold.py + cli.py)
 
-Add `COACH_KICKOFF_MESSAGES` dict in scaffold.py:
+Add `PHASE_KICKOFF_MESSAGES` dict in scaffold.py — these are system messages, not coach messages. Attributing canned templates to the coach would violate the same principle as signal_phase_complete: the system should be honest about what's automated vs. what's an LLM decision. The coach's value is reading the room and adapting; a template can't do that, so it shouldn't pretend to be the coach.
 
 ```python
-COACH_KICKOFF_MESSAGES = {
+PHASE_KICKOFF_MESSAGES = {
     "grooming": (
-        "We're starting the grooming phase. Our goal is to define WHAT "
-        "we're building — scope, requirements, edge cases — without "
-        "discussing HOW to build it.\n\n"
-        "{agent_list_with_tasks}"  # Placeholder, no tasks yet
-        "Let's begin. {first_agent}, what's your read on the requirements? "
-        "What ambiguities or edge cases do you see?"
+        "--- Phase: grooming ---\n"
+        "Goal: define WHAT to build — scope, requirements, edge cases. "
+        "Do not discuss HOW to build it.\n\n"
+        "{first_agent}, what's your read on the requirements? "
+        "What ambiguities or edge cases do you see?\n\n"
+        "The coach will facilitate from here."
     ),
     "planning": (
-        "We're starting the planning phase. The groomed scope is "
-        "available above. Our goal is to break it into concrete, "
-        "assignable tasks with dependencies and done criteria.\n\n"
+        "--- Phase: planning ---\n"
+        "Goal: break the groomed scope into concrete, assignable tasks "
+        "with dependencies and done criteria. The groomed scope is "
+        "available above.\n\n"
         "{first_agent}, propose an initial task breakdown. {second_agent}, "
-        "review it and suggest modifications. Let's converge quickly — "
-        "we can refine details in pre-code-review."
+        "review it and suggest modifications.\n\n"
+        "The coach will facilitate from here."
     ),
     "pre-code-review": (
-        "We're starting pre-code-review. Each person proposes their "
-        "implementation approach for their assigned tasks — briefly. "
-        "State: (1) files you'll create/modify, (2) public function "
-        "signatures, (3) how dependent tasks should call your code.\n\n"
-        "One message per task. Other engineers: respond ONLY if you see "
-        "an interface mismatch with your own tasks. We don't need to "
-        "agree on internal implementation details.\n\n"
-        "{agent_task_assignments}"
+        "--- Phase: pre-code-review ---\n"
+        "Goal: interface alignment. Each engineer proposes their approach "
+        "for their assigned tasks — briefly. State: (1) files you'll "
+        "create/modify, (2) public function signatures, (3) how dependent "
+        "tasks should call your code.\n\n"
+        "One message per task. Respond to teammates ONLY if you see an "
+        "interface mismatch. Silence means the interface works for you.\n\n"
+        "{agent_task_assignments}\n\n"
+        "The coach will facilitate from here."
     ),
     "implementation": (
-        "We're starting the implementation phase for layer {current_layer}.\n\n"
+        "--- Phase: implementation (layer {current_layer}) ---\n"
         "{agent_task_assignments}\n\n"
         "{writable_paths_info}\n\n"
         "Write your code, then report completion with a brief summary "
         "of what you created. Do not discuss — just implement. If you "
-        "have a question that blocks your work, ask it specifically."
+        "have a blocking question, ask it specifically.\n\n"
+        "The coach will facilitate from here."
     ),
     "code-review": (
-        "We're starting code review for layer {current_layer}. "
+        "--- Phase: code-review (layer {current_layer}) ---\n"
         "Implementation diffs are included above (if available). "
         "Review your teammates' code against the task requirements.\n\n"
         "For each branch: approve, or raise specific concerns with "
-        "file names and line references. One message per reviewer."
+        "file names and line references. One message per reviewer.\n\n"
+        "The coach will facilitate from here."
     ),
 }
 ```
 
-In `cli.py`, inject kickoff as first message when entering a phase with empty conversation (or after a phase transition):
+In `cli.py`, inject kickoff as a system message when entering a phase:
 
 ```python
 # In run_conversation, before the main loop:
-if coach and not history:
-    kickoff = format_coach_kickoff(phase, agents, iteration, fileguard)
-    kickoff_msg = {"from": coach["name"], "iteration": iteration["id"],
+if should_inject_kickoff(history, phase):
+    kickoff = format_phase_kickoff(phase, agents, iteration, fileguard)
+    kickoff_msg = {"from": "system", "iteration": iteration["id"],
                    "content": kickoff}
     append_message(log_path, kickoff_msg)
     history.append(kickoff_msg)
 ```
 
-The `format_coach_kickoff` function fills in the template variables:
-- `{agent_list_with_tasks}`: formatted from tasks.json showing each agent's assignments
+The `format_phase_kickoff` function fills in the template variables:
+- `{agent_task_assignments}`: formatted from tasks.json showing each agent's assignments
 - `{first_agent}`, `{second_agent}`: from agents list
 - `{current_layer}`: from iteration state
 - `{writable_paths_info}`: from fileguard.writable_paths
 
-**Key detail:** This is NOT an LLM call. It's a template message injected by the system attributed to the coach. No API cost. The coach's first real turn comes after the agents respond to the kickoff.
+**Key detail:** This is a system message, same category as phase transition messages. No API cost, no false attribution. The "coach will facilitate from here" line bridges the gap to the coach's first real turn.
 
-**When to inject:** On `gotg run` when conversation is empty, and on `gotg continue` after a phase advance (detect by comparing phase in iteration.json to phase of last system message in history). Could also simply inject on every `run_conversation` call when the last message is a system phase-advance message.
+**When to inject:** On `gotg run` when conversation is empty, and on `gotg continue` after a phase advance (detect when the last message is a system phase-advance message).
 
 #### 3. Writable paths and worktree info in prompts (agent.py)
 
@@ -233,15 +237,15 @@ Or better: check the tool result from signal_phase_complete and synthesize a mes
 
 ### Files changed
 
-- `scaffold.py`: DEFAULT_SYSTEM_PROMPT (conciseness), COACH_KICKOFF_MESSAGES (new), PHASE_PROMPTS["pre-code-review"] (compressed), COACH_FACILITATION_PROMPTS["pre-code-review"] (compressed), PHASE_PROMPTS["implementation"] uses {current_layer}
+- `scaffold.py`: DEFAULT_SYSTEM_PROMPT (conciseness), PHASE_KICKOFF_MESSAGES (new, system messages), PHASE_PROMPTS["pre-code-review"] (compressed), COACH_FACILITATION_PROMPTS["pre-code-review"] (compressed), PHASE_PROMPTS["implementation"] uses {current_layer}
 - `agent.py`: `build_prompt` gains `fileguard`, `worktree_map`, injects writable paths and worktree info. Phase prompt gets `.format(current_layer=...)`.
-- `cli.py`: Kickoff message injection logic. Empty coach message fallback.
+- `cli.py`: Kickoff system message injection logic. Empty coach message fallback.
 
 ### Test updates
 
 - Existing prompt tests: update expected content for conciseness instructions, writable paths
-- New test: `test_coach_kickoff_injected_on_empty_conversation`
-- New test: `test_coach_kickoff_injected_after_phase_advance`
+- New test: `test_phase_kickoff_injected_on_empty_conversation`
+- New test: `test_phase_kickoff_injected_after_phase_advance`
 - New test: `test_writable_paths_in_implementation_prompt`
 - New test: `test_worktree_isolation_warning_in_prompt`
 - New test: `test_current_layer_in_implementation_prompt`

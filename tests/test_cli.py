@@ -209,7 +209,7 @@ def test_run_conversation_alternates_agents(tmp_path):
         run_conversation(iter_dir, agents, iteration, _default_model_config())
 
     log_path = iter_dir / "conversation.jsonl"
-    messages = read_log(log_path)
+    messages = [m for m in read_log(log_path) if m["from"] != "system"]
     assert len(messages) == 4
     assert messages[0]["from"] == "agent-1"
     assert messages[1]["from"] == "agent-2"
@@ -251,7 +251,7 @@ def test_run_conversation_resumes_from_existing(tmp_path):
 # --- run loop edge cases ---
 
 def test_run_conversation_max_turns_zero_produces_no_messages(tmp_path):
-    """max_turns=0 should do nothing, not loop forever."""
+    """max_turns=0 should produce no agent messages (only system kickoff)."""
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -259,12 +259,12 @@ def test_run_conversation_max_turns_zero_produces_no_messages(tmp_path):
     }
     with patch("gotg.cli.chat_completion", return_value="nope"):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 0
 
 
 def test_run_conversation_max_turns_one_runs_single_agent(tmp_path):
-    """max_turns=1 should produce exactly one message from agent-1."""
+    """max_turns=1 should produce exactly one agent message from agent-1."""
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -272,7 +272,7 @@ def test_run_conversation_max_turns_one_runs_single_agent(tmp_path):
     }
     with patch("gotg.cli.chat_completion", return_value="only response"):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 1
     assert messages[0]["from"] == "agent-1"
 
@@ -313,7 +313,7 @@ def test_run_conversation_three_agents_rotate(tmp_path):
     }
     with patch("gotg.cli.chat_completion", return_value="response"):
         run_conversation(iter_dir, agents, iteration, _default_model_config())
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert [m["from"] for m in messages] == ["alice", "bob", "carol", "alice", "bob", "carol"]
 
 
@@ -338,7 +338,7 @@ def test_run_conversation_model_error_mid_conversation(tmp_path):
         with patch("gotg.cli.chat_completion", side_effect=flaky_completion):
             run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 2
     assert messages[0]["from"] == "agent-1"
     assert messages[1]["from"] == "agent-2"
@@ -388,7 +388,7 @@ def test_run_conversation_with_max_turns_override(tmp_path):
     with patch("gotg.cli.chat_completion", return_value="response"):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config(),
                          max_turns_override=3)
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 3
 
 
@@ -756,7 +756,7 @@ def test_run_conversation_coach_injects_after_rotation(tmp_path):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     senders = [m["from"] for m in messages]
     # 4 agent turns with coach after each full rotation (every 2 agent turns)
     # agent-1, agent-2, coach, agent-1, agent-2, coach
@@ -810,7 +810,7 @@ def test_run_conversation_coach_early_exit(tmp_path):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     # Should stop after: agent-1, agent-2, coach (3 messages only)
     assert len(messages) == 3
     assert messages[2]["from"] == "coach"
@@ -847,7 +847,7 @@ def test_run_conversation_no_coach_backward_compatible(tmp_path):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config())  # no coach kwarg
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     senders = [m["from"] for m in messages]
     assert senders == ["agent-1", "agent-2", "agent-1", "agent-2"]
 
@@ -891,7 +891,7 @@ def test_run_conversation_three_agents_with_coach(tmp_path):
         run_conversation(iter_dir, agents, iteration,
                          _default_model_config(), coach=_default_coach())
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     senders = [m["from"] for m in messages]
     # alice, bob, carol, coach, alice, bob, carol, coach
     assert senders == ["alice", "bob", "carol", "coach", "alice", "bob", "carol", "coach"]
@@ -1423,7 +1423,7 @@ def test_run_conversation_no_fileguard_backward_compat(tmp_path):
     with patch("gotg.cli.chat_completion", return_value="response"):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=None)
 
-    messages = read_log(iter_dir / "conversation.jsonl")
+    messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 2
     assert all(m["content"] == "response" for m in messages)
 
@@ -3313,3 +3313,107 @@ def test_next_layer_blocks_on_dirty_worktrees(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "dirty" in err.lower()
     assert "agent-1/layer-0" in err
+
+
+# --- kickoff injection ---
+
+def test_kickoff_injected_on_empty_conversation(tmp_path):
+    """First run should inject a phase kickoff system message."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "Build X",
+        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+    }
+
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # First message should be the system kickoff
+    assert messages[0]["from"] == "system"
+    assert "--- Phase: grooming ---" in messages[0]["content"]
+    assert "coach will facilitate" in messages[0]["content"].lower()
+
+
+def test_kickoff_injected_after_phase_advance(tmp_path):
+    """After a phase advance system message, kickoff should be injected on resume."""
+    iter_dir = _make_iter_dir(tmp_path)
+    log_path = iter_dir / "conversation.jsonl"
+    # Pre-populate with messages ending in a phase advance
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "system", "iteration": "iter-1",
+                              "content": "--- Phase advanced: grooming → planning ---"})
+
+    iteration = {
+        "id": "iter-1", "description": "Build X",
+        "status": "in-progress", "phase": "planning", "max_turns": 4,
+    }
+
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(log_path)
+    # Find the kickoff message after the advance
+    kickoff_msgs = [m for m in messages if m.get("from") == "system"
+                    and m.get("content", "").startswith("--- Phase: planning")]
+    assert len(kickoff_msgs) == 1
+    assert "coach will facilitate" in kickoff_msgs[0]["content"].lower()
+
+
+def test_no_kickoff_on_mid_phase_resume(tmp_path):
+    """Mid-phase resume (no transition) should not inject kickoff."""
+    iter_dir = _make_iter_dir(tmp_path)
+    log_path = iter_dir / "conversation.jsonl"
+    # Pre-populate with normal conversation (no phase transition)
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "agreed"})
+
+    iteration = {
+        "id": "iter-1", "description": "Build X",
+        "status": "in-progress", "phase": "grooming", "max_turns": 4,
+    }
+
+    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(log_path)
+    kickoff_msgs = [m for m in messages if m.get("from") == "system"
+                    and m.get("content", "").startswith("--- Phase:")]
+    assert len(kickoff_msgs) == 0
+
+
+# --- empty coach message fallback ---
+
+def test_empty_coach_message_gets_fallback(tmp_path):
+    """Empty coach text with signal_phase_complete should get fallback text."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+    }
+
+    call_count = 0
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        nonlocal call_count
+        call_count += 1
+        # 3rd call is coach after agent-1, agent-2
+        if call_count == 3:
+            return {
+                "content": "",
+                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done."}}],
+            }
+        if tools:
+            return {"content": "response", "tool_calls": []}
+        return "response"
+
+    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    coach_msgs = [m for m in messages if m["from"] == "coach"]
+    assert len(coach_msgs) == 1
+    assert coach_msgs[0]["content"] == "(Phase complete signal sent.)"

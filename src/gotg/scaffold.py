@@ -19,7 +19,15 @@ DEFAULT_SYSTEM_PROMPT = (
     "planning (break scope into tasks), pre-code-review (propose "
     "implementation approaches), implementation (write code for your "
     "assigned tasks), and code-review (review implementation "
-    "diffs). Each phase builds on the previous one."
+    "diffs). Each phase builds on the previous one.\n\n"
+    "Be concise. State only new information — do not repeat what teammates "
+    "have already said. If you agree with a proposal, say so in one sentence "
+    "and move on; silence on a specific point means approval. When reviewing "
+    "a teammate's proposal, comment only on what you would change or what "
+    "concerns you.\n\n"
+    "Keep messages to short prose paragraphs. Avoid checkbox formatting "
+    "and agreement checklists. Bullets are fine for brief lists but do not "
+    "pad them. Do not use emoji."
 )
 
 
@@ -61,45 +69,28 @@ PHASE_PROMPTS = {
     ),
     "pre-code-review": (
         "CURRENT PHASE: PRE-CODE-REVIEW\n\n"
-        "You have completed planning. The task list is defined in the tasks summary "
-        "below. Each task is assigned to a team member.\n\n"
-        "In this phase, each person proposes implementation approaches for THEIR "
-        "assigned tasks. Work through tasks layer by layer, starting from Layer 0. "
-        "Finish reviewing all tasks in a layer before moving to the next. Stay on "
-        "one task at a time.\n\n"
-        "For YOUR tasks, propose:\n"
-        "- Where the code lives (files/modules)\n"
-        "- Key data structures and class/function signatures\n"
-        "- Interfaces with tasks that depend on this one\n"
-        "- Test strategy\n\n"
-        "For TEAMMATE tasks, review their proposal — suggest alternatives, flag "
-        "issues, and confirm interfaces with your own tasks. Stay on the current "
-        "task until the team is aligned before moving on.\n\n"
-        "There is a code review phase after this. The goal here is to align on "
-        "the approach enough to reduce the likelihood of major changes during code "
-        "review. You don't need to work out every detail — just the key decisions: "
-        "file structure, public interfaces, data flow, and anything that would be "
-        "expensive to change later. Describe functions, methods, and classes at a "
-        "high level — don't write full implementations.\n\n"
-        "DO:\n"
-        "- Propose function/method/class descriptions for your assigned tasks\n"
-        "- Review teammates' proposals and suggest improvements\n"
-        "- Identify interfaces between dependent tasks\n"
-        "- Suggest test strategies\n"
-        "- Work through tasks one at a time, layer by layer\n\n"
-        "DO NOT:\n"
-        "- Write full implementations or complete code files\n"
-        "- Propose approaches for tasks assigned to someone else\n"
-        "- Re-debate task scope or requirements\n"
-        "- Change task assignments without team consensus\n"
-        "- Skip ahead to higher-layer tasks before finishing lower layers\n\n"
-        "If a teammate tries to re-open planning decisions, redirect them: "
-        "\"That was decided in planning. Let's focus on implementation approach.\""
+        "Propose implementation approaches for YOUR assigned tasks. Keep it "
+        "brief — the goal is interface alignment, not detailed design. "
+        "Work through tasks layer by layer, starting from Layer 0.\n\n"
+        "For each of your tasks, state in one short message:\n"
+        "- Files you will create or modify\n"
+        "- Public function/method signatures with types\n"
+        "- How dependent tasks should call your code\n"
+        "- Any questions for teammates whose tasks yours depends on\n\n"
+        "For teammate tasks: respond ONLY if you see a mismatch between their "
+        "proposed interface and what your code needs. Silence means the "
+        "interface works for you.\n\n"
+        "Do not write full implementations, pseudocode, or test code. Do not "
+        "discuss internal implementation details — those are your choice to make "
+        "during implementation."
     ),
     "implementation": (
         "CURRENT PHASE: IMPLEMENTATION\n\n"
         "You have completed design discussions. The task list and agreed "
         "implementation approaches are below. Now write the actual code.\n\n"
+        "You are implementing layer {current_layer} tasks ONLY. Do not work on "
+        "tasks from other layers. Complete your current-layer tasks, report "
+        "completion, and wait.\n\n"
         "You are working in your own git branch via a worktree. Use the "
         "file tools (file_read, file_write, file_list) to read existing code "
         "and write your implementation.\n\n"
@@ -249,24 +240,14 @@ COACH_FACILITATION_PROMPTS = {
 
     "pre-code-review": (
         "You are an Agile Coach facilitating this conversation. "
-        "You do NOT contribute technical opinions or suggest solutions.\n\n"
-        "The team is in the PRE-CODE-REVIEW phase — discussing implementation "
-        "approaches for each task before writing code.\n\n"
-        "Your job is to:\n"
-        "1. Track which tasks from the task list have been discussed and which "
-        "have not\n"
-        "2. Guide the team to work through tasks layer by layer (Layer 0 first, "
-        "then Layer 1, etc.)\n"
-        "3. When the team finishes discussing one task, direct them to the next "
-        "undiscussed task\n"
-        "4. Before signaling completion, list EVERY task ID from the task list "
-        "and note whether it has been discussed. If any task has not been "
-        "discussed, do NOT signal completion — instead direct the team to "
-        "the next undiscussed task\n"
-        "5. Only use the signal_phase_complete tool when the team has proposed "
-        "and reviewed implementation approaches for ALL tasks in the task list\n\n"
-        "Keep your messages concise — shorter than the engineers' messages. "
-        "The engineers are the experts. You manage the process."
+        "You do NOT contribute technical opinions.\n\n"
+        "The team is proposing implementation approaches. Guide them through "
+        "tasks layer by layer. After each agent presents their proposals for "
+        "a layer, check: does any engineer see an interface mismatch? If not, "
+        "move to the next layer.\n\n"
+        "Signal completion when all layers have been presented and all "
+        "interface concerns resolved. Most tasks should need only one round "
+        "of discussion."
     ),
 
     "implementation": (
@@ -332,6 +313,160 @@ COACH_TOOLS = [
         },
     }
 ]
+
+
+PHASE_KICKOFF_MESSAGES = {
+    "grooming": (
+        "--- Phase: grooming ---\n"
+        "Goal: define WHAT to build — scope, requirements, edge cases. "
+        "Do not discuss HOW to build it.\n\n"
+        "{first_agent}, what's your read on the requirements? "
+        "What ambiguities or edge cases do you see?\n\n"
+        "The coach will facilitate from here."
+    ),
+    "planning": (
+        "--- Phase: planning ---\n"
+        "Goal: break the groomed scope into concrete, assignable tasks "
+        "with dependencies and done criteria. The groomed scope is "
+        "available above.\n\n"
+        "{first_agent}, propose an initial task breakdown. {second_agent}, "
+        "review it and suggest modifications.\n\n"
+        "The coach will facilitate from here."
+    ),
+    "pre-code-review": (
+        "--- Phase: pre-code-review ---\n"
+        "Goal: interface alignment. Each engineer proposes their approach "
+        "for their assigned tasks — briefly. State: (1) files you'll "
+        "create/modify, (2) public function signatures, (3) how dependent "
+        "tasks should call your code.\n\n"
+        "One message per task. Respond to teammates ONLY if you see an "
+        "interface mismatch. Silence means the interface works for you.\n\n"
+        "{agent_task_assignments}\n\n"
+        "The coach will facilitate from here."
+    ),
+    "implementation": (
+        "--- Phase: implementation (layer {current_layer}) ---\n"
+        "{agent_task_assignments}\n\n"
+        "{writable_paths_info}\n\n"
+        "Write your code, then report completion with a brief summary "
+        "of what you created. Do not discuss — just implement. If you "
+        "have a blocking question, ask it specifically.\n\n"
+        "The coach will facilitate from here."
+    ),
+    "code-review": (
+        "--- Phase: code-review (layer {current_layer}) ---\n"
+        "Implementation diffs are included above (if available). "
+        "Review your teammates' code against the task requirements.\n\n"
+        "For each branch: approve, or raise specific concerns with "
+        "file names and line references. One message per reviewer.\n\n"
+        "The coach will facilitate from here."
+    ),
+}
+
+
+def format_agent_task_assignments(
+    iter_dir: Path, agents: list[dict], current_layer: int | None = None,
+) -> str:
+    """Format task assignments grouped by agent for kickoff messages."""
+    tasks_path = iter_dir / "tasks.json"
+    if not tasks_path.exists():
+        return "No tasks assigned yet."
+    try:
+        tasks = json.loads(tasks_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return "No tasks assigned yet."
+    if not tasks:
+        return "No tasks assigned yet."
+
+    if current_layer is not None:
+        tasks = [t for t in tasks if t.get("layer") == current_layer]
+
+    agent_names = [a["name"] for a in agents]
+    lines = []
+    for name in agent_names:
+        agent_tasks = [t for t in tasks if t.get("assigned_to") == name]
+        if agent_tasks:
+            task_ids = ", ".join(t["id"] for t in agent_tasks)
+            lines.append(f"{name}: {task_ids}")
+    if not lines:
+        return "No tasks assigned yet."
+    return "Task assignments: " + ". ".join(lines) + "."
+
+
+def should_inject_kickoff(history: list[dict], phase: str) -> bool:
+    """Determine if a phase kickoff message should be injected.
+
+    Returns True when:
+    - Conversation is empty (first run)
+    - A phase transition exists in history but no kickoff has been injected after it
+    """
+    if not history:
+        return True
+
+    # Find the last phase-transition system message
+    transition_idx = None
+    for i in range(len(history) - 1, -1, -1):
+        msg = history[i]
+        if msg.get("from") != "system":
+            continue
+        content = msg.get("content", "")
+        if content.startswith("--- Phase advanced:") or content.startswith("--- Layer"):
+            transition_idx = i
+            break
+
+    if transition_idx is None:
+        return False  # No transition found — mid-phase resume
+
+    # Check if a kickoff already exists after the transition
+    for msg in history[transition_idx + 1:]:
+        if msg.get("from") == "system" and msg.get("content", "").startswith("--- Phase:"):
+            return False  # Kickoff already injected
+
+    return True
+
+
+def format_phase_kickoff(
+    phase: str,
+    agents: list[dict],
+    iteration: dict,
+    fileguard=None,
+    iter_dir: Path | None = None,
+) -> str:
+    """Format a phase kickoff message with resolved template variables."""
+    template = PHASE_KICKOFF_MESSAGES.get(phase)
+    if not template:
+        return ""
+
+    first_agent = agents[0]["name"] if agents else "agent-1"
+    second_agent = agents[1]["name"] if len(agents) > 1 else first_agent
+    current_layer = iteration.get("current_layer", 0)
+
+    # Build agent task assignments
+    agent_task_assignments = ""
+    if iter_dir:
+        if phase in ("implementation", "code-review"):
+            agent_task_assignments = format_agent_task_assignments(
+                iter_dir, agents, current_layer,
+            )
+        elif phase == "pre-code-review":
+            agent_task_assignments = format_agent_task_assignments(iter_dir, agents)
+
+    # Build writable paths info
+    writable_paths_info = ""
+    if fileguard and phase in ("implementation", "code-review"):
+        writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
+        writable_paths_info = (
+            f"File access: you can read project files and write to: {writable}. "
+            "Writes to other paths will be denied."
+        )
+
+    return template.format(
+        first_agent=first_agent,
+        second_agent=second_agent,
+        current_layer=current_layer,
+        agent_task_assignments=agent_task_assignments,
+        writable_paths_info=writable_paths_info,
+    )
 
 
 def _ensure_gitignore(path: Path) -> None:

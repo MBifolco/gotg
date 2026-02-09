@@ -2088,7 +2088,7 @@ $9 for a calculator is untenable. The breakdown reveals why:
 
 Organized improvements into three iterations (15-17) that build on each other:
 
-**Iteration 15 — Prompt Efficiency:** Conciseness norms in system prompt ("silence means approval"), coach kickoff messages (template-injected, zero API cost) that tell agents exactly what to do, writable paths in prompts, compressed pre-code-review (interface-only, one round), layer enforcement in implementation prompt. Expected: 50-70% reduction in agent verbosity.
+**Iteration 15 — Prompt Efficiency:** Conciseness norms in system prompt ("silence means approval"), system kickoff messages per phase (template-injected as system messages, not coach-attributed — same honesty principle as signal_phase_complete), writable paths in prompts, compressed pre-code-review (interface-only, one round), layer enforcement in implementation prompt. Expected: 50-70% reduction in agent verbosity.
 
 **Iteration 16 — History Management:** Phase boundary markers in conversation.jsonl. `read_phase_history` loads only current-phase messages. Artifacts (groomed.md, tasks.json with notes) carry forward the compressed output of prior phases. Expected: 60-70% reduction in input tokens.
 
@@ -2169,7 +2169,7 @@ Combined estimate: $9 → $1-2 for equivalent task.
 - ✅ **Iteration 11: Git worktree infrastructure** — complete
 - ✅ **Iteration 12: Merge workflow + PM review** — complete
 - ✅ **Iteration 13: Code review with diffs** — complete
-- ⬜ **Iteration 14: End-to-end layer execution** — planned, 5-phase system with implementation phase, current_layer tracking, next-layer command
+- ✅ **Iteration 14: End-to-end layer execution** — complete, 5-phase system with implementation phase, current_layer tracking, next-layer command
 - ⬜ **Iteration 15: Prompt efficiency & agent awareness** — planned, conciseness norms, coach kickoff messages, writable path injection, compressed pre-code-review, layer enforcement in prompts
 - ⬜ **Iteration 16: History management** — planned, phase boundary markers, phase-scoped history loading, task notes extraction, ~60-70% input token reduction
 - ⬜ **Iteration 17: Coach-directed conversation flow** — planned, direct_speaker tool, request_admin_input tool, coach controls turn order, eliminates round-robin waste
@@ -2224,7 +2224,7 @@ First full test run complete (calculator, $9). Iterations 9-13 working. Three op
 - **Input tokens are the cost driver, not output tokens** — in a multi-agent conversation, each turn re-reads the full history; 99 turns reading an ever-growing log produced ~2.7M input tokens vs ~47K output; history trimming at phase boundaries is the single highest-leverage cost intervention
 
 ### Development Strategy
-- **Iteration 14 next** — end-to-end layer execution, completing the implementation pipeline
+- **Iteration 15 next** — prompt efficiency and agent awareness
 - Iterations 15-17 optimize conversation efficiency based on first full test run findings
 - Iteration 15 (prompts) is low-risk, high-impact — all prompt text changes, minimal structural changes
 - Iteration 16 (history) is medium-risk — changes how history is loaded but doesn't change what's stored

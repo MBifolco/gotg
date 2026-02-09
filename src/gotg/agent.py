@@ -9,6 +9,8 @@ def build_prompt(
     groomed_summary: str | None = None,
     tasks_summary: str | None = None,
     diffs_summary: str | None = None,
+    fileguard=None,
+    worktree_map: dict | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -56,7 +58,29 @@ def build_prompt(
     if phase:
         phase_prompt = PHASE_PROMPTS.get(phase)
         if phase_prompt:
+            if "{current_layer}" in phase_prompt:
+                current_layer = iteration.get("current_layer", 0)
+                phase_prompt = phase_prompt.format(current_layer=current_layer)
             system_parts.append(phase_prompt)
+
+    # File access info for implementation/code-review phases
+    if fileguard and phase in ("implementation", "code-review"):
+        writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
+        system_parts.append(
+            f"FILE ACCESS: You can read project files and write to: {writable}. "
+            "Writes to other paths will be denied. "
+            "System files (.team/, .git/, .env) are always blocked."
+        )
+
+    # Worktree isolation warning
+    if worktree_map and agent_config["name"] in worktree_map:
+        system_parts.append(
+            "WORKTREE: You are working in your own isolated git worktree. "
+            "Files you write are only visible in your worktree — your "
+            "teammates cannot read your files and you cannot read theirs. "
+            "If you need to see a teammate's code, ask them to share it "
+            "in the conversation."
+        )
 
     if groomed_summary:
         system_parts.append("GROOMED SCOPE SUMMARY:\n\n" + groomed_summary)

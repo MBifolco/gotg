@@ -643,7 +643,7 @@ def test_build_coach_prompt_uses_pre_code_review_facilitation():
     ])
     system = messages[0]["content"]
     assert COACH_FACILITATION_PROMPTS["pre-code-review"] in system
-    assert "all tasks" in system.lower()
+    assert "all layers" in system.lower()
 
 
 def test_build_coach_prompt_falls_back_to_default_for_unknown_phase():
@@ -737,3 +737,112 @@ def test_build_coach_prompt_code_review_facilitation():
     system = messages[0]["content"]
     assert COACH_FACILITATION_PROMPTS["code-review"] in system
     assert "concerns" in system.lower()
+
+
+# --- writable paths and worktree info ---
+
+class _FakeFileGuard:
+    """Minimal stand-in for FileGuard in prompt tests."""
+    def __init__(self, writable_paths=None):
+        self.writable_paths = writable_paths or []
+
+
+def test_build_prompt_writable_paths_in_implementation():
+    """FILE ACCESS info should appear in implementation phase with fileguard."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10, "current_layer": 0,
+    }
+    fg = _FakeFileGuard(writable_paths=["src/**", "tests/**"])
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "FILE ACCESS" in system
+    assert "src/**" in system
+    assert "tests/**" in system
+
+
+def test_build_prompt_no_writable_paths_in_grooming():
+    """FILE ACCESS should not appear in grooming phase."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "grooming", "max_turns": 10,
+    }
+    fg = _FakeFileGuard(writable_paths=["src/**"])
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "FILE ACCESS" not in system
+
+
+def test_build_prompt_worktree_isolation_warning():
+    """WORKTREE warning should appear when agent is in worktree_map."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10, "current_layer": 0,
+    }
+    worktree_map = {"agent-1": "/some/path", "agent-2": "/other/path"}
+    messages = build_prompt(agent, iteration, [], worktree_map=worktree_map)
+    system = messages[0]["content"]
+    assert "WORKTREE" in system
+    assert "isolated" in system.lower()
+
+
+def test_build_prompt_no_worktree_warning_without_map():
+    """WORKTREE warning should not appear without worktree_map."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10, "current_layer": 0,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "WORKTREE" not in system
+
+
+def test_build_prompt_no_worktree_warning_when_agent_not_in_map():
+    """WORKTREE warning should not appear for agents not in the map."""
+    agent = {"name": "agent-3", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10, "current_layer": 0,
+    }
+    worktree_map = {"agent-1": "/some/path", "agent-2": "/other/path"}
+    messages = build_prompt(agent, iteration, [], worktree_map=worktree_map)
+    system = messages[0]["content"]
+    assert "WORKTREE" not in system
+
+
+# --- current_layer interpolation ---
+
+def test_build_prompt_implementation_includes_current_layer():
+    """Implementation phase prompt should interpolate {current_layer}."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10, "current_layer": 2,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "layer 2" in system
+    assert "{current_layer}" not in system
+
+
+def test_build_prompt_implementation_defaults_layer_to_zero():
+    """When current_layer is not set, should default to 0."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "phase": "implementation",
+        "max_turns": 10,
+    }
+    messages = build_prompt(agent, iteration, [])
+    system = messages[0]["content"]
+    assert "layer 0" in system
+    assert "{current_layer}" not in system
