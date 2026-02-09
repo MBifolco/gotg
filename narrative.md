@@ -2016,6 +2016,42 @@ When agents perform file operations during an agentic loop, the operations could
 
 ---
 
+## 45. External Validation: Carlini's 16-Agent C Compiler
+
+### The Experiment
+
+In February 2026, Anthropic researcher Nicholas Carlini published results from an experiment where 16 instances of Claude Opus 4.6 autonomously built a Rust-based C compiler from scratch. Over two weeks and ~2,000 Claude Code sessions ($20K in API costs), the agents produced 100,000 lines of Rust that can compile Linux 6.9 on x86, ARM, and RISC-V, pass 99% of the GCC torture test suite, and compile real projects like PostgreSQL, SQLite, Redis, and FFmpeg. Source: https://www.anthropic.com/engineering/building-c-compiler
+
+### Coordination Mechanism
+
+Strikingly minimal. Each agent runs in a Docker container, clones a shared bare git repo, "locks" a task by writing a file to `current_tasks/`, works on it, pulls/merges/pushes, removes the lock. The infinite loop spawns a fresh Claude Code session and repeats. No phases, no coach, no approval system, no structured conversation between agents. Git merge conflicts are the only coordination mechanism — if two agents claim the same task, git's sync forces the second to pick something else. No orchestration agent. Each agent decides what to work on next autonomously.
+
+### What This Validates for gotg
+
+**Git as coordination substrate.** We arrived at worktrees and branching independently as the right primitive for parallel agent work (principle #26). Carlini's experiment proves this scales to 16 agents. More aggressive than our PM-mediated merge, but the same underlying insight.
+
+**Tests as steering.** Carlini's biggest lesson: the task verifier must be nearly perfect, otherwise agents solve the wrong problem. He built CI pipelines ensuring new commits can't break existing code. This is the testing equivalent of our phase prompts and coach facilitation — structured constraints keeping agents on track without human intervention.
+
+**Documentation as agent memory.** Agents maintain extensive READMEs and progress files because each is dropped into a fresh container with no context. Analogous to our conversation log and artifacts (groomed.md, tasks.json) — persistent state that gives agents context across sessions.
+
+**Context window management matters.** Carlini found the test harness should not print thousands of useless bytes — log to files, let Claude grep when needed. And: Claude can't tell time and will happily spend hours running tests. Our 50K diff budget in iteration 13 is a nod to this, but as conversations grow across layers, compression becomes more critical.
+
+### What This Challenges
+
+**Conversation overhead.** Carlini's agents don't talk to each other at all. No facilitated discussion, no grooming, no planning. They pick tasks and write code. 100K lines of working compiler. For well-defined, test-driven, decomposable problems, the conversation overhead we're building may not be necessary — tests provide sufficient coordination.
+
+**However:** For a compiler, the spec is the C standard — requirements are fully defined externally. For most software projects, the requirements *are* the hard part. That's where gotg's grooming and planning phases earn their keep. Carlini himself notes he hasn't implemented any method for inter-agent communication or high-level goal management.
+
+**PM as bottleneck vs. full autonomy.** Carlini's experiment ran two weeks with minimal intervention. gotg has the PM approving writes, reviewing diffs, advancing phases, merging branches. For gotg's use case (building software where the human has opinions about *what* to build), that's right. But Carlini shows the ceiling: if you specify the problem precisely enough and write good enough tests, you can nearly remove the human.
+
+### Key Insight: Complementary, Not Competing
+
+Carlini's approach is the "let 'em loose" end of the spectrum — minimal structure, maximum autonomy, tests as the only guardrail. gotg is the "structured collaboration" end — phases, facilitation, human oversight, deliberate design conversations. Both work. The question is which problems benefit from which approach. A compiler with a well-defined spec and exhaustive test suites is ideal for Carlini's approach. A product with evolving requirements, design tradeoffs, and stakeholder opinions is where gotg's structure pays off.
+
+This suggests a future direction: gotg could support a "autonomous mode" for implementation phases where agents work more like Carlini's setup (test-driven, minimal oversight) while retaining structured collaboration for design phases (grooming, planning, pre-code-review) where requirements are being discovered.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2131,6 +2167,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - **Structured approvals follow the same pattern as phase advancement** — `gotg approve`/`gotg deny` mirror `gotg advance`; structured in, structured out, no message parsing
 - **Exploration and convergence need different conversation modes** — the current "grooming" phase is really refinement (convergent, produces `groomed.md`, feeds planning); true grooming is pre-iteration exploration without convergence pressure or artifacts
 - **The TUI is a viewer with interaction hooks, not a controller** — the primary experience is watching a team conversation stream in real-time with the ability to intervene when needed (approvals, messages, phase advances); the CLI remains the underlying API for testability and scripting
+- **Structure and autonomy serve different phases of the same project** — design phases (grooming, planning, code review) benefit from structured conversation and human oversight; implementation phases could benefit from Carlini-style autonomous execution where tests steer the agents and the human steps back
 
 ### Development Strategy
 - **Iteration 9 next** — file tools + FileGuard, the minimum viable agent tooling
@@ -2157,6 +2194,7 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
 - TUI chat interface (Textual — after iteration 14; async refactor, event-driven state, three-mode home screen, shared chat view with contextual info tiles and inline action bar; see section 44)
+- Autonomous implementation mode — Carlini-style test-driven agent execution during implementation phase with minimal PM oversight; agents pick tasks, write code, run tests in a loop; structured phases retained for design work (see section 45)
 - OpenCode integration for agent tool access (needs deeper evaluation)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Narrator layer implementation (consolidated messages + @mentions work well)
@@ -2198,3 +2236,4 @@ All three behavioral hypotheses validated. Tool infrastructure established. Phas
 27. **Cross-review produces integration quality** — the agent who built the adjacent component catches interface mismatches that a dedicated reviewer would miss; code review is a team conversation, not isolated approvals
 28. **Separate exploration from commitment** — exploring an idea should not require committing to an iteration; grooming (open-ended, pre-iteration) and refinement (convergent, within an iteration) serve different purposes and need different structures
 29. **Surface decisions, don't require memorization** — contextual action bars that appear when the system needs a decision are better than commands the PM must remember; the interface should tell you what's possible right now
+30. **Match coordination overhead to problem structure** — well-specified, test-driven problems can run with minimal coordination (git + tests); ambiguous, requirements-driven problems need structured collaboration (phases + facilitation + human oversight); the same project may need both at different stages

@@ -96,6 +96,7 @@ def test_init_creates_gitignore_with_team_and_env(git_project):
     content = (git_project / ".gitignore").read_text()
     assert "/.team/" in content
     assert ".env" in content
+    assert "/.worktrees/" in content
 
 
 def test_init_appends_to_existing_gitignore(git_project):
@@ -105,6 +106,16 @@ def test_init_appends_to_existing_gitignore(git_project):
     assert "*.pyc" in content
     assert "/.team/" in content
     assert ".env" in content
+
+
+def test_init_commits_gitignore(git_project):
+    """init_project should commit .gitignore so it doesn't block merges later."""
+    init_project(git_project)
+    result = subprocess.run(
+        ["git", "log", "--oneline", "--", ".gitignore"],
+        cwd=git_project, capture_output=True, text=True,
+    )
+    assert "gotg" in result.stdout.lower()
 
 
 def test_default_system_prompt_mentions_pushback():

@@ -83,15 +83,12 @@ def test_chat_completion_sends_auth_header_when_key_provided(mock_post):
 
 @patch("gotg.model.httpx.post")
 def test_chat_completion_raises_on_http_error(mock_post):
-    """HTTP errors (400, 500, etc.) should propagate as exceptions."""
-    import httpx
+    """HTTP errors (400, 500, etc.) should exit with the API error message."""
     resp = MagicMock()
     resp.status_code = 500
-    resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "Server Error", request=MagicMock(), response=resp
-    )
+    resp.json.return_value = {"error": {"message": "Internal server error"}}
     mock_post.return_value = resp
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(SystemExit, match="API error.*500.*Internal server error"):
         chat_completion("http://localhost:11434", "m", [])
 
 

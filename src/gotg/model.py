@@ -4,6 +4,19 @@ import sys
 import httpx
 
 
+def _check_response(resp: httpx.Response) -> None:
+    """Raise SystemExit with the API error message on failure."""
+    if resp.status_code >= 400:
+        try:
+            error_data = resp.json()
+            # Anthropic: {"error": {"message": "..."}}
+            # OpenAI: {"error": {"message": "..."}}
+            error_msg = error_data.get("error", {}).get("message", resp.text)
+        except Exception:
+            error_msg = resp.text
+        raise SystemExit(f"API error ({resp.status_code}): {error_msg}")
+
+
 def chat_completion(
     base_url: str,
     model: str,
@@ -44,7 +57,7 @@ def _openai_completion(
         ]
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
-    resp.raise_for_status()
+    _check_response(resp)
     data = resp.json()
     message = data["choices"][0]["message"]
 
@@ -83,7 +96,7 @@ def _anthropic_completion(
     for msg in messages:
         if msg["role"] == "system":
             system = msg["content"]
-        else:
+        elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
     body = {
@@ -105,7 +118,7 @@ def _anthropic_completion(
     # Prompt caching: mark second-to-last message for cache breakpoint
     if len(chat_messages) >= 2:
         msg = chat_messages[-2]
-        if isinstance(msg["content"], str):
+        if isinstance(msg["content"], str) and msg["content"]:
             msg["content"] = [
                 {
                     "type": "text",
@@ -115,7 +128,7 @@ def _anthropic_completion(
             ]
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
-    resp.raise_for_status()
+    _check_response(resp)
     data = resp.json()
 
     # Log cache usage if present (for observability)
@@ -180,13 +193,13 @@ def _anthropic_agentic(
     for msg in messages:
         if msg["role"] == "system":
             system = msg["content"]
-        else:
+        elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
     # Apply cache control to second-to-last message
     if len(chat_messages) >= 2:
         msg = chat_messages[-2]
-        if isinstance(msg["content"], str):
+        if isinstance(msg["content"], str) and msg["content"]:
             msg["content"] = [
                 {
                     "type": "text",
@@ -220,7 +233,7 @@ def _anthropic_agentic(
             body["tools"] = tools
 
         resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
-        resp.raise_for_status()
+        _check_response(resp)
         data = resp.json()
 
         # Log cache usage
@@ -303,7 +316,7 @@ def _openai_agentic(
             body["tools"] = openai_tools
 
         resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
-        resp.raise_for_status()
+        _check_response(resp)
         data = resp.json()
         message = data["choices"][0]["message"]
 

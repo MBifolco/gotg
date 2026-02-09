@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -336,7 +337,7 @@ COACH_TOOLS = [
 def _ensure_gitignore(path: Path) -> None:
     """Add .team/ and .env to .gitignore so they're never tracked."""
     gitignore = path / ".gitignore"
-    entries = ["/.team/", ".env"]
+    entries = ["/.team/", ".env", "/.worktrees/"]
 
     if gitignore.exists():
         content = gitignore.read_text()
@@ -367,6 +368,16 @@ def init_project(path: Path) -> None:
 
     # Gitignore .team/ and .env before creating them
     _ensure_gitignore(path)
+
+    # Commit .gitignore so it doesn't show as untracked later
+    subprocess.run(
+        ["git", "add", ".gitignore"],
+        cwd=path, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "Add .gitignore for gotg"],
+        cwd=path, check=True, capture_output=True,
+    )
 
     team_dir.mkdir(parents=True)
 
