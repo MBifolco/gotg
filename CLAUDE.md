@@ -1,13 +1,13 @@
 # CLAUDE.md — Project Context for Claude Code
 
 ## What This Is
-GOTG is an AI product and engineering department tool. pip-installable CLI (`gotg`) that runs structured conversations between AI agents following real engineering team processes (grooming → planning → pre-code-review → implementation → code-review). Terminal-based, JSONL conversation log, `.team/` directory per project (like `.git/`).
+GOTG is an AI product and engineering department tool. pip-installable CLI (`gotg`) that runs structured conversations between AI agents following real engineering team processes (refinement → planning → pre-code-review → implementation → code-review). Terminal-based, JSONL conversation log, `.team/` directory per project (like `.git/`).
 
 ## Development Environment
 - Python 3.11 via pyenv (venv at `.venv/`)
 - Install: `.venv/bin/pip install -e .`
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 698 tests as of R3 refactor
+- 723 tests as of R6 refactor
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
@@ -27,7 +27,7 @@ gotg init
 gotg model anthropic
 cp /home/biff/eng/gotg/.env /tmp/gotg-test/.env
 gotg run          # runs until max_turns or coach calls signal_phase_complete
-gotg advance      # moves to next phase (produces artifacts: groomed.md, tasks.json)
+gotg advance      # moves to next phase (produces artifacts: refinement_summary.md, tasks.json)
 gotg run          # runs the next phase
 ```
 
@@ -38,7 +38,7 @@ COMMIT=$(git rev-parse --short HEAD)
 cp /tmp/gotg-test/.team/iterations/iter-1/conversation.jsonl run_history/conversation-${COMMIT}.jsonl
 cp /tmp/gotg-test/.team/iterations/iter-1/debug.jsonl run_history/debug-${COMMIT}.jsonl
 # Also copy phase artifacts if they exist:
-cp /tmp/gotg-test/.team/iterations/iter-1/groomed.md run_history/groomed-${COMMIT}.md
+cp /tmp/gotg-test/.team/iterations/iter-1/refinement_summary.md run_history/groomed-${COMMIT}.md
 cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}.json
 ```
 
@@ -64,14 +64,14 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 - `config.py` — loads team.json, iteration.json, .env files
 
 ## Phases
-1. **grooming** — define scope and requirements (no implementation talk)
+1. **refinement** — define scope and requirements (no implementation talk)
 2. **planning** — break scope into tasks with dependencies
 3. **pre-code-review** — discuss implementation approaches before writing code
 4. **implementation** — agents write code using file tools in worktrees
 5. **code-review** — agents review each other's diffs, coach tracks concerns
 
 On advance (each writes a history boundary marker before the transition message):
-- grooming → planning: coach produces `groomed.md`
+- refinement → planning: coach produces `refinement_summary.md`
 - planning → pre-code-review: coach produces `tasks.json` (with computed layers)
 - pre-code-review → implementation: sets `current_layer` to 0, extracts task notes from pre-code-review conversation
 - implementation → code-review: auto-commits current-layer worktrees

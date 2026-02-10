@@ -56,7 +56,7 @@ Edit `.team/iteration.json` — set your task `description`, set `status` to `"i
       "title": "CLI todo app",
       "description": "Build a CLI todo list application in Python. Support add, list, complete, and delete operations. Store todos in a JSON file.",
       "status": "in-progress",
-      "phase": "grooming",
+      "phase": "refinement",
       "max_turns": 30
     }
   ],
@@ -80,7 +80,7 @@ Edit `.team/team.json` — set `worktrees.enabled` to `true`:
 
 This gives each agent an isolated git branch and working directory during implementation. Without worktrees, agents can still discuss and plan but can't write code in isolation.
 
-### 4. Phase 1: Grooming
+### 4. Phase 1: Refinement
 
 Agents discuss *what* to build — requirements, scope, edge cases, acceptance criteria. No implementation details.
 
@@ -98,7 +98,7 @@ Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to
 
 When you're satisfied:
 ```bash
-gotg advance                                # Coach writes groomed.md, moves to planning
+gotg advance                                # Coach writes refinement_summary.md, moves to planning
 ```
 
 ### 5. Phase 2: Planning
@@ -236,7 +236,7 @@ GOTG puts you in the role of **Product Manager**. AI agents discuss and design b
 
 Every iteration progresses through five phases:
 
-1. **Grooming** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria.
+1. **Refinement** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria.
 2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies and done criteria. The coach extracts a structured `tasks.json`.
 3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy.
 4. **Implementation** — Agents write code for their assigned tasks using file tools in isolated worktrees. The coach tracks progress and signals when all agents confirm completion.
@@ -315,7 +315,7 @@ my-project/
     iterations/
       iter-1/
         conversation.jsonl     # Append-only conversation log
-        groomed.md             # Created on grooming → planning advance
+        refinement_summary.md  # Created on refinement → planning advance
         tasks.json             # Created on planning → pre-code-review advance
         debug.jsonl            # Diagnostic log (auto)
         approvals.json         # Approval requests (if enabled)
@@ -417,7 +417,7 @@ Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<N
 gotg checkpoints
 #    Phase              Turns   Trigger   Description                    Timestamp
 # ----------------------------------------------------------------------------------------------------
-# 1  grooming           8       auto                                     2026-02-07T20:15:33
+# 1  refinement         8       auto                                     2026-02-07T20:15:33
 # 2  planning           14      auto                                     2026-02-07T20:22:10
 # 3  planning           14      manual    before prompt experiment       2026-02-07T20:25:00
 
@@ -434,7 +434,7 @@ Messages are stored as newline-delimited JSON (JSONL):
 {"from":"agent-2","iteration":"iter-1","content":"What about collisions though?"}
 {"from":"human","iteration":"iter-1","content":"Good points. Also consider auth later."}
 {"from":"coach","iteration":"iter-1","content":"Let me summarize what we've agreed on..."}
-{"from":"system","iteration":"iter-1","content":"--- Phase advanced: grooming → planning ---"}
+{"from":"system","iteration":"iter-1","content":"--- Phase advanced: refinement → planning ---"}
 {"from":"system","iteration":"iter-1","content":"(agent-1 passes: agree with proposal)","pass_turn":true}
 ```
 
@@ -459,7 +459,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~650 tests
+pytest -q                     # ~723 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```

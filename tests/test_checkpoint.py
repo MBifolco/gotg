@@ -32,7 +32,7 @@ def _sample_iteration(**overrides):
     """Return a sample iteration dict."""
     base = {
         "id": "iter-1",
-        "phase": "grooming",
+        "phase": "refinement",
         "status": "in-progress",
         "max_turns": 10,
         "description": "Test iteration",
@@ -45,10 +45,10 @@ def _sample_iteration(**overrides):
 
 def test_iter_files_returns_all_files(iter_dir):
     (iter_dir / "conversation.jsonl").touch()
-    (iter_dir / "groomed.md").write_text("summary")
+    (iter_dir / "refinement_summary.md").write_text("summary")
     result = _iter_files(iter_dir)
     assert "conversation.jsonl" in result
-    assert "groomed.md" in result
+    assert "refinement_summary.md" in result
 
 
 def test_iter_files_excludes_debug_jsonl(iter_dir):
@@ -83,7 +83,7 @@ def test_iter_files_does_not_recurse(iter_dir):
 def test_iter_files_returns_sorted(iter_dir):
     (iter_dir / "tasks.json").touch()
     (iter_dir / "conversation.jsonl").touch()
-    (iter_dir / "groomed.md").touch()
+    (iter_dir / "refinement_summary.md").touch()
     result = _iter_files(iter_dir)
     assert result == sorted(result)
 
@@ -168,19 +168,19 @@ def test_create_checkpoint_creates_directory(iter_dir):
 
 def test_create_checkpoint_copies_files(iter_dir):
     (iter_dir / "conversation.jsonl").write_text('{"from":"a","content":"hi"}\n')
-    (iter_dir / "groomed.md").write_text("summary")
+    (iter_dir / "refinement_summary.md").write_text("summary")
     create_checkpoint(iter_dir, _sample_iteration())
     cp = iter_dir / "checkpoints" / "1"
     assert (cp / "conversation.jsonl").read_text() == '{"from":"a","content":"hi"}\n'
-    assert (cp / "groomed.md").read_text() == "summary"
+    assert (cp / "refinement_summary.md").read_text() == "summary"
 
 
 def test_create_checkpoint_skips_missing_files(iter_dir):
     (iter_dir / "conversation.jsonl").touch()
-    # groomed.md doesn't exist — should not error
+    # refinement_summary.md doesn't exist — should not error
     number = create_checkpoint(iter_dir, _sample_iteration())
     cp = iter_dir / "checkpoints" / str(number)
-    assert not (cp / "groomed.md").exists()
+    assert not (cp / "refinement_summary.md").exists()
 
 
 def test_create_checkpoint_excludes_debug(iter_dir):
@@ -237,7 +237,7 @@ def test_create_checkpoint_state_has_turn_count(iter_dir):
 def test_create_checkpoint_includes_unknown_artifacts(iter_dir):
     """New artifact files are automatically backed up without code changes."""
     (iter_dir / "conversation.jsonl").touch()
-    (iter_dir / "groomed.md").write_text("scope")
+    (iter_dir / "refinement_summary.md").write_text("scope")
     (iter_dir / "tasks.json").write_text("[]")
     (iter_dir / "new_artifact.txt").write_text("future data")
     (iter_dir / "debug.jsonl").write_text("excluded")

@@ -8,6 +8,8 @@ from gotg.events import (
     SessionComplete,
     SessionStarted,
 )
+from gotg.policy import SessionPolicy
+from gotg.prompts import AGENT_TOOLS, COACH_TOOLS
 
 
 # --- Helpers ---
@@ -20,7 +22,7 @@ AGENTS = [
 ITERATION = {
     "id": "iter-1",
     "description": "Build a thing",
-    "phase": "grooming",
+    "phase": "refinement",
     "max_turns": 10,
 }
 
@@ -42,6 +44,20 @@ def _make_deps(agent_response=None, coach_response=None):
     return SessionDeps(agent_completion=mock_agent, coach_completion=mock_coach)
 
 
+def _make_policy(**overrides):
+    """Build a SessionPolicy with test defaults."""
+    defaults = dict(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(COACH_TOOLS),
+        groomed_summary=None, tasks_summary=None, diffs_summary=None,
+        kickoff_text=None, fileguard=None, approval_store=None,
+        worktree_map=None,
+    )
+    defaults.update(overrides)
+    return SessionPolicy(**defaults)
+
+
 def _collect(events):
     """Collect all events into a list."""
     return list(events)
@@ -58,14 +74,14 @@ def test_session_started_event():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=0,
+        deps=deps, history=[], policy=_make_policy(max_turns=0),
     ))
     assert len(events) >= 1
     e = events[0]
     assert isinstance(e, SessionStarted)
     assert e.iteration_id == "iter-1"
     assert e.description == "Build a thing"
-    assert e.phase == "grooming"
+    assert e.phase == "refinement"
     assert e.agents == ["agent-1", "agent-2"]
     assert e.coach is None
     assert e.turn == 0
@@ -76,7 +92,7 @@ def test_session_started_with_coach():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=0, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=0, coach=COACH, coach_cadence=2),
     ))
     assert events[0].coach == "coach"
 
@@ -87,7 +103,7 @@ def test_agent_turn_yields_append_message():
     deps = _make_deps(agent_response={"content": "my thoughts", "operations": []})
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
+        deps=deps, history=[], policy=_make_policy(max_turns=1),
     ))
     msgs = _events_of_type(events, AppendMessage)
     assert len(msgs) == 1
@@ -102,7 +118,7 @@ def test_agent_pass_turn():
     })
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
+        deps=deps, history=[], policy=_make_policy(max_turns=1),
     ))
     msgs = _events_of_type(events, AppendMessage)
     assert len(msgs) == 1
@@ -119,7 +135,7 @@ def test_file_operation_logged():
     })
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
+        deps=deps, history=[], policy=_make_policy(max_turns=1),
     ))
     msgs = _events_of_type(events, AppendMessage)
     # First msg is the file op system message, second is the agent message
@@ -135,7 +151,7 @@ def test_max_turns_yields_session_complete():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2,
+        deps=deps, history=[], policy=_make_policy(max_turns=2),
     ))
     complete = _events_of_type(events, SessionComplete)
     assert len(complete) == 1
@@ -158,7 +174,7 @@ def test_coach_after_full_rotation():
     deps = SessionDeps(agent_completion=mock_agent, coach_completion=mock_coach)
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
     ))
     assert call_count["agent"] == 2
     assert call_count["coach"] == 1
@@ -177,11 +193,11 @@ def test_coach_signal_phase_complete():
     )
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
     ))
     signals = _events_of_type(events, PhaseCompleteSignaled)
     assert len(signals) == 1
-    assert signals[0].phase == "grooming"
+    assert signals[0].phase == "refinement"
     # Should NOT have SessionComplete (stopped early)
     assert len(_events_of_type(events, SessionComplete)) == 0
 
@@ -195,7 +211,7 @@ def test_coach_ask_pm():
     )
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
     ))
     asks = _events_of_type(events, CoachAskedPM)
     assert len(asks) == 1
@@ -212,7 +228,7 @@ def test_coach_empty_text_fallback_signal():
     )
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
     ))
     coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
     assert len(coach_msgs) == 1
@@ -228,7 +244,7 @@ def test_coach_empty_text_fallback_ask_pm():
     )
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=COACH,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
     ))
     coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
     assert len(coach_msgs) == 1
@@ -245,8 +261,7 @@ def test_approval_pause():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2,
-        approval_store=MockApprovalStore(),
+        deps=deps, history=[], policy=_make_policy(max_turns=2, approval_store=MockApprovalStore()),
     ))
     pauses = _events_of_type(events, PauseForApprovals)
     assert len(pauses) == 1
@@ -260,8 +275,7 @@ def test_kickoff_injection():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
-        kickoff_text="Welcome to grooming!",
+        deps=deps, history=[], policy=_make_policy(max_turns=1, kickoff_text="Welcome to grooming!"),
     ))
     msgs = _events_of_type(events, AppendMessage)
     # First AppendMessage should be the kickoff
@@ -273,8 +287,7 @@ def test_no_kickoff_when_none():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
-        kickoff_text=None,
+        deps=deps, history=[], policy=_make_policy(max_turns=1),
     ))
     msgs = _events_of_type(events, AppendMessage)
     # First AppendMessage should be the agent message, not a kickoff
@@ -287,7 +300,7 @@ def test_debug_entries_for_prompt():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=1,
+        deps=deps, history=[], policy=_make_policy(max_turns=1),
     ))
     debugs = _events_of_type(events, AppendDebug)
     assert len(debugs) >= 1
@@ -310,6 +323,6 @@ def test_no_coach_when_none():
     )
     _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], max_turns=2, coach=None,
+        deps=deps, history=[], policy=_make_policy(max_turns=2),
     ))
     assert call_count["coach"] == 0

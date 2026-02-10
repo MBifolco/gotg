@@ -389,7 +389,7 @@ def test_save_iteration_phase_missing_id_raises(team_dir):
 # --- PHASE_ORDER ---
 
 def test_phase_order_has_five_phases():
-    assert PHASE_ORDER == ["grooming", "planning", "pre-code-review", "implementation", "code-review"]
+    assert PHASE_ORDER == ["refinement", "planning", "pre-code-review", "implementation", "code-review"]
 
 
 def test_phase_order_includes_implementation():
@@ -456,6 +456,22 @@ def test_save_iteration_fields_missing_id_raises(team_dir):
 
 
 # --- load_file_access ---
+
+def test_backward_compat_grooming_phase(team_dir):
+    """Old iteration.json with phase='grooming' should normalize to 'refinement'."""
+    _write_iteration_json(team_dir, iterations=[
+        {
+            "id": "iter-1",
+            "title": "Test Task",
+            "description": "Design a todo app",
+            "status": "in-progress",
+            "phase": "grooming",
+            "max_turns": 10,
+        }
+    ])
+    iteration = load_iteration(team_dir)
+    assert iteration["phase"] == "refinement"
+
 
 def test_load_file_access_returns_config(tmp_path):
     team = tmp_path / ".team"

@@ -42,7 +42,7 @@ def _write_iteration_json(team_dir, iterations=None, current="iter-1"):
                 "title": "Test Task",
                 "description": "Design a todo app",
                 "status": "in-progress",
-                "phase": "grooming",
+                "phase": "refinement",
                 "max_turns": 10,
             }
         ],
@@ -120,7 +120,7 @@ def test_iteration_store_load(team_dir):
     store = IterationStore(team_dir)
     iteration = store.load()
     assert iteration["id"] == "iter-1"
-    assert iteration["phase"] == "grooming"
+    assert iteration["phase"] == "refinement"
 
 
 def test_iteration_store_save_fields(team_dir):

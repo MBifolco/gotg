@@ -1,10 +1,10 @@
 import json
 
-from gotg.scaffold import COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT
+from gotg.scaffold import COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT
 from gotg.transitions import (
     strip_code_fences,
     extract_conversation_for_coach,
-    extract_grooming_summary,
+    extract_refinement_summary,
     extract_tasks,
     extract_task_notes,
     build_transition_messages,
@@ -61,9 +61,9 @@ def test_extract_conversation_transcript_format():
     assert "TRANSCRIPT" not in result
 
 
-# --- extract_grooming_summary ---
+# --- extract_refinement_summary ---
 
-def test_extract_grooming_summary():
+def test_extract_refinement_summary():
     captured = []
 
     def mock_chat(**kwargs):
@@ -74,11 +74,11 @@ def test_extract_grooming_summary():
         {"from": "agent-1", "content": "We should build X"},
         {"from": "system", "content": "kickoff"},
     ]
-    result = extract_grooming_summary(history, MODEL_CONFIG, "coach", mock_chat)
+    result = extract_refinement_summary(history, MODEL_CONFIG, "coach", mock_chat)
     assert result == "## Summary\nDone."
     assert len(captured) == 1
     msgs = captured[0]["messages"]
-    assert msgs[0]["content"] == COACH_GROOMING_PROMPT
+    assert msgs[0]["content"] == COACH_REFINEMENT_PROMPT
     assert msgs[1]["content"].startswith("=== TRANSCRIPT START ===")
     assert msgs[1]["content"].endswith("=== TRANSCRIPT END ===")
     assert "We should build X" in msgs[1]["content"]
@@ -179,14 +179,14 @@ def test_extract_task_notes_bad_json():
 # --- build_transition_messages ---
 
 def test_build_transition_messages_basic():
-    boundary, transition = build_transition_messages("iter-1", "grooming", "planning")
+    boundary, transition = build_transition_messages("iter-1", "refinement", "planning")
     assert boundary["content"] == "--- HISTORY BOUNDARY ---"
     assert boundary["phase_boundary"] is True
-    assert boundary["from_phase"] == "grooming"
+    assert boundary["from_phase"] == "refinement"
     assert boundary["to_phase"] == "planning"
     assert boundary["from"] == "system"
     assert boundary["iteration"] == "iter-1"
-    assert transition["content"] == "--- Phase advanced: grooming → planning ---"
+    assert transition["content"] == "--- Phase advanced: refinement → planning ---"
     assert transition["from"] == "system"
     assert transition["iteration"] == "iter-1"
 
@@ -198,8 +198,8 @@ def test_build_transition_messages_tasks_written():
     assert transition["content"] == "--- Phase advanced: planning → pre-code-review. Task list written to tasks.json ---"
 
 
-def test_build_transition_messages_grooming_coach():
+def test_build_transition_messages_refinement_coach():
     _, transition = build_transition_messages(
-        "iter-1", "grooming", "planning", coach_ran=True,
+        "iter-1", "refinement", "planning", coach_ran=True,
     )
-    assert transition["content"] == "--- Phase advanced: grooming → planning. Scope summary written to groomed.md ---"
+    assert transition["content"] == "--- Phase advanced: refinement → planning. Scope summary written to refinement_summary.md ---"

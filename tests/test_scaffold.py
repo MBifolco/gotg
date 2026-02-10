@@ -62,7 +62,7 @@ def test_init_creates_iteration_json_list_format(git_project):
     assert entry["title"] == ""
     assert entry["description"] == ""
     assert entry["status"] == "pending"
-    assert entry["phase"] == "grooming"
+    assert entry["phase"] == "refinement"
     assert entry["max_turns"] == 10
 
 
@@ -130,25 +130,25 @@ def test_default_system_prompt_mentions_phases():
     from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
     prompt = DEFAULT_SYSTEM_PROMPT.lower()
     assert "phases" in prompt
-    assert "grooming" in prompt
+    assert "refinement" in prompt
     assert "planning" in prompt
 
 
-def test_phase_prompts_has_grooming_key():
+def test_phase_prompts_has_refinement_key():
     from gotg.scaffold import PHASE_PROMPTS
-    assert "grooming" in PHASE_PROMPTS
+    assert "refinement" in PHASE_PROMPTS
 
 
-def test_grooming_prompt_mentions_scope():
+def test_refinement_prompt_mentions_scope():
     from gotg.scaffold import PHASE_PROMPTS
-    prompt = PHASE_PROMPTS["grooming"].lower()
+    prompt = PHASE_PROMPTS["refinement"].lower()
     assert "scope" in prompt
     assert "requirements" in prompt
 
 
-def test_grooming_prompt_mentions_redirect():
+def test_refinement_prompt_mentions_redirect():
     from gotg.scaffold import PHASE_PROMPTS
-    prompt = PHASE_PROMPTS["grooming"].lower()
+    prompt = PHASE_PROMPTS["refinement"].lower()
     assert "redirect" in prompt or "nail down the requirements" in prompt
 
 
@@ -160,11 +160,11 @@ def test_init_creates_team_json_coach_section(git_project):
     assert coach["role"] == "Agile Coach"
 
 
-def test_coach_grooming_prompt_exists():
-    from gotg.scaffold import COACH_GROOMING_PROMPT
-    assert isinstance(COACH_GROOMING_PROMPT, str)
-    assert len(COACH_GROOMING_PROMPT) > 0
-    assert "scope" in COACH_GROOMING_PROMPT.lower() or "summary" in COACH_GROOMING_PROMPT.lower()
+def test_coach_refinement_prompt_exists():
+    from gotg.scaffold import COACH_REFINEMENT_PROMPT
+    assert isinstance(COACH_REFINEMENT_PROMPT, str)
+    assert len(COACH_REFINEMENT_PROMPT) > 0
+    assert "scope" in COACH_REFINEMENT_PROMPT.lower() or "summary" in COACH_REFINEMENT_PROMPT.lower()
 
 
 def test_coach_facilitation_prompt_exists():
@@ -199,7 +199,7 @@ def test_planning_prompt_mentions_tasks():
 def test_planning_prompt_mentions_redirect():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["planning"].lower()
-    assert "grooming" in prompt
+    assert "refinement" in prompt
 
 
 def test_coach_planning_prompt_exists():
@@ -253,15 +253,15 @@ def test_pre_code_review_prompt_discourages_full_code():
 def test_coach_facilitation_prompts_dict_exists():
     from gotg.scaffold import COACH_FACILITATION_PROMPTS
     assert isinstance(COACH_FACILITATION_PROMPTS, dict)
-    assert "grooming" in COACH_FACILITATION_PROMPTS
+    assert "refinement" in COACH_FACILITATION_PROMPTS
     assert "planning" in COACH_FACILITATION_PROMPTS
     assert "pre-code-review" in COACH_FACILITATION_PROMPTS
     assert "implementation" in COACH_FACILITATION_PROMPTS
 
 
-def test_coach_facilitation_prompts_grooming_is_default():
+def test_coach_facilitation_prompts_refinement_is_default():
     from gotg.scaffold import COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
-    assert COACH_FACILITATION_PROMPTS["grooming"] is COACH_FACILITATION_PROMPT
+    assert COACH_FACILITATION_PROMPTS["refinement"] is COACH_FACILITATION_PROMPT
 
 
 def test_coach_facilitation_planning_mentions_scope_coverage():
@@ -454,7 +454,7 @@ def test_implementation_prompt_mentions_current_layer_template():
 
 def test_phase_kickoff_messages_has_all_phases():
     from gotg.scaffold import PHASE_KICKOFF_MESSAGES
-    for phase in ("grooming", "planning", "pre-code-review", "implementation", "code-review"):
+    for phase in ("refinement", "planning", "pre-code-review", "implementation", "code-review"):
         assert phase in PHASE_KICKOFF_MESSAGES
 
 
@@ -470,14 +470,14 @@ def test_phase_kickoff_messages_end_with_coach_line():
 
 def test_should_inject_kickoff_empty_history():
     from gotg.scaffold import should_inject_kickoff
-    assert should_inject_kickoff([], "grooming") is True
+    assert should_inject_kickoff([], "refinement") is True
 
 
 def test_should_inject_kickoff_after_phase_advance():
     from gotg.scaffold import should_inject_kickoff
     history = [
         {"from": "agent-1", "content": "hello"},
-        {"from": "system", "content": "--- Phase advanced: grooming → planning ---"},
+        {"from": "system", "content": "--- Phase advanced: refinement → planning ---"},
     ]
     assert should_inject_kickoff(history, "planning") is True
 
@@ -498,14 +498,14 @@ def test_should_inject_kickoff_false_mid_phase_resume():
         {"from": "agent-1", "content": "hello"},
         {"from": "agent-2", "content": "world"},
     ]
-    assert should_inject_kickoff(history, "grooming") is False
+    assert should_inject_kickoff(history, "refinement") is False
 
 
 def test_should_inject_kickoff_true_when_human_msg_after_advance():
     """Kickoff should inject even if human message landed after advance."""
     from gotg.scaffold import should_inject_kickoff
     history = [
-        {"from": "system", "content": "--- Phase advanced: grooming → planning ---"},
+        {"from": "system", "content": "--- Phase advanced: refinement → planning ---"},
         {"from": "human", "content": "focus on auth first"},
     ]
     assert should_inject_kickoff(history, "planning") is True
@@ -515,7 +515,7 @@ def test_should_inject_kickoff_false_when_kickoff_already_exists():
     """If kickoff was already injected after transition, don't inject again."""
     from gotg.scaffold import should_inject_kickoff
     history = [
-        {"from": "system", "content": "--- Phase advanced: grooming → planning ---"},
+        {"from": "system", "content": "--- Phase advanced: refinement → planning ---"},
         {"from": "system", "content": "--- Phase: planning ---\nGoal: break..."},
         {"from": "agent-1", "content": "Let me propose tasks"},
     ]
@@ -524,11 +524,11 @@ def test_should_inject_kickoff_false_when_kickoff_already_exists():
 
 # --- format_phase_kickoff ---
 
-def test_format_phase_kickoff_grooming_addresses_first_agent():
+def test_format_phase_kickoff_refinement_addresses_first_agent():
     from gotg.scaffold import format_phase_kickoff
     agents = [{"name": "alice"}, {"name": "bob"}]
     iteration = {"id": "iter-1", "description": "Build X"}
-    result = format_phase_kickoff("grooming", agents, iteration)
+    result = format_phase_kickoff("refinement", agents, iteration)
     assert "alice" in result
 
 

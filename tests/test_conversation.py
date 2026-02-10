@@ -198,13 +198,13 @@ def test_read_phase_history_returns_after_boundary(log_path):
     lines = [
         json.dumps({"from": "agent-1", "content": "old msg"}),
         json.dumps({"from": "system", "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True}),
-        json.dumps({"from": "system", "content": "--- Phase advanced: grooming → planning ---"}),
+        json.dumps({"from": "system", "content": "--- Phase advanced: refinement → planning ---"}),
         json.dumps({"from": "agent-1", "content": "new msg"}),
     ]
     log_path.write_text("\n".join(lines) + "\n")
     msgs = read_phase_history(log_path)
     assert len(msgs) == 2
-    assert msgs[0]["content"] == "--- Phase advanced: grooming → planning ---"
+    assert msgs[0]["content"] == "--- Phase advanced: refinement → planning ---"
     assert msgs[1]["content"] == "new msg"
 
 

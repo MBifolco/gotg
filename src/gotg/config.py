@@ -79,6 +79,8 @@ def load_iteration(team_dir: Path) -> dict:
     current_id = data["current"]
     for iteration in data["iterations"]:
         if iteration["id"] == current_id:
+            if "phase" in iteration:
+                iteration["phase"] = _normalize_phase(iteration["phase"])
             return iteration
     raise SystemExit(
         f"Error: current iteration '{current_id}' not found in iteration list."
@@ -95,7 +97,14 @@ def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
     return iteration, iter_dir
 
 
-PHASE_ORDER = ["grooming", "planning", "pre-code-review", "implementation", "code-review"]
+PHASE_ORDER = ["refinement", "planning", "pre-code-review", "implementation", "code-review"]
+
+_PHASE_ALIASES = {"grooming": "refinement"}
+
+
+def _normalize_phase(phase: str) -> str:
+    """Normalize legacy phase names (e.g. 'grooming' → 'refinement')."""
+    return _PHASE_ALIASES.get(phase, phase)
 
 
 def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:

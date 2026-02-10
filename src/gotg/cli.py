@@ -19,9 +19,9 @@ from gotg.events import (
     SessionComplete, SessionStarted,
 )
 from gotg.model import chat_completion, agentic_completion
-from gotg.scaffold import init_project, should_inject_kickoff, format_phase_kickoff
+from gotg.scaffold import init_project
 from gotg.transitions import (
-    extract_grooming_summary, extract_tasks, extract_task_notes,
+    extract_refinement_summary, extract_tasks, extract_task_notes,
     auto_commit_layer_worktrees, build_transition_messages,
 )
 
@@ -79,7 +79,7 @@ def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args, iterat
         return None
 
     # Only set up worktrees in phases that use them
-    phase = iteration.get("phase", "grooming")
+    phase = iteration.get("phase", "refinement")
     if phase not in ("implementation", "code-review"):
         return None
 
@@ -197,28 +197,6 @@ def run_conversation(
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
     history = read_phase_history(log_path)
-    max_turns = max_turns_override if max_turns_override is not None else iteration["max_turns"]
-
-    # Load groomed.md artifact if it exists (for planning/later phases)
-    groomed_path = iter_dir / "groomed.md"
-    groomed_summary = groomed_path.read_text().strip() if groomed_path.exists() else None
-
-    # Load tasks.json artifact if it exists (for pre-code-review/later phases)
-    tasks_path = iter_dir / "tasks.json"
-    tasks_summary = None
-    if tasks_path.exists():
-        import json as _json
-        from gotg.tasks import format_tasks_summary
-        tasks_data = _json.loads(tasks_path.read_text())
-        tasks_summary = format_tasks_summary(tasks_data)
-
-    # Pre-compute kickoff (format_phase_kickoff returns "" for unknown phases)
-    phase = iteration.get("phase", "grooming")
-    kickoff_text = None
-    if should_inject_kickoff(history, phase):
-        text = format_phase_kickoff(phase, agents, iteration, fileguard, iter_dir)
-        if text:
-            kickoff_text = text
 
     # Build deps from module-level imports (bridge pattern — preserves mock targets)
     deps = SessionDeps(
@@ -226,14 +204,19 @@ def run_conversation(
         coach_completion=chat_completion,
     )
 
+    # Build policy from iteration state (factory exercised in production)
+    from gotg.policy import iteration_policy
+    policy = iteration_policy(
+        agents=agents, iteration=iteration, iter_dir=iter_dir,
+        history=history, coach=coach, fileguard=fileguard,
+        approval_store=approval_store, worktree_map=worktree_map,
+        diffs_summary=diffs_summary, max_turns_override=max_turns_override,
+    )
+
     # Run engine, handle events (only engine mutates history)
     for event in run_session(
         agents=agents, iteration=iteration, model_config=model_config,
-        deps=deps, history=history, max_turns=max_turns,
-        coach=coach, fileguard=fileguard, approval_store=approval_store,
-        worktree_map=worktree_map, groomed_summary=groomed_summary,
-        tasks_summary=tasks_summary, diffs_summary=diffs_summary,
-        kickoff_text=kickoff_text,
+        deps=deps, history=history, policy=policy,
     ):
         if isinstance(event, SessionStarted):
             _print_session_header(event)
@@ -290,7 +273,7 @@ def cmd_run(args):
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
+    _validate_task_assignments(iter_dir, iteration.get("phase", "refinement"), current_layer=iteration.get("current_layer"))
 
     fileguard = None
     approval_store = None
@@ -405,7 +388,7 @@ def cmd_continue(args):
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
+    _validate_task_assignments(iter_dir, iteration.get("phase", "refinement"), current_layer=iteration.get("current_layer"))
 
     fileguard = None
     approval_store = None
@@ -523,7 +506,7 @@ def cmd_advance(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    current_phase = iteration.get("phase", "grooming")
+    current_phase = iteration.get("phase", "refinement")
     try:
         idx = PHASE_ORDER.index(current_phase)
     except ValueError:
@@ -543,14 +526,14 @@ def cmd_advance(args):
     tasks_written = False
 
     # Grooming → Planning
-    if current_phase == "grooming" and next_phase == "planning" and coach:
-        print("Coach is summarizing the grooming conversation...")
+    if current_phase == "refinement" and next_phase == "planning" and coach:
+        print("Coach is summarizing the refinement conversation...")
         model_config = load_model_config(team_dir)
         history = read_phase_history(log_path)
-        summary = extract_grooming_summary(history, model_config, coach["name"], chat_completion)
-        groomed_path = iter_dir / "groomed.md"
-        groomed_path.write_text(summary + "\n")
-        print(f"Wrote {groomed_path}")
+        summary = extract_refinement_summary(history, model_config, coach["name"], chat_completion)
+        summary_path = iter_dir / "refinement_summary.md"
+        summary_path.write_text(summary + "\n")
+        print(f"Wrote {summary_path}")
         coach_ran = True
 
     # Planning → Pre-code-review
@@ -689,10 +672,14 @@ def cmd_restore(args):
 
     state = restore_checkpoint(iter_dir, args.number)
 
+    # Normalize legacy phase names before writing back
+    from gotg.config import _normalize_phase
+    restored_phase = _normalize_phase(state["phase"])
+
     # Update iteration.json to match checkpoint state
     save_iteration_fields(
         team_dir, iteration["id"],
-        phase=state["phase"],
+        phase=restored_phase,
         max_turns=state["max_turns"],
     )
 
@@ -1065,7 +1052,7 @@ def cmd_next_layer(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    current_phase = iteration.get("phase", "grooming")
+    current_phase = iteration.get("phase", "refinement")
     if current_phase != "code-review":
         print(f"Error: next-layer requires code-review phase, currently in '{current_phase}'.", file=sys.stderr)
         raise SystemExit(1)

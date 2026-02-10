@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
-from gotg.scaffold import (
-    COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
+from gotg.prompts import (
+    COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
 )
 from gotg.tasks import compute_layers
 
@@ -37,16 +37,16 @@ def extract_conversation_for_coach(history: list[dict], coach_name: str) -> str:
 # --- Extraction functions (bridge pattern — chat_call parameter) ---
 
 
-def extract_grooming_summary(
+def extract_refinement_summary(
     history: list[dict],
     model_config: dict,
     coach_name: str,
     chat_call: Callable,
 ) -> str:
-    """One-shot LLM call to summarize grooming conversation.  Returns markdown."""
+    """One-shot LLM call to summarize refinement conversation.  Returns markdown."""
     conversation_text = extract_conversation_for_coach(history, coach_name)
     messages = [
-        {"role": "system", "content": COACH_GROOMING_PROMPT},
+        {"role": "system", "content": COACH_REFINEMENT_PROMPT},
         {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
     ]
     return chat_call(
@@ -56,6 +56,9 @@ def extract_grooming_summary(
         api_key=model_config.get("api_key"),
         provider=model_config.get("provider", "ollama"),
     )
+
+
+extract_grooming_summary = extract_refinement_summary  # backward-compat alias
 
 
 def extract_tasks(
@@ -184,8 +187,8 @@ def build_transition_messages(
     }
     if tasks_written:
         transition_content = f"--- Phase advanced: {from_phase} → {to_phase}. Task list written to tasks.json ---"
-    elif coach_ran and from_phase == "grooming":
-        transition_content = f"--- Phase advanced: {from_phase} → {to_phase}. Scope summary written to groomed.md ---"
+    elif coach_ran and from_phase == "refinement":
+        transition_content = f"--- Phase advanced: {from_phase} → {to_phase}. Scope summary written to refinement_summary.md ---"
     else:
         transition_content = f"--- Phase advanced: {from_phase} → {to_phase} ---"
     transition_msg = {

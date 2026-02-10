@@ -511,7 +511,7 @@ def test_continue_human_message_not_counted_in_turns(tmp_path):
 
 # --- advance command ---
 
-def _make_advance_team_dir(tmp_path, phase="grooming"):
+def _make_advance_team_dir(tmp_path, phase="refinement"):
     """Helper to create a .team/ dir for advance tests."""
     team = tmp_path / ".team"
     team.mkdir()
@@ -526,8 +526,8 @@ def _make_advance_team_dir(tmp_path, phase="grooming"):
     return team, iter_dir
 
 
-def test_advance_grooming_to_planning(tmp_path):
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+def test_advance_refinement_to_planning(tmp_path):
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
@@ -541,7 +541,7 @@ def test_advance_grooming_to_planning(tmp_path):
     assert len(messages) == 2
     assert messages[0].get("phase_boundary") is True
     assert messages[1]["from"] == "system"
-    assert "grooming" in messages[1]["content"]
+    assert "refinement" in messages[1]["content"]
     assert "planning" in messages[1]["content"]
 
 
@@ -576,7 +576,7 @@ def test_advance_fails_if_not_in_progress(tmp_path):
     _write_team_json(team)
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "pending", "phase": "grooming", "max_turns": 10},
+         "status": "pending", "phase": "refinement", "max_turns": 10},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -588,8 +588,8 @@ def test_advance_fails_if_not_in_progress(tmp_path):
                 main()
 
 
-def test_advance_defaults_to_grooming_if_no_phase(tmp_path):
-    """Backward compat: iteration without phase field defaults to grooming."""
+def test_advance_defaults_to_refinement_if_no_phase(tmp_path):
+    """Backward compat: iteration without phase field defaults to refinement."""
     team = tmp_path / ".team"
     team.mkdir()
     _write_team_json(team)
@@ -621,8 +621,8 @@ def _add_coach_to_team_json(team_dir):
 
 
 def test_advance_with_coach_produces_groomed_md(tmp_path):
-    """Advancing grooming→planning with coach should produce groomed.md."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    """Advancing refinement→planning with coach should produce refinement_summary.md."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
 
     # Add some conversation history for the coach to summarize
@@ -635,8 +635,8 @@ def test_advance_with_coach_produces_groomed_md(tmp_path):
             with patch("gotg.cli.chat_completion", return_value="## Summary\nAuth system design."):
                 main()
 
-    # groomed.md should exist with coach response
-    groomed = iter_dir / "groomed.md"
+    # refinement_summary.md should exist with coach response
+    groomed = iter_dir / "refinement_summary.md"
     assert groomed.exists()
     assert "Auth system design" in groomed.read_text()
 
@@ -644,15 +644,15 @@ def test_advance_with_coach_produces_groomed_md(tmp_path):
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "planning"
 
-    # System message should mention groomed.md
+    # System message should mention refinement_summary.md
     messages = read_log(log_path)
     system_msgs = [m for m in messages if m["from"] == "system"]
-    assert any("groomed.md" in m["content"] for m in system_msgs)
+    assert any("refinement_summary.md" in m["content"] for m in system_msgs)
 
 
 def test_advance_with_coach_prints_status(tmp_path, capsys):
     """Coach invocation should print status messages."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
 
     with patch("sys.argv", ["gotg", "advance"]):
@@ -662,20 +662,20 @@ def test_advance_with_coach_prints_status(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert "Coach is summarizing" in output
-    assert "groomed" in output.lower()
+    assert "refinement_summary.md" in output
 
 
 def test_advance_without_coach_skips_summary(tmp_path):
-    """No coach in team.json → advance works, no groomed.md produced."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    """No coach in team.json → advance works, no refinement_summary.md produced."""
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     # _write_team_json does NOT include coach, so no coach
 
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
 
-    # No groomed.md
-    assert not (iter_dir / "groomed.md").exists()
+    # No refinement_summary.md
+    assert not (iter_dir / "refinement_summary.md").exists()
 
     # Phase should still advance
     data = json.loads((team / "iteration.json").read_text())
@@ -979,12 +979,12 @@ def test_continue_excludes_coach_from_turn_count(tmp_path):
     assert len(agent_msgs) == 4  # 2 existing + 2 new
 
 
-# --- groomed.md artifact injection ---
+# --- refinement_summary.md artifact injection ---
 
 def test_run_conversation_reads_groomed_md(tmp_path):
-    """run_conversation should read groomed.md and pass it to build_prompt."""
+    """run_conversation should read refinement_summary.md and pass it to build_prompt."""
     iter_dir = _make_iter_dir(tmp_path)
-    (iter_dir / "groomed.md").write_text("## Summary\nBuild auth.\n")
+    (iter_dir / "refinement_summary.md").write_text("## Summary\nBuild auth.\n")
 
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -1005,12 +1005,12 @@ def test_run_conversation_reads_groomed_md(tmp_path):
 
 
 def test_run_conversation_no_groomed_md_no_injection(tmp_path):
-    """Without groomed.md, no summary should appear in prompts."""
+    """Without refinement_summary.md, no summary should appear in prompts."""
     iter_dir = _make_iter_dir(tmp_path)
 
     iteration = {
         "id": "iter-1", "description": "A task",
-        "status": "in-progress", "phase": "grooming", "max_turns": 1,
+        "status": "in-progress", "phase": "refinement", "max_turns": 1,
     }
 
     captured_prompts = []
@@ -1028,7 +1028,7 @@ def test_run_conversation_no_groomed_md_no_injection(tmp_path):
 def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     """Coach prompt should also receive the groomed summary."""
     iter_dir = _make_iter_dir(tmp_path)
-    (iter_dir / "groomed.md").write_text("## Summary\nBuild auth.\n")
+    (iter_dir / "refinement_summary.md").write_text("## Summary\nBuild auth.\n")
 
     iteration = {
         "id": "iter-1", "description": "A task",
@@ -1204,8 +1204,8 @@ def test_validate_task_assignments_skips_non_pre_code_review(tmp_path):
     """Validation should be a no-op for other phases."""
     iter_dir = tmp_path / "iter-1"
     iter_dir.mkdir(parents=True)
-    # No tasks.json at all — should not raise for grooming/planning
-    _validate_task_assignments(iter_dir, "grooming")
+    # No tasks.json at all — should not raise for refinement/planning
+    _validate_task_assignments(iter_dir, "refinement")
     _validate_task_assignments(iter_dir, "planning")
 
 
@@ -1226,7 +1226,7 @@ def test_auto_checkpoint_creates_checkpoint(tmp_path):
     iter_dir.mkdir(parents=True)
     (iter_dir / "conversation.jsonl").touch()
 
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     _auto_checkpoint(iter_dir, iteration)
 
     assert (iter_dir / "checkpoints" / "1").is_dir()
@@ -1239,7 +1239,7 @@ def test_auto_checkpoint_prints_message(tmp_path, capsys):
     iter_dir.mkdir(parents=True)
     (iter_dir / "conversation.jsonl").touch()
 
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     _auto_checkpoint(iter_dir, iteration)
 
     output = capsys.readouterr().out
@@ -1272,7 +1272,7 @@ def test_cmd_continue_creates_auto_checkpoint(tmp_path):
 
 def test_cmd_advance_creates_auto_checkpoint(tmp_path):
     """gotg advance should create auto-checkpoint after phase transition."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
 
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
@@ -1323,7 +1323,7 @@ def test_cmd_checkpoints_lists(tmp_path, capsys):
     (iter_dir / "conversation.jsonl").touch()
 
     from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     create_checkpoint(iter_dir, iteration, description="first", trigger="auto")
     create_checkpoint(iter_dir, iteration, description="second", trigger="manual")
 
@@ -1345,13 +1345,13 @@ def test_cmd_restore_restores_state(tmp_path, capsys):
     team, iter_dir = _make_full_team_dir(tmp_path)
     # Set phase in iteration.json
     iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "grooming"
+    iter_json["iterations"][0]["phase"] = "refinement"
     (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
 
     (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"original"}\n')
 
     from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     create_checkpoint(iter_dir, iteration, description="checkpoint 1")
 
     # Modify state after checkpoint
@@ -1372,13 +1372,13 @@ def test_cmd_restore_safety_checkpoint_yes(tmp_path):
     """Restore with Y should create safety checkpoint first."""
     team, iter_dir = _make_full_team_dir(tmp_path)
     iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "grooming"
+    iter_json["iterations"][0]["phase"] = "refinement"
     (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
 
     (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"current"}\n')
 
     from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     create_checkpoint(iter_dir, iteration)
 
     with patch("sys.argv", ["gotg", "restore", "1"]):
@@ -1396,13 +1396,13 @@ def test_cmd_restore_safety_checkpoint_no(tmp_path):
     """Restore with 'n' should skip safety checkpoint."""
     team, iter_dir = _make_full_team_dir(tmp_path)
     iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "grooming"
+    iter_json["iterations"][0]["phase"] = "refinement"
     (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
 
     (iter_dir / "conversation.jsonl").touch()
 
     from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "grooming", "status": "in-progress", "max_turns": 10}
+    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
     create_checkpoint(iter_dir, iteration)
 
     with patch("sys.argv", ["gotg", "restore", "1"]):
@@ -1533,7 +1533,7 @@ def test_cmd_run_loads_file_access(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 2, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -1563,7 +1563,7 @@ def test_cmd_run_no_file_access_passes_none(tmp_path, monkeypatch):
     _write_team_json(team)
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 2, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -1653,7 +1653,7 @@ def test_continue_applies_approved_writes(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 50, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 50, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -1694,7 +1694,7 @@ def test_continue_injects_denial_messages(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 50, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 50, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -1869,7 +1869,7 @@ def test_cmd_run_with_enable_approvals_constructs_store(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 2, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -1901,7 +1901,7 @@ def test_cmd_run_without_enable_approvals_no_store(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 2, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -2061,7 +2061,7 @@ def test_setup_worktrees_disabled(tmp_path, monkeypatch):
     (team / "team.json").write_text(json.dumps(team_config))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "max_turns": 2, "phase": "grooming"},
+         "status": "in-progress", "max_turns": 2, "phase": "refinement"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -2604,11 +2604,11 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
 
 
 def test_coach_completion_non_last_phase_message(tmp_path, capsys):
-    """Coach signals completion in grooming shows 'gotg advance' message."""
+    """Coach signals completion in refinement shows 'gotg advance' message."""
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
-        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+        "status": "in-progress", "phase": "refinement", "max_turns": 2,
     }
 
     def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
@@ -2655,8 +2655,8 @@ def test_resolve_layer_defaults_to_zero():
 
 # --- phase-gated worktree setup ---
 
-def test_setup_worktrees_skips_grooming_phase(tmp_path):
-    """_setup_worktrees returns None for grooming phase even with worktrees enabled."""
+def test_setup_worktrees_skips_refinement_phase(tmp_path):
+    """_setup_worktrees returns None for refinement phase even with worktrees enabled."""
     team = tmp_path / ".team"
     team.mkdir()
     team_config = {
@@ -2672,7 +2672,7 @@ def test_setup_worktrees_skips_grooming_phase(tmp_path):
 
     from gotg.fileguard import FileGuard
     fg = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
-    iteration = {"phase": "grooming"}
+    iteration = {"phase": "refinement"}
     result = _setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, FakeArgs(), iteration)
     assert result is None
 
@@ -3265,7 +3265,7 @@ def test_run_header_no_layer_without_current_layer(tmp_path, capsys):
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
-        "status": "in-progress", "phase": "grooming", "max_turns": 0,
+        "status": "in-progress", "phase": "refinement", "max_turns": 0,
     }
 
     with patch("gotg.cli.agentic_completion", return_value={"content": "x", "operations": []}):
@@ -3333,7 +3333,7 @@ def test_kickoff_injected_on_empty_conversation(tmp_path):
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "Build X",
-        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+        "status": "in-progress", "phase": "refinement", "max_turns": 2,
     }
 
     with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
@@ -3344,7 +3344,7 @@ def test_kickoff_injected_on_empty_conversation(tmp_path):
     messages = read_log(iter_dir / "conversation.jsonl")
     # First message should be the system kickoff
     assert messages[0]["from"] == "system"
-    assert "--- Phase: grooming ---" in messages[0]["content"]
+    assert "--- Phase: refinement ---" in messages[0]["content"]
     assert "coach will facilitate" in messages[0]["content"].lower()
 
 
@@ -3355,7 +3355,7 @@ def test_kickoff_injected_after_phase_advance(tmp_path):
     # Pre-populate with messages ending in a phase advance
     append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
     append_message(log_path, {"from": "system", "iteration": "iter-1",
-                              "content": "--- Phase advanced: grooming → planning ---"})
+                              "content": "--- Phase advanced: refinement → planning ---"})
 
     iteration = {
         "id": "iter-1", "description": "Build X",
@@ -3385,7 +3385,7 @@ def test_no_kickoff_on_mid_phase_resume(tmp_path):
 
     iteration = {
         "id": "iter-1", "description": "Build X",
-        "status": "in-progress", "phase": "grooming", "max_turns": 4,
+        "status": "in-progress", "phase": "refinement", "max_turns": 4,
     }
 
     with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
@@ -3406,7 +3406,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     iter_dir = _make_iter_dir(tmp_path)
     iteration = {
         "id": "iter-1", "description": "A task",
-        "status": "in-progress", "phase": "grooming", "max_turns": 2,
+        "status": "in-progress", "phase": "refinement", "max_turns": 2,
     }
 
     coach_call_count = 0
@@ -3435,7 +3435,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
 
 def test_advance_writes_history_boundary(tmp_path):
     """cmd_advance writes a boundary marker before the transition message."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
@@ -3463,7 +3463,7 @@ def test_advance_boundary_has_metadata(tmp_path):
 
 def test_advance_prints_turns_reset(tmp_path, capsys):
     """cmd_advance prints 'Turns reset for new phase.' after advancing."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
@@ -3574,7 +3574,7 @@ def test_run_conversation_uses_phase_history(tmp_path):
     })
     append_message(log_path, {
         "from": "system", "iteration": "iter-1",
-        "content": "--- Phase advanced: grooming → planning ---",
+        "content": "--- Phase advanced: refinement → planning ---",
     })
 
     iteration = {
@@ -3610,7 +3610,7 @@ def test_continue_uses_phase_history(tmp_path):
     })
     append_message(log_path, {
         "from": "system", "iteration": "iter-1",
-        "content": "--- Phase advanced: grooming → planning ---",
+        "content": "--- Phase advanced: refinement → planning ---",
     })
 
     # Phase-scoped history has 0 agent turns, so max_turns=1 should allow 1 turn
@@ -3631,9 +3631,9 @@ def test_continue_uses_phase_history(tmp_path):
 
 def test_advance_then_continue_with_message_ordering(tmp_path):
     """After advance, continue -m injects human msg; kickoff + human both in new phase."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
 
-    # Advance grooming → planning
+    # Advance refinement → planning
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             main()
@@ -3660,9 +3660,9 @@ def test_advance_then_continue_with_message_ordering(tmp_path):
 # --- extraction input content tests ---
 
 
-def test_grooming_extraction_excludes_system_and_coach_messages(tmp_path):
+def test_refinement_extraction_excludes_system_and_coach_messages(tmp_path):
     """Grooming extraction should filter out system and coach messages."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
 
     log_path = iter_dir / "conversation.jsonl"
@@ -3696,7 +3696,7 @@ def test_planning_extraction_excludes_system_and_coach_messages(tmp_path):
 
     log_path = iter_dir / "conversation.jsonl"
     append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Task 1: auth module."})
-    append_message(log_path, {"from": "system", "iteration": "iter-1", "content": "--- Phase advanced: grooming → planning ---"})
+    append_message(log_path, {"from": "system", "iteration": "iter-1", "content": "--- Phase advanced: refinement → planning ---"})
     append_message(log_path, {"from": "coach", "iteration": "iter-1", "content": "Excellent, let me verify coverage."})
     append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "Task 2: API layer."})
 
@@ -3723,7 +3723,7 @@ def test_planning_extraction_excludes_system_and_coach_messages(tmp_path):
 
 def test_extraction_has_transcript_framing(tmp_path):
     """Extraction user messages should have TRANSCRIPT START/END delimiters."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="grooming")
+    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
 
     log_path = iter_dir / "conversation.jsonl"
@@ -3753,11 +3753,11 @@ def test_planning_extraction_uses_phase_history(tmp_path):
     log_path = iter_dir / "conversation.jsonl"
     # Grooming phase messages
     append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "grooming msg"})
-    # Boundary from grooming → planning
+    # Boundary from refinement → planning
     append_message(log_path, {
         "from": "system", "iteration": "iter-1",
         "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True,
-        "from_phase": "grooming", "to_phase": "planning",
+        "from_phase": "refinement", "to_phase": "planning",
     })
     # Planning phase messages
     append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "Task: build CLI."})
@@ -4121,7 +4121,7 @@ def test_ask_pm_resume_with_continue(tmp_path):
     (team / "team.json").write_text(json.dumps(team_config, indent=2))
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
-         "status": "in-progress", "phase": "grooming", "max_turns": 10},
+         "status": "in-progress", "phase": "refinement", "max_turns": 10},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)

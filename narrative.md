@@ -2136,6 +2136,71 @@ This keeps the conversation conversational. The PM can jump in naturally. Agents
 
 ---
 
+## 48. The Architectural Refactor
+
+### Why now
+
+The codebase hit a ceiling. cli.py grew to 1,556 lines — a god file containing argparse, conversation orchestration, phase transitions, approval handling, worktree management, and checkpoint commands. Every upcoming feature (grooming exploration, TUI, parallel agents) would require either duplicating `run_conversation()` or threading more conditionals through it. Two specific upcoming features made the refactor urgent:
+
+The grooming/refinement split (section 43) needs the conversation engine to work without the iteration lifecycle — same agents, same conversation format, but no phases, no coach by default, no convergence pressure. Without decoupling, this means either a second copy of `run_conversation()` or an increasingly brittle set of `if kind == "grooming"` branches.
+
+The TUI (section 44) needs core logic callable without argparse/print/sys.exit, event-driven output (engine yields events, UI renders them), and eventually async (Textual runs on asyncio). With `print()` calls interleaved 20+ times inside `run_conversation()`, every CLI concern would have to be surgically removed under the TUI refactor — a second rewrite.
+
+### Seven design decisions
+
+**D1: TypedDict over dataclass for domain shapes.** Dataclasses silently drop unknown fields on round-trip. If iteration.json gains a new field in a future iteration, a dataclass-based store would lose it on save. TypedDict is just a type annotation over a regular dict — the underlying dict preserves all fields naturally. The codebase is still evolving rapidly; unknown field preservation matters.
+
+**D2: Stores + Context, not rich domain objects.** `Iteration.advance()` would pull LLM calls, file I/O, and worktree operations into the data object — a different kind of god object. Instead: Store classes handle persistence (ConversationStore, IterationStore), TeamContext bundles config (loaded once, passed everywhere), and the engine handles behavior.
+
+**D3: Sync generator engine, async-ready interfaces.** 650 tests are sync. Async engine means every test needs pytest-asyncio. Textual can run sync generators in worker threads. Converting `Iterator[Event]` to `AsyncIterator[Event]` later is mechanical; event types don't change. Don't pay the async complexity tax now for a feature (parallel agents) that's several iterations away.
+
+**D4: Events are render-agnostic and storage-agnostic.** The engine yields events like `AppendMessage`, `AgentPassed`, `PauseForApprovals`, `CoachAskedPM`, `PhaseCompleteSignaled`. The engine never calls `print()`, `append_message()`, or touches the filesystem directly. The CLI handler persists events to stores and prints to stdout. The TUI handler persists to stores and updates widgets. If the engine contains persistence or rendering calls, the TUI refactor becomes a second rewrite.
+
+**D5: Session policies instead of if/else branching.** A `SessionPolicy` dataclass configures the engine's behavior: history scope (phase-scoped or full), coach cadence, kickoff injection, stop conditions, available tools, artifact injection. The engine reads the policy — it doesn't know what "grooming" or "iteration" means. `iteration_policy()` and `grooming_policy()` are factory functions that build different policies for different session types. No branching inside the engine.
+
+**D6: TOML for prompt externalization.** Bumped minimum Python to 3.11 to get `tomllib` in stdlib (zero new dependencies). All prompt text moves from scaffold.py (~400 lines of string constants) to a structured `prompts.toml` file. Users can customize agent behavior by editing `.team/prompts.toml`. Template variables (`{first_agent}`, `{current_layer}`) resolved at runtime via `str.format_map()` with a `SafeDict` that passes through unknown placeholders.
+
+**D7: Grooming-to-refinement rename is isolated.** The rename of the iteration phase from "grooming" to "refinement" is its own change, separate from structural refactoring. Mixing a rename with structural changes contaminates diffs. Includes backward-compat parsing: existing iteration.json files with `"phase": "grooming"` silently load as "refinement."
+
+### Six refactor iterations
+
+The refactor was executed as six behavior-preserving iterations, each with its own done criteria and test verification. Same inputs produce same outputs throughout.
+
+**R1: TypedDict shapes + TeamContext + Stores.** Foundation for everything. Introduced `types.py` (IterationDict, MessageDict, AgentDict, etc.), `context.py` (TeamContext with `from_team_dir()` factory), ConversationStore wrapping JSONL operations, IterationStore wrapping config load/save. Eliminated duplicated config loading across cmd_* functions.
+
+**R2: Extract session engine with events.** The keystone refactor. Extracted `run_conversation()` into `engine.py` yielding events via sync generator, with `events.py` defining the event dataclasses. Decomposed the 258-line function into `_do_agent_turn()`, `_do_coach_turn()`, `_should_inject_coach()`, and `_build_tool_executor()`. cli.py became a thin event handler loop: `for event in run_session(ctx, policy, ...): ...`
+
+**R3: Decompose cmd_advance() into composable transitions.** Extracted the 221-line `cmd_advance()` into `transitions.py` with standalone functions: `extract_grooming_summary()`, `extract_tasks()`, `extract_task_notes()`, `auto_commit_layer_worktrees()`, `build_transition_messages()`. Each function takes inputs and returns outputs — no print, no sys.exit. `cmd_advance()` became a thin orchestrator under 80 lines.
+
+**R4: Prompt externalization (TOML).** Moved all prompt text from scaffold.py into `data/default_prompts.toml` (package data) with `prompts.py` for loading and template resolution. `gotg init` copies default prompts to `.team/prompts.toml`. Users can edit their copy to customize behavior. scaffold.py dropped from ~656 to ~250 lines.
+
+**R5: Session policies.** Introduced `policy.py` with `SessionPolicy` dataclass and factory functions (`iteration_policy()`, `grooming_policy()`). The engine became policy-driven: history scope, coach cadence, kickoff behavior, stop conditions, and tool lists all come from the policy. No more hardcoded values in the engine.
+
+**R6: Grooming-to-refinement rename.** Mechanical rename across prompts.toml, config.py (PHASE_ORDER), scaffold.py, cli.py, agent.py, and tests. Added backward-compat parsing for existing iteration.json files. Historical conversation messages saying "grooming" left untouched — they're historical facts, not broken data.
+
+### Post-refactor architecture
+
+```
+CLI (thin)              Engine (yields events)       Stores (persistence)
+┌──────────┐            ┌──────────────────┐         ┌──────────────────┐
+│ argparse │            │ run_session()    │         │ ConversationStore│
+│ cmd_run  │──policy──→ │   agent turns    │──events→│ IterationStore   │
+│ cmd_cont │            │   coach turns    │         │ DebugStore       │
+│ handler  │←──events───│   pass detection │         └──────────────────┘
+└──────────┘            │   kickoff inject │
+                        └──────────────────┘
+                              ↑
+                        SessionPolicy
+                        (from iteration_policy()
+                         or grooming_policy())
+```
+
+The engine has no `print()`, no `sys.exit()`, no direct file writes. Side effects flow through yielded events (persisted by the handler) and injected dependencies (tool executor, approval store). The TUI can reuse the engine by writing a different event handler. The grooming feature can reuse the engine with a different policy.
+
+> Principle #33: **Refactor when the next feature requires a second copy of existing code** — the right time to decompose is when you'd otherwise duplicate; earlier is speculative, later means you're already maintaining two copies.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2203,12 +2268,18 @@ This keeps the conversation conversational. The PM can jump in naturally. Agents
 - ✅ **Iteration 11: Git worktree infrastructure** — complete
 - ✅ **Iteration 12: Merge workflow + PM review** — complete
 - ✅ **Iteration 13: Code review with diffs** — complete
-- ⬜ **Iteration 14: End-to-end layer execution** — planned, 5-phase system with implementation phase, current_layer tracking, next-layer command
-- ⬜ **Iteration 15: Prompt efficiency & agent awareness** — planned, conciseness norms, coach kickoff messages, writable path injection, compressed pre-code-review, layer enforcement in prompts
-- ⬜ **Iteration 16: History management** — planned, phase boundary markers, phase-scoped history loading, task notes extraction, ~60-70% input token reduction
-- ⬜ **Iteration 17: Pass-turn and coach tools** — planned, pass_turn tool for agents (context growth control), ask_pm tool for coach, @mention awareness in prompts, keeps round-robin with natural conversation flow
+- ✅ **Iteration 14: End-to-end layer execution** — complete, 5-phase system with implementation phase, current_layer tracking, next-layer command
+- ✅ **Iteration 15: Prompt efficiency & agent awareness** — complete, conciseness norms, system kickoff messages, writable path injection, compressed pre-code-review, layer enforcement in prompts
+- ✅ **Iteration 16: History management** — complete, phase boundary markers, phase-scoped history loading, task notes extraction, ~60-70% input token reduction
+- ✅ **Iteration 17: Pass-turn and coach tools** — complete, pass_turn tool for agents, ask_pm tool for coach, @mention awareness in prompts
+- ✅ **Refactor R1: TypedDict shapes + TeamContext + Stores** — complete, types.py, context.py, ConversationStore, IterationStore
+- ✅ **Refactor R2: Session engine with events** — complete, engine.py yielding events via sync generator, events.py dataclasses, cli.py as thin handler
+- ✅ **Refactor R3: Decompose cmd_advance** — complete, transitions.py with standalone extraction functions, cmd_advance under 80 lines
+- ✅ **Refactor R4: Prompt externalization (TOML)** — complete, prompts.toml, prompts.py, Python 3.11+ requirement
+- ✅ **Refactor R5: Session policies** — complete, SessionPolicy dataclass, iteration_policy() and grooming_policy() factories
+- 🔄 **Refactor R6: Grooming-to-refinement rename** — in progress, mechanical rename with backward-compat parsing
 
-First full test run complete (calculator, $9). Iterations 9-13 working. Three optimization iterations (15-17) designed from test run analysis — target: $9 → $1-2 for equivalent task.
+First full test run complete (calculator, $9). Iterations 9-17 complete. Architectural refactor (R1-R6) restructured codebase for TUI, grooming feature, and parallel agents. Next: second test run to validate cost optimizations, then grooming feature or TUI.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -2256,32 +2327,35 @@ First full test run complete (calculator, $9). Iterations 9-13 working. Three op
 - **The TUI is a viewer with interaction hooks, not a controller** — the primary experience is watching a team conversation stream in real-time with the ability to intervene when needed (approvals, messages, phase advances); the CLI remains the underlying API for testability and scripting
 - **Structure and autonomy serve different phases of the same project** — design phases (grooming, planning, code review) benefit from structured conversation and human oversight; implementation phases could benefit from Carlini-style autonomous execution where tests steer the agents and the human steps back
 - **Input tokens are the cost driver, not output tokens** — in a multi-agent conversation, each turn re-reads the full history; 99 turns reading an ever-growing log produced ~2.7M input tokens vs ~47K output; history trimming at phase boundaries is the single highest-leverage cost intervention
+- **TypedDict preserves unknown fields where dataclasses don't** — in a rapidly evolving codebase, TypedDict over regular dicts means future schema additions survive round-trips through stores without explicit `extra: dict` fields
+- **Event-driven engines decouple rendering from logic** — yielding events from a sync generator lets the CLI print while the TUI updates widgets, without the engine knowing which; the alternative (engine calls print directly) means rewriting the engine for every new frontend
+- **Session policies prevent branching inside engines** — configuring behavior via a policy dataclass means the engine doesn't need `if kind == "grooming"` branches; new session types are new policy factories, not new engine code
+- **Refactor when duplication would otherwise occur, not before** — the grooming feature and TUI both needed the conversation engine decoupled from CLI concerns; extracting earlier would have been speculative, extracting later would have meant maintaining two copies of run_conversation
 
 ### Development Strategy
-- **Iteration 14 next** — end-to-end layer execution, completing the implementation pipeline
-- Iterations 15-17 optimize conversation efficiency based on first full test run findings
-- Iteration 15 (prompts) is low-risk, high-impact — all prompt text changes, minimal structural changes
-- Iteration 16 (history) is medium-risk — changes how history is loaded but doesn't change what's stored
-- Iteration 17 (directed flow) is the biggest structural change — replaces the conversation loop's turn mechanics
-- Combined target: 80%+ cost reduction ($9 → $1-2) for a medium-complexity task
-- After optimization iterations: second full test run to validate improvements before TUI work
+- **R6 finishing** — grooming-to-refinement rename, final refactor iteration
+- Post-refactor: codebase is ready for grooming feature (1 iteration), TUI (2-3 iterations), parallel agents (2 iterations)
+- Iterations 14-17 (optimization) can proceed on the refactored codebase — engine.py replaces run_conversation, policy.py configures behavior, prompts.toml holds prompt text
+- Iteration 15 (prompts) becomes a prompts.toml edit + engine policy change — simpler than before
+- Iteration 16 (history) is already partially implemented via ConversationStore.read_phase_history()
+- Iteration 17 (pass_turn) adds to AGENT_TOOLS in prompts.toml and engine event handling
+- The grooming feature is now ~1 iteration: `cmd_groom` thin wrapper + `grooming_policy()` factory (already stubbed in R5) + `.team/grooming/<slug>/` directory structure
+- TUI work can begin once R6 is complete — engine events map directly to Textual widget updates
 - Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
 - Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
 - Agent verbosity in planning phase is a known optimization lever — not worth pulling yet
 
 ### Deferred (Intentionally)
-- **Refinement rename** — rename current "grooming" phase to "refinement" across scaffold.py, config.py, coach prompts, phase transitions (mechanical, low-risk, can happen anytime)
-- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (after optimization iterations)
+- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (ready after R6 — grooming_policy() already stubbed)
 - `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature)
-- Coach option to stay silent on early turns (if premature injection becomes a problem — not yet observed)
 - Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient)
 - File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
-- TUI chat interface (Textual — after optimization iterations; async refactor, event-driven state, three-mode home screen, shared chat view with contextual info tiles and inline action bar; see section 44)
-- Autonomous implementation mode — Carlini-style test-driven agent execution during implementation phase with minimal PM oversight; agents pick tasks, write code, run tests in a loop; structured phases retained for design work (see section 45)
-- OpenCode integration for agent tool access (needs deeper evaluation)
+- TUI chat interface (Textual — ready after R6; engine events map to widgets, sync generator in worker thread; see section 44)
+- Autonomous implementation mode — Carlini-style test-driven agent execution during implementation phase; agents pick tasks, write code, run tests in a loop; structured phases retained for design work (see section 45)
+- Parallel agent execution — async engine, fan-out/fan-in turns, concurrent model calls (see refactor plan post-R6 readiness section)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Automated evaluation (after manual rubric is trusted)
 - Context window management beyond phase boundaries (sliding window within long phases, message summarization for very long implementation runs)
@@ -2321,3 +2395,4 @@ First full test run complete (calculator, $9). Iterations 9-13 working. Three op
 30. **Match coordination overhead to problem structure** — well-specified, test-driven problems can run with minimal coordination (git + tests); ambiguous, requirements-driven problems need structured collaboration (phases + facilitation + human oversight); the same project may need both at different stages
 31. **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls
 32. **Conversation flow should emerge, not be assigned** — controlling who speaks turns a team discussion into a conference call; instead, give agents the ability to stay quiet and let natural conversation dynamics determine who contributes
+33. **Refactor when the next feature requires a second copy of existing code** — the right time to decompose is when you'd otherwise duplicate; earlier is speculative, later means you're already maintaining two copies

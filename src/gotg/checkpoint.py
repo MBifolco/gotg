@@ -71,7 +71,7 @@ def create_checkpoint(
     # Write metadata
     state = {
         "number": number,
-        "phase": iteration.get("phase", "grooming"),
+        "phase": iteration.get("phase", "refinement"),
         "status": iteration.get("status", "in-progress"),
         "max_turns": iteration.get("max_turns", 0),
         "turn_count": _count_agent_turns(iter_dir, coach_name=coach_name),

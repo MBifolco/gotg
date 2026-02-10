@@ -306,16 +306,16 @@ def test_build_prompt_participants_only_two_agents(iteration):
 
 # --- phase prompts ---
 
-def test_build_prompt_includes_grooming_phase_prompt():
-    """Iteration with phase=grooming should inject grooming instructions."""
+def test_build_prompt_includes_refinement_phase_prompt():
+    """Iteration with phase=refinement should inject refinement instructions."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
-        "status": "in-progress", "phase": "grooming", "max_turns": 10,
+        "status": "in-progress", "phase": "refinement", "max_turns": 10,
     }
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
-    assert "CURRENT PHASE: GROOMING" in system
+    assert "CURRENT PHASE: REFINEMENT" in system
     assert "scope" in system.lower()
     assert "DO NOT" in system
 
@@ -331,7 +331,7 @@ def test_build_prompt_includes_planning_phase_prompt():
     system = messages[0]["content"]
     assert "CURRENT PHASE: PLANNING" in system
     assert "tasks" in system.lower()
-    assert "CURRENT PHASE: GROOMING" not in system
+    assert "CURRENT PHASE: REFINEMENT" not in system
 
 
 def test_build_prompt_no_phase_prompt_when_phase_missing():
@@ -419,12 +419,12 @@ def test_build_coach_prompt_no_phase_injection():
     from gotg.agent import build_coach_prompt
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
-                 "phase": "grooming", "max_turns": 10}
+                 "phase": "refinement", "max_turns": 10}
     messages = build_coach_prompt(coach, iteration, [
         {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
     ])
     system = messages[0]["content"]
-    assert "CURRENT PHASE: GROOMING" not in system
+    assert "CURRENT PHASE: REFINEMENT" not in system
 
 
 def test_build_coach_prompt_lists_teammates():
@@ -605,17 +605,17 @@ def test_build_prompt_includes_pre_code_review_phase_prompt():
 
 # --- phase-specific coach facilitation ---
 
-def test_build_coach_prompt_uses_grooming_facilitation():
+def test_build_coach_prompt_uses_refinement_facilitation():
     from gotg.agent import build_coach_prompt
     from gotg.scaffold import COACH_FACILITATION_PROMPTS
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
-                 "phase": "grooming", "max_turns": 10}
+                 "phase": "refinement", "max_turns": 10}
     messages = build_coach_prompt(coach, iteration, [
         {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
     ])
     system = messages[0]["content"]
-    assert COACH_FACILITATION_PROMPTS["grooming"] in system
+    assert COACH_FACILITATION_PROMPTS["refinement"] in system
 
 
 def test_build_coach_prompt_uses_planning_facilitation():
@@ -763,12 +763,12 @@ def test_build_prompt_writable_paths_in_implementation():
     assert "tests/**" in system
 
 
-def test_build_prompt_no_writable_paths_in_grooming():
-    """FILE ACCESS should not appear in grooming phase."""
+def test_build_prompt_no_writable_paths_in_refinement():
+    """FILE ACCESS should not appear in refinement phase."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
-        "status": "in-progress", "phase": "grooming", "max_turns": 10,
+        "status": "in-progress", "phase": "refinement", "max_turns": 10,
     }
     fg = _FakeFileGuard(writable_paths=["src/**"])
     messages = build_prompt(agent, iteration, [], fileguard=fg)
