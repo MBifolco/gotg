@@ -43,6 +43,7 @@ def test_session_policy_creation():
         groomed_summary="summary", tasks_summary="tasks",
         diffs_summary=None, kickoff_text="kick",
         fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
     )
     assert p.max_turns == 5
     assert p.coach == COACH
@@ -61,6 +62,7 @@ def test_session_policy_frozen():
         groomed_summary=None, tasks_summary=None,
         diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
     )
     with pytest.raises(AttributeError):
         p.max_turns = 99
@@ -157,7 +159,7 @@ def test_iteration_policy_stop_conditions(tmp_path):
 
 
 def test_grooming_policy_defaults():
-    p = grooming_policy(AGENTS, "Discuss feature X")
+    p = grooming_policy(AGENTS, "Discuss feature X", history=[])
     assert p.coach is None
     assert p.coach_cadence is None
     assert p.stop_on_phase_complete is False
@@ -165,8 +167,40 @@ def test_grooming_policy_defaults():
     assert p.coach_tools is None
     assert isinstance(p.agent_tools, tuple)
     assert p.max_turns == 30
+    assert p.system_supplement is not None
+    assert "GROOMING" in p.system_supplement
+    assert p.coach_system_prompt is None
+    assert p.kickoff_text is not None
+    assert "Discuss feature X" in p.kickoff_text
 
 
 def test_grooming_policy_max_turns():
-    p = grooming_policy(AGENTS, "Discuss feature X", max_turns=50)
+    p = grooming_policy(AGENTS, "Discuss feature X", history=[], max_turns=50)
     assert p.max_turns == 50
+
+
+def test_grooming_policy_with_coach():
+    p = grooming_policy(AGENTS, "Discuss feature X", history=[], coach=COACH)
+    assert p.coach == COACH
+    assert p.coach_cadence == len(AGENTS)
+    assert p.stop_on_ask_pm is True
+    assert p.stop_on_phase_complete is False
+    assert p.coach_tools is not None
+    # Coach should have ask_pm but NOT signal_phase_complete
+    tool_names = {t["name"] for t in p.coach_tools}
+    assert "ask_pm" in tool_names
+    assert "signal_phase_complete" not in tool_names
+    assert p.coach_system_prompt is not None
+    assert "grooming" in p.coach_system_prompt.lower()
+
+
+def test_grooming_policy_kickoff_includes_topic():
+    p = grooming_policy(AGENTS, "How to handle errors", history=[])
+    assert "How to handle errors" in p.kickoff_text
+    assert "agent-1" in p.kickoff_text
+
+
+def test_grooming_policy_no_kickoff_with_history():
+    history = [{"from": "system", "content": "existing message"}]
+    p = grooming_policy(AGENTS, "Some topic", history=history)
+    assert p.kickoff_text is None

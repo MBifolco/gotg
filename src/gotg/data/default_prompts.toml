@@ -350,3 +350,20 @@ Signal that all scope items are resolved or explicitly deferred and the team is 
 [tools.ask_pm]
 description = '''
 Pause the conversation and request input from the project manager. Use when a decision requires PM authority or when the team is stuck on a question only the PM can answer.'''
+
+# ── Grooming mode (freeform pre-iteration exploration) ───────────
+
+[grooming]
+system = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
+
+Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
+
+coach = '''You are facilitating a freeform grooming conversation. This is NOT a structured phase — no deliverables and no phase to complete.
+
+Help the team explore broadly — surface assumptions, risks, alternatives. Ask probing questions when the team converges too quickly. If stuck, suggest a new angle. Do NOT summarize agreements, track action items, or signal phase completion. Use ask_pm if a question needs PM input.
+
+Keep messages brief. Engineers lead; you gently steer.'''
+
+kickoff = '''--- Grooming: {topic} ---
+This is an open exploration. No phases, no deliverables — just discuss.
+{first_agent}, what are your initial thoughts?'''

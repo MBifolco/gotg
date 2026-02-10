@@ -300,6 +300,17 @@ After merging a layer into main, the next layer's worktrees branch from the upda
 | `gotg approve <id \| all>` | Approve a pending write |
 | `gotg deny <id> [-m reason]` | Deny a pending write with reason |
 
+### Grooming (Freeform Exploration)
+
+| Command | Description |
+|---------|-------------|
+| `gotg groom start "topic" [--coach] [--slug S]` | Start a new grooming conversation |
+| `gotg groom continue <slug> [-m MSG] [--max-turns N]` | Resume a grooming conversation |
+| `gotg groom list` | List all grooming sessions |
+| `gotg groom show <slug>` | Replay a grooming conversation |
+
+Grooming conversations are freeform explorations that live outside the iteration lifecycle. No phases, no deliverables — just agents discussing a topic. Use `--coach` to add a facilitator who keeps the conversation broad. See [Grooming](#grooming) below.
+
 ## Project Structure
 
 After `gotg init`, your project looks like this:
@@ -320,6 +331,10 @@ my-project/
         debug.jsonl            # Diagnostic log (auto)
         approvals.json         # Approval requests (if enabled)
         checkpoints/           # Checkpoint snapshots
+    grooming/                  # Freeform grooming conversations
+      file-conflicts/
+        grooming.json          # Session metadata (topic, coach, max_turns)
+        conversation.jsonl     # Conversation log
   .worktrees/                  # Git worktrees (if enabled, gitignored)
     agent-1-layer-0/
     agent-2-layer-0/
@@ -424,6 +439,27 @@ gotg checkpoints
 gotg checkpoint "before prompt experiment"   # Manual snapshot
 gotg restore 3                                # Roll back (prompts for safety checkpoint)
 ```
+
+## Grooming
+
+Grooming conversations are freeform explorations that live outside the iteration lifecycle. Use them to brainstorm, poke holes in ideas, or explore topics before committing to an iteration.
+
+```bash
+gotg groom start "how should we handle file conflicts?"
+gotg groom list
+gotg groom show file-conflicts
+gotg groom continue file-conflicts -m "what about concurrent writes?"
+gotg groom continue file-conflicts --max-turns 5  # 5 more turns
+```
+
+Key properties:
+- **No iteration lifecycle.** No phases, no planning, no tasks. Just conversation.
+- **Lives outside iterations.** `.team/grooming/<slug>/` is a sibling of `.team/iterations/`.
+- **No coach by default.** Add `--coach` to `groom start` for a facilitator who keeps the conversation broad (prevents premature convergence).
+- **Multiple concurrent conversations.** Explore several ideas in parallel, each in its own slug.
+- **Slugs are auto-generated** from the topic. Override with `--slug my-slug`.
+
+When an idea crystallizes, create an iteration manually and start from refinement.
 
 ## Conversation Log Format
 

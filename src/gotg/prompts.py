@@ -92,3 +92,10 @@ COACH_TOOLS: list[dict] = [
         },
     },
 ]
+
+# ── Grooming mode constants ──────────────────────────────────────
+
+GROOMING_SYSTEM_SUPPLEMENT: str = _DEFAULTS["grooming"]["system"]
+GROOMING_COACH_PROMPT: str = _DEFAULTS["grooming"]["coach"]
+GROOMING_KICKOFF_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff"]
+GROOMING_COACH_TOOLS: list[dict] = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]

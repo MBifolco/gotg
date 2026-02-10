@@ -52,7 +52,7 @@ def _make_policy(**overrides):
         agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(COACH_TOOLS),
         groomed_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
-        worktree_map=None,
+        worktree_map=None, system_supplement=None, coach_system_prompt=None,
     )
     defaults.update(overrides)
     return SessionPolicy(**defaults)

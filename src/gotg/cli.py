@@ -19,6 +19,11 @@ from gotg.events import (
     SessionComplete, SessionStarted,
 )
 from gotg.model import chat_completion, agentic_completion
+from gotg.groom import (
+    generate_slug, validate_slug, existing_slugs,
+    write_grooming_metadata, load_grooming_metadata,
+    list_grooming_sessions, run_grooming_conversation,
+)
 from gotg.scaffold import init_project
 from gotg.transitions import (
     extract_refinement_summary, extract_tasks, extract_task_notes,
@@ -1182,6 +1187,137 @@ def cmd_next_layer(args):
     _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
+# ── Grooming commands ────────────────────────────────────────────
+
+
+def cmd_groom_start(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    ctx = TeamContext.from_team_dir(team_dir)
+
+    if len(ctx.agents) < 2:
+        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
+        raise SystemExit(1)
+
+    topic = args.topic
+
+    # Slug: user-provided or auto-generated
+    slugs = existing_slugs(team_dir)
+    if args.slug:
+        if not validate_slug(args.slug):
+            print("Error: invalid slug. Use lowercase letters, numbers, and hyphens (e.g., 'my-topic').", file=sys.stderr)
+            raise SystemExit(1)
+        if args.slug in slugs:
+            print(f"Error: slug '{args.slug}' already exists.", file=sys.stderr)
+            raise SystemExit(1)
+        slug = args.slug
+    else:
+        slug = generate_slug(topic, slugs)
+
+    coach = ctx.coach if args.coach else None
+    max_turns = args.max_turns or 30
+
+    groom_dir = write_grooming_metadata(team_dir, slug, topic, coach=bool(coach), max_turns=max_turns)
+
+    iteration = {"id": slug, "description": topic, "phase": None}
+
+    run_grooming_conversation(
+        groom_dir, ctx.agents, iteration, ctx.model_config,
+        topic=topic, coach=coach, max_turns_override=max_turns,
+    )
+
+
+def cmd_groom_continue(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    ctx = TeamContext.from_team_dir(team_dir)
+    metadata, groom_dir = load_grooming_metadata(team_dir, args.slug)
+
+    if len(ctx.agents) < 2:
+        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
+        raise SystemExit(1)
+
+    coach = ctx.coach if metadata.get("coach") else None
+
+    log_path = groom_dir / "conversation.jsonl"
+    history = read_log(log_path)
+
+    # Count current agent turns (not human/coach/system)
+    non_agent = {"human", "system"}
+    if coach:
+        non_agent.add(coach["name"])
+    current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
+
+    # Inject human message if provided
+    if args.message:
+        msg = {
+            "from": "human",
+            "iteration": args.slug,
+            "content": args.message,
+        }
+        append_message(log_path, msg)
+        print(render_message(msg))
+        print()
+
+    # Calculate target total agent turns (additive, matching iteration continue)
+    if args.max_turns is not None:
+        target_total = current_agent_turns + args.max_turns
+    else:
+        target_total = metadata.get("max_turns", 30)
+
+    iteration = {"id": args.slug, "description": metadata["topic"], "phase": None}
+
+    run_grooming_conversation(
+        groom_dir, ctx.agents, iteration, ctx.model_config,
+        topic=metadata["topic"], coach=coach, max_turns_override=target_total,
+    )
+
+
+def cmd_groom_list(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    sessions = list_grooming_sessions(team_dir)
+    if not sessions:
+        print("No grooming sessions.")
+        return
+
+    for s in sessions:
+        coach_flag = " [coach]" if s.get("coach") else ""
+        print(f"  {s['slug']:<30} {s['topic']}{coach_flag}")
+
+
+def cmd_groom_show(args):
+    cwd = Path.cwd()
+    team_dir = find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    _, groom_dir = load_grooming_metadata(team_dir, args.slug)
+    log_path = groom_dir / "conversation.jsonl"
+    messages = read_log(log_path)
+
+    if not messages:
+        print("No messages yet.")
+        return
+
+    for msg in messages:
+        print(render_message(msg))
+        print()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -1241,6 +1377,26 @@ def main():
     commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
     commit_wt_parser.add_argument("-m", "--message", help="Commit message (default: 'Agent implementation work')")
 
+    # Groom subcommand family
+    groom_parser = subparsers.add_parser("groom", help="Freeform grooming conversations")
+    groom_sub = groom_parser.add_subparsers(dest="groom_command")
+
+    groom_start = groom_sub.add_parser("start", help="Start a new grooming conversation")
+    groom_start.add_argument("topic", help="Topic to explore")
+    groom_start.add_argument("--slug", help="Override auto-generated slug")
+    groom_start.add_argument("--coach", action="store_true", help="Enable coach facilitation")
+    groom_start.add_argument("--max-turns", type=int, help="Max turns (default: 30)")
+
+    groom_continue = groom_sub.add_parser("continue", help="Continue a grooming conversation")
+    groom_continue.add_argument("slug", help="Session slug")
+    groom_continue.add_argument("-m", "--message", help="Human message to inject")
+    groom_continue.add_argument("--max-turns", type=int, help="Additional turns to run")
+
+    groom_sub.add_parser("list", help="List grooming sessions")
+
+    groom_show = groom_sub.add_parser("show", help="Show grooming conversation")
+    groom_show.add_argument("slug", help="Session slug")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -1279,6 +1435,17 @@ def main():
         cmd_next_layer(args)
     elif args.command == "commit-worktrees":
         cmd_commit_worktrees(args)
+    elif args.command == "groom":
+        if args.groom_command == "start":
+            cmd_groom_start(args)
+        elif args.groom_command == "continue":
+            cmd_groom_continue(args)
+        elif args.groom_command == "list":
+            cmd_groom_list(args)
+        elif args.groom_command == "show":
+            cmd_groom_show(args)
+        else:
+            groom_parser.print_help()
     else:
         parser.print_help()
 

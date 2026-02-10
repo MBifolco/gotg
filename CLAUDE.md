@@ -7,7 +7,7 @@ GOTG is an AI product and engineering department tool. pip-installable CLI (`got
 - Python 3.11 via pyenv (venv at `.venv/`)
 - Install: `.venv/bin/pip install -e .`
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 723 tests as of R6 refactor
+- 752 tests as of grooming feature
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
@@ -49,7 +49,7 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 - **Don't run phases without being asked** — the user (PM) decides when to run.
 
 ## Project Layout
-- `src/gotg/` — package code (cli, agent, model, conversation, config, scaffold, tasks)
+- `src/gotg/` — package code (cli, agent, model, conversation, config, scaffold, tasks, groom)
 - `tests/` — pytest tests
 - `run_history/` — archived conversation logs and artifacts from test runs
 - `narrative.md` — design log / decision journal
@@ -77,3 +77,18 @@ On advance (each writes a history boundary marker before the transition message)
 - implementation → code-review: auto-commits current-layer worktrees
 
 Layer progression: `gotg next-layer` (after merging) → verifies merges, cleans up worktrees, advances to next layer's implementation
+
+## Grooming (Freeform Exploration)
+`gotg groom` runs conversations outside the iteration lifecycle — no phases, no deliverables.
+
+```bash
+gotg groom start "topic to explore" [--slug S] [--coach] [--max-turns N]
+gotg groom continue <slug> [-m MSG] [--max-turns N]
+gotg groom list
+gotg groom show <slug>
+```
+
+- Lives in `.team/grooming/<slug>/` (separate from iterations)
+- Uses `grooming_policy()` — system supplement overrides phase workflow, coach gets `ask_pm` only (no `signal_phase_complete`)
+- `--max-turns` on continue is additive (N more turns from current point)
+- Synthetic iteration dict: `{"id": slug, "description": topic, "phase": None}`

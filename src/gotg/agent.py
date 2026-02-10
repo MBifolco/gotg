@@ -11,6 +11,7 @@ def build_prompt(
     diffs_summary: str | None = None,
     fileguard=None,
     worktree_map: dict | None = None,
+    system_supplement: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -18,6 +19,11 @@ def build_prompt(
     # Build system message — use agent's custom prompt if set, otherwise the default
     system_prompt = agent_config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
     system_parts = [system_prompt]
+
+    # Mode supplement (e.g., grooming mode framing) — injected early to override
+    # any phase references in the base system prompt
+    if system_supplement:
+        system_parts.append(system_supplement)
 
     system_parts.append(f"Your name is {agent_name}.")
 
@@ -158,14 +164,18 @@ def build_coach_prompt(
     groomed_summary: str | None = None,
     tasks_summary: str | None = None,
     diffs_summary: str | None = None,
+    coach_system_prompt: str | None = None,
 ) -> list[dict]:
     """Build prompt for the coach facilitator during conversation."""
     coach_name = coach_config["name"]
     task = iteration["description"]
 
-    phase = iteration.get("phase")
-    facilitation_prompt = COACH_FACILITATION_PROMPTS.get(phase, COACH_FACILITATION_PROMPT) if phase else COACH_FACILITATION_PROMPT
-    system_parts = [facilitation_prompt]
+    if coach_system_prompt:
+        system_parts = [coach_system_prompt]
+    else:
+        phase = iteration.get("phase")
+        facilitation_prompt = COACH_FACILITATION_PROMPTS.get(phase, COACH_FACILITATION_PROMPT) if phase else COACH_FACILITATION_PROMPT
+        system_parts = [facilitation_prompt]
     system_parts.append(f"Your name is {coach_name}.")
 
     if all_participants:

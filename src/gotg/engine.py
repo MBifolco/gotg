@@ -87,6 +87,7 @@ def run_session(
             groomed_summary=policy.groomed_summary, tasks_summary=policy.tasks_summary,
             diffs_summary=policy.diffs_summary, fileguard=policy.fileguard,
             worktree_map=policy.worktree_map,
+            system_supplement=policy.system_supplement,
         )
         yield AppendDebug({
             "turn": turn,
@@ -239,6 +240,7 @@ def _do_coach_turn(
         coach, iteration, history, all_participants,
         groomed_summary=policy.groomed_summary, tasks_summary=policy.tasks_summary,
         diffs_summary=policy.diffs_summary,
+        coach_system_prompt=policy.coach_system_prompt,
     )
     yield AppendDebug({
         "turn": f"coach-after-{turn}",

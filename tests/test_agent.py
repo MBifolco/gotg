@@ -901,3 +901,52 @@ def test_build_prompt_pass_turn_filtered_from_prompt():
     # pass_turn message should not appear in any message content
     all_content = " ".join(m["content"] for m in messages)
     assert "passes: agree" not in all_content
+
+
+# --- System supplement tests ---
+
+
+def test_build_prompt_with_system_supplement():
+    """System supplement should appear early in system message (after base prompt, before name)."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "phase": None}
+    messages = build_prompt(agent, iteration, [], system_supplement="MODE: GROOMING")
+    system = messages[0]["content"]
+    assert "MODE: GROOMING" in system
+    # Supplement should appear before the name line
+    grooming_pos = system.index("MODE: GROOMING")
+    name_pos = system.index("Your name is agent-1")
+    assert grooming_pos < name_pos
+
+
+def test_build_prompt_no_supplement_when_none():
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build a thing."}
+    messages = build_prompt(agent, iteration, [], system_supplement=None)
+    system = messages[0]["content"]
+    assert "MODE: GROOMING" not in system
+
+
+def test_build_coach_prompt_with_override():
+    """coach_system_prompt should replace the phase-based facilitation prompt."""
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "phase": "refinement"}
+    custom = "You are a grooming facilitator."
+    messages = build_coach_prompt(coach, iteration, [], coach_system_prompt=custom)
+    system = messages[0]["content"]
+    assert "You are a grooming facilitator." in system
+    # Should NOT contain the default refinement facilitation prompt
+    from gotg.prompts import COACH_FACILITATION_PROMPT
+    assert COACH_FACILITATION_PROMPT not in system
+
+
+def test_build_coach_prompt_no_override():
+    """Without coach_system_prompt, should use phase-based facilitation prompt."""
+    from gotg.agent import build_coach_prompt
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing.", "phase": "refinement"}
+    messages = build_coach_prompt(coach, iteration, [], coach_system_prompt=None)
+    system = messages[0]["content"]
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
+    assert COACH_FACILITATION_PROMPTS["refinement"] in system

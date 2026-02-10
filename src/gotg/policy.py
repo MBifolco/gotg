@@ -4,7 +4,14 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from gotg.prompts import AGENT_TOOLS, COACH_TOOLS
+from gotg.prompts import (
+    AGENT_TOOLS,
+    COACH_TOOLS,
+    GROOMING_COACH_PROMPT,
+    GROOMING_COACH_TOOLS,
+    GROOMING_KICKOFF_TEMPLATE,
+    GROOMING_SYSTEM_SUPPLEMENT,
+)
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
 from gotg.tasks import format_tasks_summary
 from gotg.tools import FILE_TOOLS
@@ -32,6 +39,9 @@ class SessionPolicy:
     fileguard: object | None
     approval_store: object | None
     worktree_map: dict | None
+    # Prompt supplements (grooming mode)
+    system_supplement: str | None     # Extra text injected early in agent system prompt
+    coach_system_prompt: str | None   # Overrides phase-based coach facilitation prompt
 
 
 def iteration_policy(
@@ -97,28 +107,44 @@ def iteration_policy(
         fileguard=fileguard,
         approval_store=approval_store,
         worktree_map=worktree_map,
+        system_supplement=None,
+        coach_system_prompt=None,
     )
 
 
 def grooming_policy(
     agents: list[dict],
     topic: str,
+    history: list[dict],
+    coach: dict | None = None,
     max_turns: int = 30,
 ) -> SessionPolicy:
-    """Build policy for a freeform grooming conversation (stub for future gotg groom)."""
+    """Build policy for a freeform grooming conversation."""
+    first_agent = agents[0]["name"] if agents else "agent-1"
+
+    # Only inject kickoff on first run (empty history)
+    kickoff_text = None
+    if not history:
+        kickoff_text = GROOMING_KICKOFF_TEMPLATE.format(
+            topic=topic,
+            first_agent=first_agent,
+        )
+
     return SessionPolicy(
         max_turns=max_turns,
-        coach=None,
-        coach_cadence=None,
+        coach=coach,
+        coach_cadence=len(agents) if coach else None,
         stop_on_phase_complete=False,
-        stop_on_ask_pm=False,
+        stop_on_ask_pm=bool(coach),
         agent_tools=tuple(AGENT_TOOLS),
-        coach_tools=None,
+        coach_tools=tuple(GROOMING_COACH_TOOLS) if coach else None,
         groomed_summary=None,
         tasks_summary=None,
         diffs_summary=None,
-        kickoff_text=None,
+        kickoff_text=kickoff_text,
         fileguard=None,
         approval_store=None,
         worktree_map=None,
+        system_supplement=GROOMING_SYSTEM_SUPPLEMENT,
+        coach_system_prompt=GROOMING_COACH_PROMPT if coach else None,
     )
