@@ -57,14 +57,14 @@ Edit `.team/iteration.json` — set your task `description`, set `status` to `"i
       "description": "Build a CLI todo list application in Python. Support add, list, complete, and delete operations. Store todos in a JSON file.",
       "status": "in-progress",
       "phase": "grooming",
-      "max_turns": 90
+      "max_turns": 30
     }
   ],
   "current": "iter-1"
 }
 ```
 
-> **max_turns is cumulative** — it's a total across all phases (the conversation log doesn't reset between phases). Set it high enough for the entire iteration. 90 is a reasonable starting point for 5 phases.
+> **max_turns is per-phase** — the turn counter resets each time you `gotg advance`. 30 is a reasonable starting point for most phases.
 
 ### 3. Enable worktrees
 
@@ -254,11 +254,12 @@ After merging a layer into main, the next layer's worktrees branch from the upda
 
 ### How conversations work
 
-- The conversation log (`conversation.jsonl`) is **cumulative across all phases** — it doesn't reset. Agents carry context from grooming through code review.
-- `max_turns` in `iteration.json` is a **total** agent turn count. Set it high enough for all phases. If you run out, increase it in `iteration.json` and `gotg continue`.
+- The conversation log (`conversation.jsonl`) is append-only, but **agents only see messages from the current phase** — a history boundary is written on each `gotg advance`.
+- `max_turns` in `iteration.json` is **per-phase** — the turn counter resets on each advance. If you run out, increase it in `iteration.json` and `gotg continue`.
 - `gotg continue --max-turns N` adds N turns from the current point (relative), regardless of the total.
-- The coach speaks after every full rotation of agents. It has a `signal_phase_complete` tool to recommend advancing.
-- Human messages (`gotg continue -m "..."`) are injected before the next agent turn.
+- The coach speaks after every full rotation of agents. It has a `signal_phase_complete` tool to recommend advancing, and an `ask_pm` tool to pause the conversation and request your input.
+- Human messages (`gotg continue -m "..."`) are injected before the next agent turn. This is also how you respond to `ask_pm` questions from the coach.
+- Agents have a `pass_turn` tool — when they have nothing new to add, they pass instead of restating agreement. This keeps conversations focused and reduces noise.
 
 ## Commands
 
@@ -434,6 +435,7 @@ Messages are stored as newline-delimited JSON (JSONL):
 {"from":"human","iteration":"iter-1","content":"Good points. Also consider auth later."}
 {"from":"coach","iteration":"iter-1","content":"Let me summarize what we've agreed on..."}
 {"from":"system","iteration":"iter-1","content":"--- Phase advanced: grooming → planning ---"}
+{"from":"system","iteration":"iter-1","content":"(agent-1 passes: agree with proposal)","pass_turn":true}
 ```
 
 The log is append-only. Read with `gotg show`, or directly with `cat`, `jq`, or any JSONL tool.
@@ -457,7 +459,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~582 tests
+pytest -q                     # ~650 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```
