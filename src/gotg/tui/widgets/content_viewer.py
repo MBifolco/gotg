@@ -43,6 +43,14 @@ class ContentViewer(VerticalScroll):
         self.mount(Static(syntax, classes="cv-content"))
         self.scroll_home(animate=False)
 
+    def show_diff(self, title: str, content: str) -> None:
+        """Display diff content with a title header."""
+        self.remove_children()
+        self.mount(Static(f"[bold]{escape(title)}[/bold]", classes="cv-header"))
+        syntax = Syntax(content, "diff", theme="monokai", line_numbers=False)
+        self.mount(Static(syntax, classes="cv-content"))
+        self.scroll_home(animate=False)
+
     def clear_content(self) -> None:
         """Clear the viewer and show placeholder."""
         self.remove_children()

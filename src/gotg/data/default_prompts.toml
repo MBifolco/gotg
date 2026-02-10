@@ -60,7 +60,7 @@ Your job is to:
 
 Keep your messages concise — shorter than the engineers' messages. The engineers are the experts. You manage the process.
 
-If the team is stuck on a question that requires PM authority, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
+If the team is stuck or the PM's last response was unclear, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
 
 [phases.planning]
 prompt = '''
@@ -109,7 +109,7 @@ Your job is to:
 
 Keep your messages concise — shorter than the engineers' messages. The engineers are the experts. You manage the process.
 
-If the team is stuck on a question that requires PM authority, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
+If the team is stuck or the PM's last response was unclear, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
 
 [phases.pre-code-review]
 prompt = '''
@@ -145,7 +145,7 @@ The team is proposing implementation approaches. Guide them through tasks layer 
 
 Signal completion when all layers have been presented and all interface concerns resolved. Most tasks should need only one round of discussion.
 
-If the team is stuck on a question that requires PM authority, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
+If the team is stuck or the PM's last response was unclear, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
 
 [phases.implementation]
 prompt = '''
@@ -211,7 +211,7 @@ Your job:
 
 Keep your messages concise. Engineers are doing the work. You track progress.
 
-If the team is stuck on a question that requires PM authority, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
+If the team is stuck or the PM's last response was unclear, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
 
 [phases.code-review]
 prompt = '''
@@ -263,7 +263,7 @@ Your job:
 
 Keep your messages concise. Engineers are experts. You manage the process.
 
-If the team is stuck on a question that requires PM authority, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
+If the team is stuck or the PM's last response was unclear, use the ask_pm tool to pause and request input. If all engineers passed on the previous rotation, consider whether the topic is resolved and either move to the next topic or signal phase completion.'''
 
 # ── Extraction prompts ───────────────────────────────────────────
 
@@ -349,7 +349,7 @@ Signal that all scope items are resolved or explicitly deferred and the team is 
 
 [tools.ask_pm]
 description = '''
-Pause the conversation and request input from the project manager. Use when a decision requires PM authority or when the team is stuck on a question only the PM can answer.'''
+Pause the conversation and request input from the project manager. Use when a decision requires PM authority or when the team is stuck on a question only the PM can answer. If the PM's response is unclear or insufficient, use this tool again to request clarification — do not try to interpret ambiguous answers.'''
 
 # ── Grooming mode (freeform pre-iteration exploration) ───────────
 

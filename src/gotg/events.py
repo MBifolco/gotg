@@ -46,3 +46,24 @@ class CoachAskedPM:
 @dataclass
 class SessionComplete:
     total_turns: int
+
+
+@dataclass
+class AdvanceProgress:
+    """Reports advance progress step to the UI."""
+    message: str
+
+
+@dataclass
+class AdvanceComplete:
+    """Phase advance finished successfully."""
+    from_phase: str
+    to_phase: str
+    checkpoint_number: int | None
+
+
+@dataclass
+class AdvanceError:
+    """Phase advance failed or had warnings."""
+    error: str
+    partial: bool  # True = advance succeeded but extraction had warnings

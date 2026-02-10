@@ -662,7 +662,7 @@ def test_advance_with_coach_prints_status(tmp_path, capsys):
                 main()
 
     output = capsys.readouterr().out
-    assert "Coach is summarizing" in output
+    assert "Summarizing refinement" in output
     assert "refinement_summary.md" in output
 
 

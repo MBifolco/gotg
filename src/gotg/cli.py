@@ -365,6 +365,8 @@ def cmd_show(args):
 
 
 def cmd_advance(args):
+    from gotg.session import PhaseAdvanceError, advance_phase
+
     cwd = Path.cwd()
     team_dir = find_team_dir(cwd)
     if team_dir is None:
@@ -376,105 +378,22 @@ def cmd_advance(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    current_phase = iteration.get("phase", "refinement")
     try:
-        idx = PHASE_ORDER.index(current_phase)
-    except ValueError:
-        print(f"Error: unknown phase '{current_phase}'.", file=sys.stderr)
+        result = advance_phase(
+            team_dir, iteration, iter_dir,
+            chat_call=chat_completion,
+            on_progress=lambda msg: print(msg),
+        )
+    except PhaseAdvanceError as e:
+        print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    if idx >= len(PHASE_ORDER) - 1:
-        print(f"Error: cannot advance past {current_phase}.", file=sys.stderr)
-        if current_phase == "code-review":
-            print("Hint: Run 'gotg next-layer' to advance to the next layer after merging.", file=sys.stderr)
-        raise SystemExit(1)
-
-    next_phase = PHASE_ORDER[idx + 1]
-    log_path = iter_dir / "conversation.jsonl"
-    coach = load_coach(team_dir)
-    coach_ran = False
-    tasks_written = False
-
-    # Grooming → Planning
-    if current_phase == "refinement" and next_phase == "planning" and coach:
-        print("Coach is summarizing the refinement conversation...")
-        model_config = load_model_config(team_dir)
-        history = read_phase_history(log_path)
-        summary = extract_refinement_summary(history, model_config, coach["name"], chat_completion)
-        summary_path = iter_dir / "refinement_summary.md"
-        summary_path.write_text(summary + "\n")
-        print(f"Wrote {summary_path}")
-        coach_ran = True
-
-    # Planning → Pre-code-review
-    if current_phase == "planning" and next_phase == "pre-code-review" and coach:
-        import json as _json
-        print("Coach is extracting tasks from the planning conversation...")
-        model_config = load_model_config(team_dir)
-        history = read_phase_history(log_path)
-        tasks, raw_text, error = extract_tasks(history, model_config, coach["name"], chat_completion)
-        if tasks is not None:
-            tasks_path = iter_dir / "tasks.json"
-            tasks_path.write_text(_json.dumps(tasks, indent=2) + "\n")
-            print(f"Wrote {tasks_path}")
-            tasks_written = True
-        else:
-            print(f"Warning: {error}", file=sys.stderr)
-            print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
-            (iter_dir / "tasks_raw.txt").write_text(raw_text + "\n")
-        coach_ran = True
-
-    # Pre-code-review → Implementation
-    if current_phase == "pre-code-review" and next_phase == "implementation":
-        save_iteration_fields(team_dir, iteration["id"], current_layer=0)
-        if coach:
-            import json as _json
-            tasks_path = iter_dir / "tasks.json"
-            if tasks_path.exists():
-                print("Coach is extracting task notes from pre-code-review...")
-                model_config = load_model_config(team_dir)
-                history = read_phase_history(log_path)
-                tasks_data = _json.loads(tasks_path.read_text())
-                notes_map, raw_text, error = extract_task_notes(
-                    history, tasks_data, model_config, coach["name"], chat_completion,
-                )
-                if notes_map is not None:
-                    for task in tasks_data:
-                        if task["id"] in notes_map:
-                            task["notes"] = notes_map[task["id"]]
-                    tasks_path.write_text(_json.dumps(tasks_data, indent=2) + "\n")
-                    print(f"Updated {tasks_path} with task notes")
-                    coach_ran = True
-                else:
-                    print(f"Warning: {error}", file=sys.stderr)
-                    (iter_dir / "notes_raw.txt").write_text(raw_text + "\n")
-                    print("Raw output saved to notes_raw.txt for manual review.", file=sys.stderr)
-
-    # Implementation → Code-review
-    if current_phase == "implementation" and next_phase == "code-review":
-        worktree_config = load_worktree_config(team_dir)
-        if worktree_config and worktree_config.get("enabled"):
-            results = auto_commit_layer_worktrees(team_dir.parent, iteration.get("current_layer", 0))
-            for branch, commit_hash, error in results:
-                if error:
-                    print(f"Warning: could not auto-commit {branch}: {error}", file=sys.stderr)
-                elif commit_hash:
-                    print(f"Auto-committed {branch}: {commit_hash}")
-
-    save_iteration_phase(team_dir, iteration["id"], next_phase)
-    boundary_msg, transition_msg = build_transition_messages(
-        iteration["id"], current_phase, next_phase, tasks_written, coach_ran,
-    )
-    append_message(log_path, boundary_msg)
-    append_message(log_path, transition_msg)
-    print(render_message(transition_msg))
+    for w in result.warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    print(render_message(result.transition_msg))
     print()
-    print(f"Phase advanced: {current_phase} → {next_phase}")
+    print(f"Phase advanced: {result.from_phase} → {result.to_phase}")
     print("Turns reset for new phase.")
-
-    # Auto-checkpoint with updated phase
-    iteration["phase"] = next_phase
-    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
 def cmd_checkpoint(args):
@@ -658,46 +577,33 @@ def cmd_review(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    from gotg.worktree import (
-        ensure_git_repo, diff_branch, list_layer_branches,
-        is_branch_merged, WorktreeError,
-    )
-
-    project_root = team_dir.parent
-    try:
-        ensure_git_repo(project_root)
-    except WorktreeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        raise SystemExit(1)
+    from gotg.session import ReviewError, load_review_branches
 
     iteration, _ = get_current_iteration(team_dir)
-    layer = args.layer if args.layer is not None else iteration.get("current_layer", 0)
 
     if args.branch:
-        branches = [args.branch]
-    else:
-        branches = list_layer_branches(project_root, layer)
-
-    if not branches:
-        print(f"No branches found for layer {layer}.")
-        return
-
-    total_files = 0
-    total_ins = 0
-    total_del = 0
-
-    for br in branches:
-        merged = is_branch_merged(project_root, br)
-        label = f" [merged]" if merged else ""
-        print(f"=== {br}{label} ===")
-
+        # Specific branch — bypass layer discovery, diff just this branch
+        from gotg.worktree import (
+            WorktreeError, diff_branch, ensure_git_repo, is_branch_merged,
+        )
+        project_root = team_dir.parent
         try:
-            result = diff_branch(project_root, br)
+            ensure_git_repo(project_root)
+        except WorktreeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
+        merged = is_branch_merged(project_root, args.branch)
+        label = " [merged]" if merged else ""
+        print(f"=== {args.branch}{label} ===")
+        try:
+            result = diff_branch(project_root, args.branch)
         except WorktreeError as e:
             print(f"Error: {e}")
             print()
-            continue
-
+            print("---")
+            print(f"1 branch(es), 0 file(s) changed, +0 -0 lines")
+            return
         if result["empty"]:
             print("(no changes)")
         else:
@@ -705,17 +611,36 @@ def cmd_review(args):
             if not args.stat_only:
                 print()
                 print(result["diff"].rstrip())
-            total_files += result["files_changed"]
-            total_ins += result["insertions"]
-            total_del += result["deletions"]
+        print()
+        print("---")
+        print(f"1 branch(es), {result['files_changed']} file(s) changed, +{result['insertions']} -{result['deletions']} lines")
+        return
 
+    # Normal case — load all branches for layer
+    try:
+        review = load_review_branches(team_dir, iteration, args.layer)
+    except ReviewError as e:
+        print(f"{e}")
+        return
+
+    for br in review.branches:
+        label = " [merged]" if br.merged else ""
+        print(f"=== {br.branch}{label} ===")
+        if br.empty:
+            print("(no changes)")
+        else:
+            print(br.stat.rstrip())
+            if not args.stat_only:
+                print()
+                print(br.diff.rstrip())
         print()
 
     print("---")
-    if args.branch:
-        print(f"{len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
-    else:
-        print(f"Layer {layer}: {len(branches)} branch(es), {total_files} file(s) changed, +{total_ins} -{total_del} lines")
+    print(
+        f"Layer {review.layer}: {len(review.branches)} branch(es), "
+        f"{review.total_files} file(s) changed, "
+        f"+{review.total_insertions} -{review.total_deletions} lines"
+    )
 
 
 def cmd_merge(args):
@@ -726,11 +651,7 @@ def cmd_merge(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    from gotg.worktree import (
-        ensure_git_repo, merge_branch, abort_merge, is_merge_in_progress,
-        list_layer_branches, is_branch_merged, is_worktree_dirty,
-        list_active_worktrees, WorktreeError,
-    )
+    from gotg.worktree import WorktreeError, abort_merge, ensure_git_repo
 
     project_root = team_dir.parent
     try:
@@ -748,93 +669,50 @@ def cmd_merge(args):
             raise SystemExit(1)
         return
 
-    if is_merge_in_progress(project_root):
-        print("Error: a merge is already in progress.", file=sys.stderr)
-        print("Resolve conflicts and commit, or run 'gotg merge --abort'.", file=sys.stderr)
-        raise SystemExit(1)
-
-    # Block if main has uncommitted changes
-    if is_worktree_dirty(project_root):
-        print("Error: uncommitted changes on main.", file=sys.stderr)
-        print("Commit or stash changes before merging.", file=sys.stderr)
-        raise SystemExit(1)
+    from gotg.session import ReviewError, merge_branches
+    from gotg.worktree import is_branch_merged
 
     iteration, _ = get_current_iteration(team_dir)
     layer = args.layer if args.layer is not None else iteration.get("current_layer", 0)
+    is_all = args.branch == "all"
 
-    if args.branch == "all":
-        branches = list_layer_branches(project_root, layer)
-        if not branches:
-            print(f"No branches found for layer {layer}.")
-            return
+    # Single branch: check if already merged before calling merge_branches
+    if not is_all and is_branch_merged(project_root, args.branch):
+        print(f"Branch '{args.branch}' is already merged into main.")
+        return
 
-        # Filter out already-merged branches
-        unmerged = [br for br in branches if not is_branch_merged(project_root, br)]
-        if not unmerged:
-            print(f"All {len(branches)} branch(es) in layer {layer} already merged.")
-            return
+    branches = None if is_all else [args.branch]
 
-        # Check for dirty worktrees (hard block unless --force)
-        if not args.force:
-            active_wts = list_active_worktrees(project_root)
-            wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
-            for br in unmerged:
-                if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
-                    print(f"Error: uncommitted changes in worktree for {br}.", file=sys.stderr)
-                    print("Run 'gotg commit-worktrees' first, or use --force to merge anyway.", file=sys.stderr)
-                    raise SystemExit(1)
+    try:
+        results = merge_branches(
+            project_root, layer, branches=branches,
+            force=args.force, on_progress=lambda msg: print(msg),
+        )
+    except ReviewError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
 
-        merged_count = 0
-        for br in unmerged:
-            print(f"Merging {br}...")
-            try:
-                result = merge_branch(project_root, br)
-            except WorktreeError as e:
-                print(f"\nError merging {br}: {e}", file=sys.stderr)
-                print(f"Merged {merged_count}/{len(unmerged)} branches before error.")
-                raise SystemExit(1)
-            if result["success"]:
-                print(f"  Merged: {result['commit']}")
-                merged_count += 1
+    merged_count = sum(1 for r in results if r.success)
+    for r in results:
+        if r.success:
+            if is_all:
+                print(f"  Merged: {r.commit}")
             else:
-                print(f"\nCONFLICT merging {br}:")
-                for f in result["conflicts"]:
-                    print(f"  {f}")
-                print(f"\nMerged {merged_count}/{len(unmerged)} branches before conflict.")
+                print(f"Merged {r.branch} into main: {r.commit}")
+        else:
+            print(f"\nCONFLICT merging {r.branch}:" if is_all else f"CONFLICT merging {r.branch}:")
+            for f in r.conflicts:
+                print(f"  {f}")
+            if is_all:
+                print(f"\nMerged {merged_count}/{merged_count + len([x for x in results if not x.success])} branches before conflict.")
                 print("Resolve conflicts and commit, then run 'gotg merge all' again,")
                 print("or run 'gotg merge --abort' to undo.")
-                return
-
-        print(f"\n{merged_count} branch(es) merged into main.")
-    else:
-        branch = args.branch
-
-        if is_branch_merged(project_root, branch):
-            print(f"Branch '{branch}' is already merged into main.")
+            else:
+                print("\nResolve conflicts and commit, or run 'gotg merge --abort' to undo.")
             return
 
-        # Check dirty worktree (hard block unless --force)
-        if not args.force:
-            active_wts = list_active_worktrees(project_root)
-            wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
-            if branch in wt_by_branch and is_worktree_dirty(wt_by_branch[branch]):
-                print(f"Error: uncommitted changes in worktree for {branch}.", file=sys.stderr)
-                print("Run 'gotg commit-worktrees' first, or use --force to merge anyway.", file=sys.stderr)
-                raise SystemExit(1)
-
-        try:
-            result = merge_branch(project_root, branch)
-        except WorktreeError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            raise SystemExit(1)
-
-        if result["success"]:
-            print(f"Merged {branch} into main: {result['commit']}")
-        else:
-            print(f"CONFLICT merging {branch}:")
-            for f in result["conflicts"]:
-                print(f"  {f}")
-            print("\nResolve conflicts and commit, or run 'gotg merge --abort' to undo.")
+    if is_all:
+        print(f"\n{merged_count} branch(es) merged into main.")
 
 
 def cmd_worktrees(args):
@@ -922,134 +800,30 @@ def cmd_next_layer(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    current_phase = iteration.get("phase", "refinement")
-    if current_phase != "code-review":
-        print(f"Error: next-layer requires code-review phase, currently in '{current_phase}'.", file=sys.stderr)
+    from gotg.session import ReviewError, advance_next_layer
+
+    try:
+        result = advance_next_layer(
+            team_dir, iteration, iter_dir,
+            on_progress=lambda msg: print(msg),
+        )
+    except ReviewError as e:
+        print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    current_layer = iteration.get("current_layer", 0)
-    next_layer = current_layer + 1
-
-    worktree_config = load_worktree_config(team_dir)
-    if worktree_config and worktree_config.get("enabled"):
-        from gotg.worktree import (
-            ensure_git_repo, list_layer_branches, is_branch_merged,
-            cleanup_layer_worktrees, list_active_worktrees,
-            is_worktree_dirty, WorktreeError,
-        )
-        import subprocess as _sp
-
-        project_root = team_dir.parent
-        try:
-            ensure_git_repo(project_root)
-        except WorktreeError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            raise SystemExit(1)
-
-        # Verify HEAD is on main
-        head_result = _sp.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_root, capture_output=True, text=True,
-        )
-        current_branch = head_result.stdout.strip()
-        if current_branch != "main":
-            print(
-                f"Error: HEAD is on '{current_branch}', expected 'main'. "
-                "Switch to main before running next-layer.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-
-        # Verify all branches for current layer are merged
-        layer_branches = list_layer_branches(project_root, current_layer)
-        unmerged = [br for br in layer_branches if not is_branch_merged(project_root, br)]
-        if unmerged:
-            print(f"Error: unmerged branches for layer {current_layer}:", file=sys.stderr)
-            for br in unmerged:
-                print(f"  {br}", file=sys.stderr)
-            print("Merge all branches before advancing: gotg merge all", file=sys.stderr)
-            raise SystemExit(1)
-
-        # Block on dirty worktrees to avoid losing uncommitted work
-        layer_suffix = f"/layer-{current_layer}"
-        dirty_wts = []
-        for wt in list_active_worktrees(project_root):
-            branch = wt.get("branch", "")
-            if branch.endswith(layer_suffix) and is_worktree_dirty(Path(wt["path"])):
-                dirty_wts.append(branch)
-        if dirty_wts:
-            print(f"Error: dirty worktrees for layer {current_layer}:", file=sys.stderr)
-            for br in dirty_wts:
-                print(f"  {br}", file=sys.stderr)
-            print("Commit or discard changes before advancing: gotg commit-worktrees", file=sys.stderr)
-            raise SystemExit(1)
-
-        # Clean up current layer worktrees
-        try:
-            removed = cleanup_layer_worktrees(project_root, current_layer)
-            for wt_path in removed:
-                print(f"Removed worktree: {wt_path}")
-        except WorktreeError as e:
-            print(f"Warning: worktree cleanup failed: {e}", file=sys.stderr)
-
-    # Check if next layer has tasks
-    import json as _json
-    tasks_path = iter_dir / "tasks.json"
-    if not tasks_path.exists():
-        print("Error: tasks.json not found.", file=sys.stderr)
-        raise SystemExit(1)
-    tasks = _json.loads(tasks_path.read_text())
-
-    # Recompute layers if any task is missing the stored layer field
-    if any("layer" not in t for t in tasks):
-        from gotg.tasks import compute_layers
-        try:
-            layers = compute_layers(tasks)
-            for t in tasks:
-                t["layer"] = layers[t["id"]]
-        except (ValueError, KeyError) as e:
-            print(f"Warning: could not compute layers: {e}", file=sys.stderr)
-
-    next_layer_tasks = [t for t in tasks if t.get("layer") == next_layer]
-
-    if not next_layer_tasks:
-        print(f"All layers complete (through layer {current_layer}). Iteration is done.")
+    if result.all_done:
+        print(f"All layers complete (through layer {result.from_layer}). Iteration is done.")
         print("Edit .team/iteration.json to set status to 'done' when ready.")
         return
 
-    # Advance to next layer
-    save_iteration_fields(team_dir, iteration["id"], phase="implementation", current_layer=next_layer)
+    for wt_name in result.removed_worktrees:
+        print(f"Removed worktree: {wt_name}")
 
-    # Log transition with boundary marker
-    from gotg.conversation import append_message
-    log_path = iter_dir / "conversation.jsonl"
-    boundary_msg = {
-        "from": "system",
-        "iteration": iteration["id"],
-        "content": "--- HISTORY BOUNDARY ---",
-        "phase_boundary": True,
-        "from_phase": "code-review",
-        "to_phase": "implementation",
-        "layer": next_layer,
-    }
-    append_message(log_path, boundary_msg)
-    msg = {
-        "from": "system",
-        "iteration": iteration["id"],
-        "content": f"--- Layer {current_layer} complete. Advancing to layer {next_layer} (implementation) ---",
-    }
-    append_message(log_path, msg)
-    print(render_message(msg))
+    print(render_message(result.transition_msg))
     print()
-    print(f"Advanced to layer {next_layer} (implementation phase).")
-    print(f"Layer {next_layer} has {len(next_layer_tasks)} task(s).")
+    print(f"Advanced to layer {result.to_layer} (implementation phase).")
+    print(f"Layer {result.to_layer} has {result.task_count} task(s).")
     print("Turns reset for new phase.")
-
-    # Auto-checkpoint
-    iteration["phase"] = "implementation"
-    iteration["current_layer"] = next_layer
-    coach = load_coach(team_dir)
-    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
 # ── Grooming commands ────────────────────────────────────────────

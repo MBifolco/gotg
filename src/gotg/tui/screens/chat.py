@@ -13,6 +13,9 @@ from textual.widgets import Footer, Header, Input
 
 from gotg.conversation import append_message, read_log, read_phase_history
 from gotg.events import (
+    AdvanceComplete,
+    AdvanceError,
+    AdvanceProgress,
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
@@ -33,6 +36,7 @@ class SessionState(Enum):
     RUNNING = auto()
     PAUSED = auto()
     COMPLETE = auto()
+    ADVANCING = auto()
 
 
 class PauseReason(Enum):
@@ -51,6 +55,8 @@ class ChatScreen(Screen):
         Binding("r", "run_session", "Run", show=False),
         Binding("c", "continue_session", "Continue", show=False),
         Binding("a", "manage_approvals", "Approvals", show=False),
+        Binding("p", "advance_phase", "Advance", show=False),
+        Binding("d", "open_review", "Diffs", show=False),
     ]
 
     session_state: reactive[SessionState] = reactive(SessionState.VIEWING)
@@ -143,6 +149,10 @@ class ChatScreen(Screen):
             input_widget.disabled = False
             input_widget.placeholder = "Press C to continue with more turns..."
             info.update_session_status("Complete", self._turn_count)
+        elif state == SessionState.ADVANCING:
+            input_widget.placeholder = "Advancing phase..."
+            input_widget.disabled = True
+            info.update_session_status("Advancing")
 
     # ── Session lifecycle ────────────────────────────────────
 
@@ -324,9 +334,14 @@ class ChatScreen(Screen):
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            self.query_one("#action-bar", ActionBar).show(
-                "Phase complete. Press C to continue discussing."
-            )
+            if event.phase == "code-review":
+                self.query_one("#action-bar", ActionBar).show(
+                    "Code review complete. Press D to review diffs and merge."
+                )
+            else:
+                self.query_one("#action-bar", ActionBar).show(
+                    "Phase complete. Press P to advance, C to continue discussing."
+                )
 
         elif isinstance(event, SessionComplete):
             self.session_state = SessionState.COMPLETE
@@ -334,6 +349,28 @@ class ChatScreen(Screen):
                 f"Session complete ({event.total_turns} turns). "
                 "Press C to continue with more turns."
             )
+
+        elif isinstance(event, AdvanceProgress):
+            self.query_one("#action-bar", ActionBar).show(event.message)
+
+        elif isinstance(event, AdvanceComplete):
+            self.session_state = SessionState.VIEWING
+            # Patch metadata for display only — R → run reloads from disk
+            self.metadata["phase"] = event.to_phase
+            self.query_one("#info-tile", InfoTile).update_phase(event.to_phase)
+            self.query_one("#action-bar", ActionBar).show(
+                f"Advanced: {event.from_phase} -> {event.to_phase}. Press R to run."
+            )
+
+        elif isinstance(event, AdvanceError):
+            if event.partial:
+                self.notify(f"Warning: {event.error}", severity="warning")
+            else:
+                self._pause_reason = PauseReason.PHASE_COMPLETE
+                self.session_state = SessionState.PAUSED
+                self.query_one("#action-bar", ActionBar).show(
+                    f"Advance failed: {event.error}"
+                )
 
     def on_session_error(self, message: SessionError) -> None:
         """Handle worker thread errors."""
@@ -394,23 +431,110 @@ class ChatScreen(Screen):
         from gotg.tui.screens.approval import ApprovalScreen
         self.app.push_screen(ApprovalScreen(approvals_path))
 
-    def on_screen_resume(self) -> None:
-        """Refresh approval count when returning from ApprovalScreen."""
+    def action_advance_phase(self) -> None:
+        """Start phase advance when paused at phase complete."""
         if self.session_state != SessionState.PAUSED:
             return
-        if self._pause_reason != PauseReason.APPROVALS:
+        if self._pause_reason != PauseReason.PHASE_COMPLETE:
             return
-        approvals_path = self.data_dir / "approvals.json"
-        if not approvals_path.exists():
+        if self._session_kind != "iteration":
             return
-        from gotg.approvals import ApprovalStore
-        store = ApprovalStore(approvals_path)
-        pending = store.get_pending()
-        bar = self.query_one("#action-bar", ActionBar)
-        if pending:
-            bar.show(
-                f"Paused: {len(pending)} pending approval(s). "
-                "Press A to review approvals, C to continue."
+        self.session_state = SessionState.ADVANCING
+        self.query_one("#action-bar", ActionBar).show("Advancing phase...")
+        self.run_worker(self._run_advance, thread=True)
+
+    def _run_advance(self) -> None:
+        """Runs in worker thread. Calls advance_phase and posts progress events."""
+        try:
+            from gotg.context import TeamContext
+            from gotg.model import chat_completion
+            from gotg.session import PhaseAdvanceError, advance_phase
+
+            ctx = TeamContext.from_team_dir(self.app.team_dir)
+            iteration, iter_dir = ctx.iteration_store.get_current()
+
+            def on_progress(step: str):
+                self.post_message(EngineEvent(AdvanceProgress(message=step)))
+
+            result = advance_phase(
+                ctx.team_dir, iteration, iter_dir,
+                chat_call=chat_completion,
+                on_progress=on_progress,
             )
-        else:
-            bar.show("All approvals resolved. Press C to continue.")
+
+            # Show boundary + transition messages in conversation
+            # (already persisted to disk by advance_phase)
+            self.post_message(EngineEvent(AppendMessage(result.boundary_msg)))
+            self.post_message(EngineEvent(AppendMessage(result.transition_msg)))
+
+            for w in result.warnings:
+                self.post_message(EngineEvent(AdvanceError(error=w, partial=True)))
+
+            self.post_message(EngineEvent(AdvanceComplete(
+                from_phase=result.from_phase,
+                to_phase=result.to_phase,
+                checkpoint_number=result.checkpoint_number,
+            )))
+
+        except PhaseAdvanceError as e:
+            self.post_message(EngineEvent(AdvanceError(error=str(e), partial=False)))
+        except Exception as e:
+            self.post_message(SessionError(f"Advance failed: {e}"))
+
+    def action_open_review(self) -> None:
+        """Open review screen for code-review diffs and merge."""
+        if self.session_state != SessionState.PAUSED:
+            return
+        if self._pause_reason != PauseReason.PHASE_COMPLETE:
+            return
+        if self._session_kind != "iteration":
+            return
+        if self.metadata.get("phase") != "code-review":
+            return
+        from gotg.context import TeamContext
+        ctx = TeamContext.from_team_dir(self.app.team_dir)
+        iteration, iter_dir = ctx.iteration_store.get_current()
+        from gotg.tui.screens.review import ReviewScreen
+        self.app.push_screen(ReviewScreen(self.app.team_dir, iteration, iter_dir))
+
+    def on_screen_resume(self) -> None:
+        """Refresh state when returning from pushed screens."""
+        if self.session_state != SessionState.PAUSED:
+            return
+
+        if self._pause_reason == PauseReason.APPROVALS:
+            approvals_path = self.data_dir / "approvals.json"
+            if not approvals_path.exists():
+                return
+            from gotg.approvals import ApprovalStore
+            store = ApprovalStore(approvals_path)
+            pending = store.get_pending()
+            bar = self.query_one("#action-bar", ActionBar)
+            if pending:
+                bar.show(
+                    f"Paused: {len(pending)} pending approval(s). "
+                    "Press A to review approvals, C to continue."
+                )
+            else:
+                bar.show("All approvals resolved. Press C to continue.")
+
+        elif self._pause_reason == PauseReason.PHASE_COMPLETE:
+            # Check if phase changed (next-layer from ReviewScreen)
+            from gotg.context import TeamContext
+            ctx = TeamContext.from_team_dir(self.app.team_dir)
+            iteration, _ = ctx.iteration_store.get_current()
+            new_phase = iteration.get("phase")
+            if new_phase != self.metadata.get("phase"):
+                self.metadata["phase"] = new_phase
+                self.metadata["current_layer"] = iteration.get("current_layer")
+                self.query_one("#info-tile", InfoTile).update_phase(new_phase)
+                layer = iteration.get("current_layer", 0)
+                self.session_state = SessionState.VIEWING
+                self.query_one("#action-bar", ActionBar).show(
+                    f"Advanced to layer {layer} (implementation). Press R to run."
+                )
+                # Append only the new messages (boundary + transition)
+                messages = read_log(self._log_path) if self._log_path.exists() else []
+                msg_list = self.query_one("#message-list", MessageList)
+                for m in messages[-2:]:
+                    msg_list.append_message(m)

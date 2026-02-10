@@ -74,6 +74,15 @@ class InfoTile(Vertical):
         # Live session status (hidden by default, updated during running sessions)
         self.mount(Static("", id="live-status", classes="info-field"))
 
+    def update_phase(self, phase: str) -> None:
+        """Update just the phase field without re-composing."""
+        for child in self.children:
+            if isinstance(child, Static):
+                content = str(child._Static__content)
+                if content.startswith("Phase:"):
+                    child.update(f"Phase: {escape(phase)}")
+                    return
+
     def update_session_status(self, state_text: str, turn: int | None = None) -> None:
         """Update the live session status indicator."""
         status = self.query_one("#live-status", Static)

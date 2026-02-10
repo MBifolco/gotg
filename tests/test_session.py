@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from gotg.conversation import append_message as conv_append_message
 from gotg.events import (
     AppendDebug,
     AppendMessage,
@@ -304,3 +305,130 @@ def test_apply_and_inject_mixed(tmp_path):
     assert not (project / "src" / "bad.py").exists()
     lines = log_path.read_text().strip().splitlines()
     assert len(lines) == 2
+
+
+# ── validate_advance / advance_phase ──────────────────────────────
+
+from gotg.session import PhaseAdvanceError, validate_advance, advance_phase, AdvanceResult
+
+
+def test_validate_advance_success():
+    iteration = {"phase": "refinement", "status": "in-progress"}
+    current, next_ = validate_advance(iteration)
+    assert current == "refinement"
+    assert next_ == "planning"
+
+
+def test_validate_advance_last_phase():
+    iteration = {"phase": "code-review", "status": "in-progress"}
+    with pytest.raises(PhaseAdvanceError, match="Cannot advance past"):
+        validate_advance(iteration)
+
+
+def test_validate_advance_unknown_phase():
+    iteration = {"phase": "bogus", "status": "in-progress"}
+    with pytest.raises(PhaseAdvanceError, match="Unknown phase"):
+        validate_advance(iteration)
+
+
+def test_validate_advance_wrong_status():
+    iteration = {"phase": "refinement", "status": "pending"}
+    with pytest.raises(PhaseAdvanceError, match="expected 'in-progress'"):
+        validate_advance(iteration)
+
+
+def _make_advance_team_dir(tmp_path, phase="refinement", with_coach=True):
+    """Create a minimal .team dir for advance_phase tests."""
+    team_dir = tmp_path / ".team"
+    team_dir.mkdir()
+
+    team_config = {
+        "agents": [
+            {"name": "agent-1", "role": "Software Engineer"},
+            {"name": "agent-2", "role": "Software Engineer"},
+        ],
+        "model": {"provider": "ollama", "model": "test", "base_url": "http://localhost:11434"},
+    }
+    if with_coach:
+        team_config["coach"] = {"name": "coach", "role": "Agile Coach"}
+    (team_dir / "team.json").write_text(json.dumps(team_config))
+
+    iteration = {
+        "id": "iter-1", "description": "test", "status": "in-progress",
+        "phase": phase, "max_turns": 10,
+    }
+    (team_dir / "iteration.json").write_text(json.dumps({
+        "iterations": [iteration],
+        "current": "iter-1",
+    }))
+
+    iter_dir = team_dir / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").write_text("")
+
+    return team_dir, iter_dir, iteration
+
+
+def test_advance_refinement_to_planning(tmp_path):
+    """advance_phase writes refinement_summary.md and returns correct result."""
+    team_dir, iter_dir, iteration = _make_advance_team_dir(tmp_path, phase="refinement")
+    log_path = iter_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "agent-1", "content": "We need auth."})
+
+    mock_chat = lambda **kwargs: "## Summary\nAuth system."
+    result = advance_phase(team_dir, iteration, iter_dir, chat_call=mock_chat)
+
+    assert result.from_phase == "refinement"
+    assert result.to_phase == "planning"
+    assert (iter_dir / "refinement_summary.md").exists()
+    assert "Auth system" in (iter_dir / "refinement_summary.md").read_text()
+    assert result.checkpoint_number is not None
+    assert len(result.warnings) == 0
+
+
+def test_advance_planning_bad_json(tmp_path):
+    """Bad JSON from LLM produces warnings but advance succeeds."""
+    team_dir, iter_dir, iteration = _make_advance_team_dir(tmp_path, phase="planning")
+    log_path = iter_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "agent-1", "content": "Task plan here."})
+
+    mock_chat = lambda **kwargs: "not valid json at all"
+    result = advance_phase(team_dir, iteration, iter_dir, chat_call=mock_chat)
+
+    assert result.from_phase == "planning"
+    assert result.to_phase == "pre-code-review"
+    assert len(result.warnings) > 0
+    assert (iter_dir / "tasks_raw.txt").exists()
+    assert not (iter_dir / "tasks.json").exists()
+
+
+def test_advance_on_progress_called(tmp_path):
+    """on_progress callback receives step messages."""
+    team_dir, iter_dir, iteration = _make_advance_team_dir(tmp_path, phase="refinement")
+    log_path = iter_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "agent-1", "content": "stuff"})
+
+    progress_msgs = []
+    mock_chat = lambda **kwargs: "summary"
+    result = advance_phase(
+        team_dir, iteration, iter_dir, chat_call=mock_chat,
+        on_progress=progress_msgs.append,
+    )
+
+    assert len(progress_msgs) >= 2  # at least extraction msg + checkpoint msg
+    assert any("refinement" in m.lower() or "summariz" in m.lower() for m in progress_msgs)
+
+
+def test_advance_without_coach_skips_extraction(tmp_path):
+    """No coach → no extraction, but advance still works."""
+    team_dir, iter_dir, iteration = _make_advance_team_dir(
+        tmp_path, phase="refinement", with_coach=False
+    )
+
+    mock_chat = lambda **kwargs: "should not be called"
+    result = advance_phase(team_dir, iteration, iter_dir, chat_call=mock_chat)
+
+    assert result.from_phase == "refinement"
+    assert result.to_phase == "planning"
+    assert not (iter_dir / "refinement_summary.md").exists()
+    assert result.checkpoint_number is not None
