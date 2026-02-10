@@ -121,8 +121,7 @@ class HomeScreen(Screen):
                 if row_key is None:
                     return None
                 # Get the key from the row index
-                row_key_obj = table._row_order[row_key]  # noqa: SLF001
-                key_str = row_key_obj.value
+                key_str = table.ordered_rows[row_key].key.value
                 store = getattr(self, data_store, {})
                 if key_str in store:
                     meta, data_dir = store[key_str]

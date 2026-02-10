@@ -147,6 +147,64 @@ def setup_worktrees(
     return worktree_map, warnings
 
 
+def apply_and_inject(
+    approval_store: object,
+    fileguard: object,
+    iteration: dict,
+    log_path: Path,
+    worktree_map: dict | None = None,
+) -> list[dict]:
+    """Apply approved writes and inject denial messages.
+
+    Returns list of system message dicts (already persisted to log_path).
+    Caller decides how to display them (print for CLI, post_message for TUI).
+    """
+    from gotg.approvals import apply_approved_writes
+
+    messages: list[dict] = []
+
+    # Route writes to agent worktrees when available
+    fg_for_agent = None
+    if worktree_map:
+        fg_for_agent = (
+            lambda name: fileguard.with_root(worktree_map[name])
+            if name in worktree_map
+            else fileguard
+        )
+
+    results = apply_approved_writes(
+        approval_store, fileguard, fileguard_for_agent=fg_for_agent
+    )
+    for r in results:
+        msg = {
+            "from": "system",
+            "iteration": iteration["id"],
+            "content": (
+                f"[file_write] APPROVED: {r['message']}"
+                if r["success"]
+                else f"[file_write] APPROVAL FAILED: {r['message']}"
+            ),
+        }
+        append_message(log_path, msg)
+        messages.append(msg)
+
+    for req in approval_store.get_denied_uninjected():
+        reason = req.get("denial_reason") or "No reason provided"
+        msg = {
+            "from": "system",
+            "iteration": iteration["id"],
+            "content": (
+                f"[file_write] DENIED by PM: {req['path']} — {reason}. "
+                f"(Originally requested by {req['requested_by']})"
+            ),
+        }
+        append_message(log_path, msg)
+        messages.append(msg)
+        approval_store.mark_injected(req["id"])
+
+    return messages
+
+
 def load_diffs_for_review(
     team_dir: Path, iteration: dict, layer_override: int | None
 ) -> tuple[str | None, list[str]]:

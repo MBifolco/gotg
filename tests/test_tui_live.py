@@ -370,6 +370,49 @@ async def test_info_tile_live_status(tmp_path):
         assert "5" in content
 
 
+# ── Approval integration ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_chat_press_a_opens_approval_screen(tmp_path):
+    """Pressing A when paused for approvals opens ApprovalScreen."""
+    team_dir = _make_team_dir(tmp_path, iterations=[_default_iteration()])
+
+    # Create approvals.json in the iteration directory
+    iter_dir = team_dir / "iterations" / "iter-1"
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("test.py", "code", "agent-1", {})
+
+    def mock_run_session(**kwargs):
+        yield _make_session_started()
+        yield PauseForApprovals(pending_count=1)
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        with patch("gotg.context.TeamContext") as mock_ctx_cls:
+            _setup_mock_ctx(mock_ctx_cls, team_dir)
+            with patch("gotg.engine.run_session", side_effect=mock_run_session):
+                await pilot.press("enter")
+                await pilot.pause()
+
+                app.screen._start_session("run")
+                await pilot.pause()
+                await pilot.pause()
+                await pilot.pause()
+
+        assert app.screen.session_state == SessionState.PAUSED
+
+        # Press A to open approvals
+        await pilot.press("a")
+        await pilot.pause()
+
+        from gotg.tui.screens.approval import ApprovalScreen
+        assert isinstance(app.screen, ApprovalScreen)
+
+
 # ── Mock helpers ─────────────────────────────────────────────────
 
 

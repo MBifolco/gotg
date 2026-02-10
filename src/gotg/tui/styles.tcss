@@ -122,3 +122,41 @@
 #iter-table, #groom-table {
     height: 1fr;
 }
+
+/* ── Approval screen ──────────────────────────────────────── */
+
+#approval-layout {
+    height: 1fr;
+}
+
+#approval-left {
+    width: 2fr;
+    height: 100%;
+}
+
+#approval-right {
+    width: 3fr;
+    height: 100%;
+}
+
+#approval-table {
+    height: 1fr;
+}
+
+#denial-input {
+    dock: bottom;
+}
+
+/* ── Content viewer ───────────────────────────────────────── */
+
+.cv-header {
+    text-style: bold;
+    margin: 0 0 1 0;
+    color: $accent;
+}
+
+.cv-placeholder {
+    color: $text-muted;
+    text-style: italic;
+    padding: 1 2;
+}

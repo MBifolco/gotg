@@ -50,6 +50,7 @@ class ChatScreen(Screen):
         Binding("end", "scroll_bottom", "Bottom"),
         Binding("r", "run_session", "Run", show=False),
         Binding("c", "continue_session", "Continue", show=False),
+        Binding("a", "manage_approvals", "Approvals", show=False),
     ]
 
     session_state: reactive[SessionState] = reactive(SessionState.VIEWING)
@@ -195,6 +196,22 @@ class ChatScreen(Screen):
                     ctx.team_dir, iteration, None
                 )
 
+                # Apply approved writes and inject denials before resuming
+                if approval_store:
+                    from gotg.session import apply_and_inject
+                    inject_msgs = apply_and_inject(
+                        approval_store, fileguard, iteration,
+                        self._log_path, worktree_map=worktree_map,
+                    )
+                    for msg in inject_msgs:
+                        self.post_message(EngineEvent(AppendMessage(msg)))
+                    remaining = approval_store.get_pending()
+                    if remaining:
+                        self.post_message(EngineEvent(
+                            PauseForApprovals(pending_count=len(remaining))
+                        ))
+                        return
+
                 history = read_phase_history(self._log_path)
                 # Compute additive max_turns for continue
                 non_agent = {"human", "system"}
@@ -294,7 +311,7 @@ class ChatScreen(Screen):
             self.session_state = SessionState.PAUSED
             self.query_one("#action-bar", ActionBar).show(
                 f"Paused: {event.pending_count} pending approval(s). "
-                "Manage approvals in CLI, then press C to continue."
+                "Press A to review approvals, C to continue."
             )
 
         elif isinstance(event, CoachAskedPM):
@@ -363,3 +380,37 @@ class ChatScreen(Screen):
                 human_msg = text
                 input_widget.value = ""
             self._start_session("continue", human_message=human_msg)
+
+    def action_manage_approvals(self) -> None:
+        """Open approval management screen."""
+        if self.session_state != SessionState.PAUSED:
+            return
+        if self._pause_reason != PauseReason.APPROVALS:
+            return
+        approvals_path = self.data_dir / "approvals.json"
+        if not approvals_path.exists():
+            self.notify("No approvals file found.", severity="warning")
+            return
+        from gotg.tui.screens.approval import ApprovalScreen
+        self.app.push_screen(ApprovalScreen(approvals_path))
+
+    def on_screen_resume(self) -> None:
+        """Refresh approval count when returning from ApprovalScreen."""
+        if self.session_state != SessionState.PAUSED:
+            return
+        if self._pause_reason != PauseReason.APPROVALS:
+            return
+        approvals_path = self.data_dir / "approvals.json"
+        if not approvals_path.exists():
+            return
+        from gotg.approvals import ApprovalStore
+        store = ApprovalStore(approvals_path)
+        pending = store.get_pending()
+        bar = self.query_one("#action-bar", ActionBar)
+        if pending:
+            bar.show(
+                f"Paused: {len(pending)} pending approval(s). "
+                "Press A to review approvals, C to continue."
+            )
+        else:
+            bar.show("All approvals resolved. Press C to continue.")

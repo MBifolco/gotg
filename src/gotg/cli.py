@@ -303,40 +303,14 @@ def cmd_continue(args):
 
     # Apply approved writes and inject denials before resuming
     if approval_store:
-        from gotg.approvals import apply_approved_writes
-        # When worktrees active, route approved writes to correct agent's worktree
-        fg_for_agent = None
-        if worktree_map:
-            fg_for_agent = lambda name: fileguard.with_root(worktree_map[name]) if name in worktree_map else fileguard
-        results = apply_approved_writes(approval_store, fileguard, fileguard_for_agent=fg_for_agent)
-        for r in results:
-            result_msg = {
-                "from": "system",
-                "iteration": iteration["id"],
-                "content": (
-                    f"[file_write] APPROVED: {r['message']}"
-                    if r["success"]
-                    else f"[file_write] APPROVAL FAILED: {r['message']}"
-                ),
-            }
-            append_message(log_path, result_msg)
-            print(render_message(result_msg))
+        from gotg.session import apply_and_inject
+        messages = apply_and_inject(
+            approval_store, fileguard, iteration, log_path,
+            worktree_map=worktree_map,
+        )
+        for msg in messages:
+            print(render_message(msg))
             print()
-
-        for req in approval_store.get_denied_uninjected():
-            reason = req.get("denial_reason") or "No reason provided"
-            denial_msg = {
-                "from": "system",
-                "iteration": iteration["id"],
-                "content": (
-                    f"[file_write] DENIED by PM: {req['path']} — {reason}. "
-                    f"(Originally requested by {req['requested_by']})"
-                ),
-            }
-            append_message(log_path, denial_msg)
-            print(render_message(denial_msg))
-            print()
-            approval_store.mark_injected(req["id"])
 
         remaining = approval_store.get_pending()
         if remaining:

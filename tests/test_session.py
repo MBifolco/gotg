@@ -14,6 +14,7 @@ import pytest
 
 from gotg.session import (
     SessionSetupError,
+    apply_and_inject,
     build_file_infra,
     load_diffs_for_review,
     persist_event,
@@ -212,3 +213,94 @@ def test_load_diffs_warns_no_worktrees(tmp_path):
     diffs, warnings = load_diffs_for_review(team, {"phase": "code-review"}, None)
     assert diffs is None
     assert any("worktrees not enabled" in w for w in warnings)
+
+
+# ── apply_and_inject ────────────────────────────────────────
+
+
+def _make_approval_infra(tmp_path):
+    """Create project dir, iter dir, fileguard, and approval store."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "src").mkdir()
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+
+    from gotg.approvals import ApprovalStore
+    from gotg.fileguard import FileGuard
+
+    file_access = {"writable_paths": ["**"], "enable_approvals": True}
+    guard = FileGuard(project, file_access)
+    store = ApprovalStore(iter_dir / "approvals.json")
+    return project, iter_dir, log_path, guard, store
+
+
+def test_apply_and_inject_applies_approved(tmp_path):
+    """Approved writes get applied and system messages returned."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    store.add_request("src/hello.py", "print('hi')", "agent-1", {})
+    store.approve("a1")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+
+    assert len(messages) == 1
+    assert "APPROVED" in messages[0]["content"]
+    assert "src/hello.py" in messages[0]["content"]
+    assert (project / "src" / "hello.py").read_text() == "print('hi')"
+    # Verify persisted to log
+    lines = log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+
+
+def test_apply_and_inject_injects_denials(tmp_path):
+    """Denied requests get system messages and are marked injected."""
+    _project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    store.add_request("hack.py", "evil", "agent-1", {})
+    store.deny("a1", "Not allowed")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+
+    assert len(messages) == 1
+    assert "DENIED" in messages[0]["content"]
+    assert "Not allowed" in messages[0]["content"]
+    assert "agent-1" in messages[0]["content"]
+    # Verify marked as injected
+    reloaded = store._get("a1")
+    assert reloaded.get("injected") is True
+
+
+def test_apply_and_inject_noop_when_empty(tmp_path):
+    """No messages when nothing to apply or inject."""
+    _project, _iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+
+    assert messages == []
+    assert not log_path.exists()
+
+
+def test_apply_and_inject_mixed(tmp_path):
+    """Handles both approved and denied in same call."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    store.add_request("src/good.py", "good code", "agent-1", {})
+    store.add_request("src/bad.py", "bad code", "agent-2", {})
+    store.approve("a1")
+    store.deny("a2", "nope")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+
+    assert len(messages) == 2
+    assert "APPROVED" in messages[0]["content"]
+    assert "DENIED" in messages[1]["content"]
+    assert (project / "src" / "good.py").read_text() == "good code"
+    assert not (project / "src" / "bad.py").exists()
+    lines = log_path.read_text().strip().splitlines()
+    assert len(lines) == 2
