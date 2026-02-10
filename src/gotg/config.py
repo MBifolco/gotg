@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
@@ -131,3 +133,29 @@ def save_model_config(team_dir: Path, model_config: dict) -> None:
     team_config = json.loads(team_path.read_text())
     team_config["model"] = model_config
     team_path.write_text(json.dumps(team_config, indent=2) + "\n")
+
+
+class IterationStore:
+    """iteration.json persistence.
+
+    Wraps existing free functions with an OO interface that binds
+    team_dir at construction time.
+    """
+
+    def __init__(self, team_dir: Path):
+        self.team_dir = team_dir
+
+    def load(self) -> dict:
+        return load_iteration(self.team_dir)
+
+    def get_current(self) -> tuple[dict, Path]:
+        return get_current_iteration(self.team_dir)
+
+    def get_dir(self, iteration_id: str) -> Path:
+        return get_iteration_dir(self.team_dir, iteration_id)
+
+    def save_fields(self, iteration_id: str, **fields) -> None:
+        save_iteration_fields(self.team_dir, iteration_id, **fields)
+
+    def save_phase(self, iteration_id: str, phase: str) -> None:
+        save_iteration_phase(self.team_dir, iteration_id, phase)

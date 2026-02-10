@@ -3,7 +3,6 @@ import os
 import sys
 from pathlib import Path
 
-from gotg.agent import build_prompt, build_coach_prompt
 from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
     load_agents, load_coach, load_model_config, load_file_access,
@@ -11,14 +10,20 @@ from gotg.config import (
     get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
+from gotg.context import TeamContext
 from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
-from gotg.model import chat_completion, agentic_completion
-from gotg.scaffold import (
-    init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT,
-    COACH_NOTES_EXTRACTION_PROMPT, COACH_TOOLS, AGENT_TOOLS,
-    should_inject_kickoff, format_phase_kickoff,
+from gotg.engine import SessionDeps, run_session
+from gotg.events import (
+    AppendDebug, AppendMessage, CoachAskedPM,
+    PauseForApprovals, PhaseCompleteSignaled,
+    SessionComplete, SessionStarted,
 )
-from gotg.tools import format_tool_operation
+from gotg.model import chat_completion, agentic_completion
+from gotg.scaffold import init_project, should_inject_kickoff, format_phase_kickoff
+from gotg.transitions import (
+    extract_grooming_summary, extract_tasks, extract_task_notes,
+    auto_commit_layer_worktrees, build_transition_messages,
+)
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -146,6 +151,37 @@ def _load_diffs_for_code_review(team_dir: Path, iteration: dict, args) -> str | 
     return diffs
 
 
+def _print_session_header(event: SessionStarted) -> None:
+    """Print conversation session header from SessionStarted event."""
+    print(f"Starting conversation: {event.iteration_id}")
+    print(f"Task: {event.description}")
+    if event.current_layer is not None:
+        print(f"Phase: {event.phase} (layer {event.current_layer})")
+    else:
+        print(f"Phase: {event.phase}")
+    if event.coach:
+        print(f"Coach: {event.coach} (facilitating)")
+    if event.has_file_tools:
+        print(f"File tools: enabled (writable: {event.writable_paths or 'none'})")
+    if event.worktree_count:
+        print(f"Worktrees: {event.worktree_count} active")
+    print(f"Turns: {event.turn}/{event.max_turns}")
+    print("---")
+
+
+def _print_phase_complete(phase: str | None) -> None:
+    """Print phase-specific completion message."""
+    print("---")
+    if phase == "code-review":
+        print("Coach signals code review complete.")
+        print("Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.")
+    elif phase == PHASE_ORDER[-1]:
+        print("Coach signals phase complete. This is the final phase — iteration is done.")
+        print("Run `gotg continue` to keep discussing if needed.")
+    else:
+        print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
+
+
 def run_conversation(
     iter_dir: Path,
     agents: list[dict],
@@ -176,233 +212,56 @@ def run_conversation(
         tasks_data = _json.loads(tasks_path.read_text())
         tasks_summary = format_tasks_summary(tasks_data)
 
-    # Build participant list from agents + coach + detect human in history
-    all_participants = [
-        {"name": a["name"], "role": a.get("role", "Software Engineer")}
-        for a in agents
-    ]
-    if coach:
-        all_participants.append({"name": coach["name"], "role": coach.get("role", "Agile Coach")})
-    if any(msg["from"] == "human" for msg in history):
-        all_participants.append({"name": "human", "role": "Team Member"})
-
-    # Count only engineering agent turns (human/coach/system don't affect rotation)
-    non_agent = {"human", "system"}
-    if coach:
-        non_agent.add(coach["name"])
-    turn = sum(1 for msg in history if msg["from"] not in non_agent)
-    num_agents = len(agents)
-
-    print(f"Starting conversation: {iteration['id']}")
-    print(f"Task: {iteration['description']}")
-    phase = iteration.get('phase', 'grooming')
-    current_layer = iteration.get('current_layer')
-    if current_layer is not None:
-        print(f"Phase: {phase} (layer {current_layer})")
-    else:
-        print(f"Phase: {phase}")
-    if coach:
-        print(f"Coach: {coach['name']} (facilitating)")
-    if fileguard:
-        writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
-        print(f"File tools: enabled (writable: {writable})")
-    if worktree_map:
-        print(f"Worktrees: {len(worktree_map)} active")
-    print(f"Turns: {turn}/{max_turns}")
-    print("---")
-
-    # Inject phase kickoff message if starting a fresh phase
+    # Pre-compute kickoff (format_phase_kickoff returns "" for unknown phases)
+    phase = iteration.get("phase", "grooming")
+    kickoff_text = None
     if should_inject_kickoff(history, phase):
-        kickoff_text = format_phase_kickoff(phase, agents, iteration, fileguard, iter_dir)
-        if kickoff_text:
-            kickoff_msg = {
-                "from": "system",
-                "iteration": iteration["id"],
-                "content": kickoff_text,
-            }
-            append_message(log_path, kickoff_msg)
-            print(render_message(kickoff_msg))
+        text = format_phase_kickoff(phase, agents, iteration, fileguard, iter_dir)
+        if text:
+            kickoff_text = text
+
+    # Build deps from module-level imports (bridge pattern — preserves mock targets)
+    deps = SessionDeps(
+        agent_completion=agentic_completion,
+        coach_completion=chat_completion,
+    )
+
+    # Run engine, handle events (only engine mutates history)
+    for event in run_session(
+        agents=agents, iteration=iteration, model_config=model_config,
+        deps=deps, history=history, max_turns=max_turns,
+        coach=coach, fileguard=fileguard, approval_store=approval_store,
+        worktree_map=worktree_map, groomed_summary=groomed_summary,
+        tasks_summary=tasks_summary, diffs_summary=diffs_summary,
+        kickoff_text=kickoff_text,
+    ):
+        if isinstance(event, SessionStarted):
+            _print_session_header(event)
+        elif isinstance(event, AppendMessage):
+            append_message(log_path, event.msg)
+            print(render_message(event.msg))
             print()
-            history.append(kickoff_msg)
-
-    while turn < max_turns:
-        agent = agents[turn % num_agents]
-        prompt = build_prompt(agent, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary, fileguard=fileguard, worktree_map=worktree_map)
-        append_debug(debug_path, {
-            "turn": turn,
-            "agent": agent["name"],
-            "messages": prompt,
-        })
-
-        # Build tool list: always include AGENT_TOOLS (pass_turn),
-        # add FILE_TOOLS when file access is enabled
-        agent_tools = list(AGENT_TOOLS)
-        if fileguard:
-            from gotg.tools import FILE_TOOLS, execute_file_tool
-
-            if worktree_map and agent["name"] in worktree_map:
-                agent_fg = fileguard.with_root(worktree_map[agent["name"]])
-            else:
-                agent_fg = fileguard
-
-            agent_tools.extend(FILE_TOOLS)
-            write_count = 0
-
-            def tool_executor(name, inp):
-                nonlocal write_count
-                if name == "pass_turn":
-                    return "Turn passed."
-                if name == "file_write":
-                    write_count += 1
-                    if write_count > agent_fg.max_files_per_turn:
-                        return f"Error: write limit reached ({agent_fg.max_files_per_turn} per turn)"
-                return execute_file_tool(name, inp, agent_fg, approval_store=approval_store, agent_name=agent["name"])
+        elif isinstance(event, AppendDebug):
+            append_debug(debug_path, event.entry)
+        elif isinstance(event, PauseForApprovals):
+            print("---")
+            print(f"Paused: {event.pending_count} pending approval(s).")
+            print("Run 'gotg approvals' to review, then 'gotg approve <id>' or 'gotg deny <id> -m reason'.")
+            print("Resume with 'gotg continue'.")
+            break
+        elif isinstance(event, PhaseCompleteSignaled):
+            _print_phase_complete(event.phase)
+            break
+        elif isinstance(event, CoachAskedPM):
+            print("---")
+            print(f"Coach asks: {event.question}")
+            print("Reply with: gotg continue -m 'your answer'")
+            break
+        elif isinstance(event, SessionComplete):
+            print("---")
+            print(f"Conversation complete ({event.total_turns} turns)")
         else:
-            def tool_executor(name, inp):
-                if name == "pass_turn":
-                    return "Turn passed."
-                return f"Unknown tool: {name}"
-
-        result = agentic_completion(
-            base_url=model_config["base_url"],
-            model=model_config["model"],
-            messages=prompt,
-            api_key=model_config.get("api_key"),
-            provider=model_config.get("provider", "ollama"),
-            tools=agent_tools,
-            tool_executor=tool_executor,
-        )
-        response_text = result["content"]
-
-        # Log file operations first (even if agent passed)
-        for op in result.get("operations", []):
-            if op.get("name") == "pass_turn":
-                continue
-            op_msg = {
-                "from": "system",
-                "iteration": iteration["id"],
-                "content": format_tool_operation(op),
-            }
-            append_message(log_path, op_msg)
-            print(render_message(op_msg))
-            print()
-            history.append(op_msg)
-
-        if result.get("operations"):
-            append_debug(debug_path, {
-                "turn": turn,
-                "agent": agent["name"],
-                "tool_operations": result["operations"],
-            })
-
-        # Check for pass_turn
-        pass_called = any(
-            op.get("name") == "pass_turn"
-            for op in result.get("operations", [])
-        )
-
-        if pass_called:
-            reason = ""
-            for op in result["operations"]:
-                if op.get("name") == "pass_turn":
-                    reason = op.get("input", {}).get("reason", "")
-                    break
-            pass_msg = {
-                "from": "system",
-                "iteration": iteration["id"],
-                "content": f"({agent['name']} passes: {reason})",
-                "pass_turn": True,
-            }
-            append_message(log_path, pass_msg)
-            print(render_message(pass_msg))
-            print()
-            history.append(pass_msg)
-        else:
-            msg = {
-                "from": agent["name"],
-                "iteration": iteration["id"],
-                "content": response_text,
-            }
-            append_message(log_path, msg)
-            print(render_message(msg))
-            print()
-            history.append(msg)
-
-        turn += 1
-
-        # Check for pending approvals — pause conversation if any
-        if approval_store:
-            pending = approval_store.get_pending()
-            if pending:
-                print("---")
-                print(f"Paused: {len(pending)} pending approval(s).")
-                print("Run 'gotg approvals' to review, then 'gotg approve <id>' or 'gotg deny <id> -m reason'.")
-                print("Resume with 'gotg continue'.")
-                return
-
-        # Coach injection: after every full rotation of engineering agents
-        if coach and turn % num_agents == 0:
-            coach_prompt = build_coach_prompt(coach, iteration, history, all_participants, groomed_summary=groomed_summary, tasks_summary=tasks_summary, diffs_summary=diffs_summary)
-            append_debug(debug_path, {
-                "turn": f"coach-after-{turn}",
-                "agent": coach["name"],
-                "messages": coach_prompt,
-            })
-            coach_response = chat_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=coach_prompt,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-                tools=COACH_TOOLS,
-            )
-            coach_text = coach_response["content"]
-            coach_tool_calls = coach_response.get("tool_calls", [])
-
-            # Fallback for empty coach messages with signal_phase_complete
-            if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-                coach_text = "(Phase complete signal sent.)"
-
-            # Fallback for empty coach messages with ask_pm
-            if not coach_text.strip() and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
-                question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
-                coach_text = f"(Requesting PM input: {question})"
-
-            coach_msg = {
-                "from": coach["name"],
-                "iteration": iteration["id"],
-                "content": coach_text,
-            }
-            append_message(log_path, coach_msg)
-            print(render_message(coach_msg))
-            print()
-            history.append(coach_msg)
-
-            # Early exit: coach signals phase is complete via tool call
-            if any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-                print("---")
-                current_phase = iteration.get("phase")
-                if current_phase == "code-review":
-                    print("Coach signals code review complete.")
-                    print("Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.")
-                elif current_phase == PHASE_ORDER[-1]:
-                    print("Coach signals phase complete. This is the final phase — iteration is done.")
-                    print("Run `gotg continue` to keep discussing if needed.")
-                else:
-                    print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
-                return
-
-            # Coach requests PM input
-            ask_pm_calls = [tc for tc in coach_tool_calls if tc["name"] == "ask_pm"]
-            if ask_pm_calls:
-                question = ask_pm_calls[0]["input"]["question"]
-                print("---")
-                print(f"Coach asks: {question}")
-                print("Reply with: gotg continue -m 'your answer'")
-                return
-
-    print("---")
-    print(f"Conversation complete ({turn} turns)")
+            raise AssertionError(f"Unhandled event: {event!r}")
 
 
 def cmd_init(args):
@@ -417,7 +276,9 @@ def cmd_run(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    ctx = TeamContext.from_team_dir(team_dir)
+    iteration, iter_dir = ctx.iteration_store.get_current()
+
     if not iteration.get("description"):
         print("Error: iteration description is empty. Edit .team/iteration.json first.", file=sys.stderr)
         raise SystemExit(1)
@@ -425,32 +286,27 @@ def cmd_run(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    model_config = load_model_config(team_dir)
-    agents = load_agents(team_dir)
-    coach = load_coach(team_dir)
-
-    if len(agents) < 2:
+    if len(ctx.agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
     _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
 
-    file_access = load_file_access(team_dir)
     fileguard = None
     approval_store = None
-    if file_access:
+    if ctx.file_access:
         from gotg.fileguard import FileGuard
-        fileguard = FileGuard(team_dir.parent, file_access)
-        if file_access.get("enable_approvals"):
+        fileguard = FileGuard(ctx.project_root, ctx.file_access)
+        if ctx.file_access.get("enable_approvals"):
             from gotg.approvals import ApprovalStore
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args, iteration)
+    worktree_map = _setup_worktrees(ctx.team_dir, ctx.agents, fileguard, args, iteration)
 
-    diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
+    diffs_summary = _load_diffs_for_code_review(ctx.team_dir, iteration, args)
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=args.max_turns, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
-    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
+    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=args.max_turns, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
+    _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 
 PROVIDER_PRESETS = {
@@ -535,7 +391,9 @@ def cmd_continue(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    ctx = TeamContext.from_team_dir(team_dir)
+    iteration, iter_dir = ctx.iteration_store.get_current()
+
     if not iteration.get("description"):
         print("Error: iteration description is empty.", file=sys.stderr)
         raise SystemExit(1)
@@ -543,29 +401,24 @@ def cmd_continue(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    model_config = load_model_config(team_dir)
-    agents = load_agents(team_dir)
-    coach = load_coach(team_dir)
-
-    if len(agents) < 2:
+    if len(ctx.agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
         raise SystemExit(1)
 
     _validate_task_assignments(iter_dir, iteration.get("phase", "grooming"), current_layer=iteration.get("current_layer"))
 
-    file_access = load_file_access(team_dir)
     fileguard = None
     approval_store = None
-    if file_access:
+    if ctx.file_access:
         from gotg.fileguard import FileGuard
-        fileguard = FileGuard(team_dir.parent, file_access)
-        if file_access.get("enable_approvals"):
+        fileguard = FileGuard(ctx.project_root, ctx.file_access)
+        if ctx.file_access.get("enable_approvals"):
             from gotg.approvals import ApprovalStore, apply_approved_writes
             approval_store = ApprovalStore(iter_dir / "approvals.json")
 
-    worktree_map = _setup_worktrees(team_dir, agents, fileguard, args, iteration)
+    worktree_map = _setup_worktrees(ctx.team_dir, ctx.agents, fileguard, args, iteration)
 
-    diffs_summary = _load_diffs_for_code_review(team_dir, iteration, args)
+    diffs_summary = _load_diffs_for_code_review(ctx.team_dir, iteration, args)
 
     log_path = iter_dir / "conversation.jsonl"
     history = read_phase_history(log_path)
@@ -613,8 +466,8 @@ def cmd_continue(args):
 
     # Count current engineering agent turns (not human/coach/system)
     non_agent = {"human", "system"}
-    if coach:
-        non_agent.add(coach["name"])
+    if ctx.coach:
+        non_agent.add(ctx.coach["name"])
     current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
 
     # Inject human message if provided
@@ -634,8 +487,8 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, agents, iteration, model_config, max_turns_override=target_total, coach=coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
-    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
+    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=target_total, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
+    _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 
 def cmd_show(args):
@@ -684,200 +537,91 @@ def cmd_advance(args):
         raise SystemExit(1)
 
     next_phase = PHASE_ORDER[idx + 1]
-
-    # Invoke coach on grooming → planning transition
+    log_path = iter_dir / "conversation.jsonl"
+    coach = load_coach(team_dir)
     coach_ran = False
-    if current_phase == "grooming" and next_phase == "planning":
-        coach = load_coach(team_dir)
-        if coach:
-            print("Coach is summarizing the grooming conversation...")
-            model_config = load_model_config(team_dir)
-            log_path = iter_dir / "conversation.jsonl"
-            history = read_phase_history(log_path)
-            coach_name = coach.get("name", "coach")
-            conversation_text = "\n\n".join(
-                f"[{m['from']}]: {m['content']}"
-                for m in history
-                if m["from"] not in ("system", coach_name)
-            )
-            coach_messages = [
-                {"role": "system", "content": COACH_GROOMING_PROMPT},
-                {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
-            ]
-            summary = chat_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=coach_messages,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-            )
-            groomed_path = iter_dir / "groomed.md"
-            groomed_path.write_text(summary + "\n")
-            print(f"Wrote {groomed_path}")
-            coach_ran = True
-
-    # Invoke coach on planning → pre-code-review transition
     tasks_written = False
-    if current_phase == "planning" and next_phase == "pre-code-review":
-        coach = load_coach(team_dir)
-        if coach:
-            import json as _json
-            print("Coach is extracting tasks from the planning conversation...")
-            model_config = load_model_config(team_dir)
-            log_path = iter_dir / "conversation.jsonl"
-            history = read_phase_history(log_path)
-            coach_name = coach.get("name", "coach")
-            conversation_text = "\n\n".join(
-                f"[{m['from']}]: {m['content']}"
-                for m in history
-                if m["from"] not in ("system", coach_name)
-            )
-            coach_messages = [
-                {"role": "system", "content": COACH_PLANNING_PROMPT},
-                {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
-            ]
-            tasks_json_text = chat_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=coach_messages,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-            )
-            # Strip markdown code fences if present
-            text = tasks_json_text.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
-            try:
-                tasks_data = _json.loads(text)
-                # Compute and store layers from dependency graph
-                from gotg.tasks import compute_layers
-                layers = compute_layers(tasks_data)
-                for task in tasks_data:
-                    task["layer"] = layers[task["id"]]
-                tasks_path = iter_dir / "tasks.json"
-                tasks_path.write_text(_json.dumps(tasks_data, indent=2) + "\n")
-                print(f"Wrote {tasks_path}")
-                tasks_written = True
-            except _json.JSONDecodeError as e:
-                print(f"Warning: Coach produced invalid JSON: {e}", file=sys.stderr)
-                print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
-                (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
-            except (ValueError, KeyError) as e:
-                print(f"Warning: Coach produced valid JSON but bad task structure: {e}", file=sys.stderr)
-                print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
-                (iter_dir / "tasks_raw.txt").write_text(tasks_json_text + "\n")
-            coach_ran = True
 
-    # Set current_layer and extract task notes on pre-code-review → implementation
+    # Grooming → Planning
+    if current_phase == "grooming" and next_phase == "planning" and coach:
+        print("Coach is summarizing the grooming conversation...")
+        model_config = load_model_config(team_dir)
+        history = read_phase_history(log_path)
+        summary = extract_grooming_summary(history, model_config, coach["name"], chat_completion)
+        groomed_path = iter_dir / "groomed.md"
+        groomed_path.write_text(summary + "\n")
+        print(f"Wrote {groomed_path}")
+        coach_ran = True
+
+    # Planning → Pre-code-review
+    if current_phase == "planning" and next_phase == "pre-code-review" and coach:
+        import json as _json
+        print("Coach is extracting tasks from the planning conversation...")
+        model_config = load_model_config(team_dir)
+        history = read_phase_history(log_path)
+        tasks, raw_text, error = extract_tasks(history, model_config, coach["name"], chat_completion)
+        if tasks is not None:
+            tasks_path = iter_dir / "tasks.json"
+            tasks_path.write_text(_json.dumps(tasks, indent=2) + "\n")
+            print(f"Wrote {tasks_path}")
+            tasks_written = True
+        else:
+            print(f"Warning: {error}", file=sys.stderr)
+            print("Raw output saved to tasks_raw.txt for manual correction.", file=sys.stderr)
+            (iter_dir / "tasks_raw.txt").write_text(raw_text + "\n")
+        coach_ran = True
+
+    # Pre-code-review → Implementation
     if current_phase == "pre-code-review" and next_phase == "implementation":
         save_iteration_fields(team_dir, iteration["id"], current_layer=0)
-        coach = load_coach(team_dir)
         if coach:
             import json as _json
             tasks_path = iter_dir / "tasks.json"
             if tasks_path.exists():
                 print("Coach is extracting task notes from pre-code-review...")
                 model_config = load_model_config(team_dir)
-                log_path_notes = iter_dir / "conversation.jsonl"
-                history_notes = read_phase_history(log_path_notes)
-                coach_name = coach.get("name", "coach")
-                conversation_text = "\n\n".join(
-                    f"[{m['from']}]: {m['content']}"
-                    for m in history_notes
-                    if m["from"] not in ("system", coach_name)
-                )
+                history = read_phase_history(log_path)
                 tasks_data = _json.loads(tasks_path.read_text())
-                tasks_json_str = _json.dumps(tasks_data, indent=2)
-                prompt = COACH_NOTES_EXTRACTION_PROMPT.format(
-                    tasks_json=tasks_json_str,
-                    conversation=conversation_text,
+                notes_map, raw_text, error = extract_task_notes(
+                    history, tasks_data, model_config, coach["name"], chat_completion,
                 )
-                notes_text = chat_completion(
-                    base_url=model_config["base_url"],
-                    model=model_config["model"],
-                    messages=[{"role": "user", "content": prompt}],
-                    api_key=model_config.get("api_key"),
-                    provider=model_config.get("provider", "ollama"),
-                )
-                text = notes_text.strip()
-                if text.startswith("```"):
-                    text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                    if text.endswith("```"):
-                        text = text[:-3]
-                    text = text.strip()
-                try:
-                    notes_data = _json.loads(text)
-                    notes_map = {n["id"]: n["notes"] for n in notes_data if n.get("notes")}
+                if notes_map is not None:
                     for task in tasks_data:
                         if task["id"] in notes_map:
                             task["notes"] = notes_map[task["id"]]
                     tasks_path.write_text(_json.dumps(tasks_data, indent=2) + "\n")
                     print(f"Updated {tasks_path} with task notes")
                     coach_ran = True
-                except (_json.JSONDecodeError, KeyError, TypeError) as e:
-                    print(f"Warning: Could not parse task notes: {e}", file=sys.stderr)
-                    (iter_dir / "notes_raw.txt").write_text(notes_text + "\n")
+                else:
+                    print(f"Warning: {error}", file=sys.stderr)
+                    (iter_dir / "notes_raw.txt").write_text(raw_text + "\n")
                     print("Raw output saved to notes_raw.txt for manual review.", file=sys.stderr)
 
-    # Auto-commit current-layer worktrees on implementation → code-review
+    # Implementation → Code-review
     if current_phase == "implementation" and next_phase == "code-review":
         worktree_config = load_worktree_config(team_dir)
         if worktree_config and worktree_config.get("enabled"):
-            from gotg.worktree import list_active_worktrees, commit_worktree, is_worktree_dirty, WorktreeError
-            project_root = team_dir.parent
-            layer = iteration.get("current_layer", 0)
-            layer_suffix = f"/layer-{layer}"
-            for wt in list_active_worktrees(project_root):
-                branch = wt.get("branch", "")
-                if not branch.endswith(layer_suffix):
-                    continue  # skip worktrees from other layers
-                wt_path = Path(wt["path"])
-                if is_worktree_dirty(wt_path):
-                    try:
-                        commit_hash = commit_worktree(wt_path, "Implementation complete")
-                        if commit_hash:
-                            print(f"Auto-committed {branch}: {commit_hash}")
-                    except WorktreeError as e:
-                        print(f"Warning: could not auto-commit {branch}: {e}", file=sys.stderr)
+            results = auto_commit_layer_worktrees(team_dir.parent, iteration.get("current_layer", 0))
+            for branch, commit_hash, error in results:
+                if error:
+                    print(f"Warning: could not auto-commit {branch}: {error}", file=sys.stderr)
+                elif commit_hash:
+                    print(f"Auto-committed {branch}: {commit_hash}")
 
     save_iteration_phase(team_dir, iteration["id"], next_phase)
-
-    # Write history boundary before transition message
-    log_path = iter_dir / "conversation.jsonl"
-    boundary_msg = {
-        "from": "system",
-        "iteration": iteration["id"],
-        "content": "--- HISTORY BOUNDARY ---",
-        "phase_boundary": True,
-        "from_phase": current_phase,
-        "to_phase": next_phase,
-    }
+    boundary_msg, transition_msg = build_transition_messages(
+        iteration["id"], current_phase, next_phase, tasks_written, coach_ran,
+    )
     append_message(log_path, boundary_msg)
-
-    if tasks_written:
-        transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Task list written to tasks.json ---"
-    elif coach_ran and current_phase == "grooming":
-        transition_content = f"--- Phase advanced: {current_phase} → {next_phase}. Scope summary written to groomed.md ---"
-    else:
-        transition_content = f"--- Phase advanced: {current_phase} → {next_phase} ---"
-    msg = {
-        "from": "system",
-        "iteration": iteration["id"],
-        "content": transition_content,
-    }
-    append_message(log_path, msg)
-    print(render_message(msg))
+    append_message(log_path, transition_msg)
+    print(render_message(transition_msg))
     print()
     print(f"Phase advanced: {current_phase} → {next_phase}")
     print("Turns reset for new phase.")
 
     # Auto-checkpoint with updated phase
     iteration["phase"] = next_phase
-    coach_for_cp = load_coach(team_dir)
-    _auto_checkpoint(iter_dir, iteration, coach_name=coach_for_cp["name"] if coach_for_cp else "coach")
+    _auto_checkpoint(iter_dir, iteration, coach_name=coach["name"] if coach else "coach")
 
 
 def cmd_checkpoint(args):

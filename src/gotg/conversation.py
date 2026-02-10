@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
+
+from gotg.types import MessageDict
 
 AGENT_COLORS = {
     "agent-1": "\033[36m",  # cyan
@@ -53,3 +57,29 @@ def render_message(msg: dict) -> str:
     content = msg["content"]
     color = AGENT_COLORS.get(name, "\033[37m")  # default white
     return f"{BOLD}{color}[{name}]{RESET} {content}"
+
+
+class ConversationStore:
+    """JSONL-backed conversation persistence.
+
+    Wraps existing free functions with an OO interface that binds
+    log_path and debug_path at construction time.
+    """
+
+    def __init__(self, log_path: Path, debug_path: Path | None = None):
+        self.log_path = log_path
+        self.debug_path = debug_path
+
+    def read_full(self) -> list[MessageDict]:
+        return read_log(self.log_path)
+
+    def read_phase_history(self) -> list[MessageDict]:
+        return read_phase_history(self.log_path)
+
+    def append(self, msg: MessageDict) -> None:
+        append_message(self.log_path, msg)
+
+    def append_debug(self, entry: dict) -> None:
+        if self.debug_path is None:
+            return
+        append_debug(self.debug_path, entry)

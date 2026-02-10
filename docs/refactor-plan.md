@@ -185,14 +185,18 @@ class IterationDict(TypedDict):
     current_layer: NotRequired[int]
     title: NotRequired[str]
 
-class MessageDict(TypedDict):
-    from_: str  # "from" is reserved; actual key is "from" in JSON
-    iteration: str
-    content: str
-    pass_turn: NotRequired[bool]
-    phase_boundary: NotRequired[bool]
-    from_phase: NotRequired[str]
-    to_phase: NotRequired[str]
+# Functional syntax because "from" is a Python reserved word.
+# All code accesses this as msg["from"] (dict subscript), never attribute.
+MessageDict = TypedDict("MessageDict", {
+    "from": str,
+    "iteration": NotRequired[str],
+    "content": str,
+    "pass_turn": NotRequired[bool],
+    "phase_boundary": NotRequired[bool],
+    "from_phase": NotRequired[str],
+    "to_phase": NotRequired[str],
+    "layer": NotRequired[int],
+})
 ```
 
 ### D2: Stores + Context, not rich domain objects
@@ -485,7 +489,7 @@ Foundation for everything that follows.
 - [ ] `IterationStore` class wraps existing config.py load/save functions
 - [ ] `cmd_run` and `cmd_continue` build TeamContext once (not N separate
   load calls)
-- [ ] All 650+ tests pass unchanged
+- [ ] All 667+ tests pass unchanged
 - [ ] `mypy --strict` on types.py passes (or at least no errors in new code)
 
 **Risks:**
@@ -662,7 +666,8 @@ pass events to the handler.
 - [ ] `engine.py` exists with `run_session()` yielding events
 - [ ] `events.py` exists with all event dataclasses
 - [ ] `run_session` is decomposed into `_do_agent_turn`, `_do_coach_turn`, etc.
-- [ ] Engine has zero `print()` calls, zero filesystem access, zero `sys.exit`
+- [ ] Engine has no `print()`, no `sys.exit()`, no direct JSONL/artifact writes;
+  side effects only through injected dependencies (tool executor, approval store)
 - [ ] `test_engine.py` has tests for: agent turn events, coach turn events,
   pass_turn events, phase_complete signal, ask_pm signal, approval pause,
   max_turns stop, kickoff injection

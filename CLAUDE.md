@@ -7,7 +7,7 @@ GOTG is an AI product and engineering department tool. pip-installable CLI (`got
 - Python 3.11 via pyenv (venv at `.venv/`)
 - Install: `.venv/bin/pip install -e .`
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 650 tests as of iteration 17
+- 698 tests as of R3 refactor
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
