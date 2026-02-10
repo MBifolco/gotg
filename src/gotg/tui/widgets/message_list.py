@@ -38,3 +38,10 @@ class MessageList(VerticalScroll):
         for msg in messages:
             self.mount(MessageWidget(msg))
         self.scroll_end(animate=False)
+
+    def append_message(self, msg: dict) -> None:
+        """Append a single message for streaming. Removes empty placeholder, auto-scrolls."""
+        for e in self.query(".msg-empty"):
+            e.remove()
+        self.mount(MessageWidget(msg))
+        self.scroll_end(animate=False)

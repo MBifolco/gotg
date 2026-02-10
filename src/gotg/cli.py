@@ -25,6 +25,10 @@ from gotg.groom import (
     list_grooming_sessions, run_grooming_conversation,
 )
 from gotg.scaffold import init_project
+from gotg.session import (
+    SessionSetupError, persist_event, resolve_layer, validate_iteration_for_run,
+    build_file_infra, setup_worktrees, load_diffs_for_review,
+)
 from gotg.transitions import (
     extract_refinement_summary, extract_tasks, extract_task_notes,
     auto_commit_layer_worktrees, build_transition_messages,
@@ -38,28 +42,6 @@ def find_team_dir(cwd: Path) -> Path | None:
     return None
 
 
-def _validate_task_assignments(iter_dir: Path, phase: str, current_layer: int | None = None) -> None:
-    """Check that relevant tasks are assigned before entering pre-code-review or implementation."""
-    if phase not in ("pre-code-review", "implementation"):
-        return
-    import json as _json
-    tasks_path = iter_dir / "tasks.json"
-    if not tasks_path.exists():
-        print(f"Error: {phase} requires tasks.json. Run 'gotg advance' from planning first.", file=sys.stderr)
-        raise SystemExit(1)
-    tasks = _json.loads(tasks_path.read_text())
-    # In implementation, only check current-layer tasks
-    if phase == "implementation" and current_layer is not None:
-        tasks = [t for t in tasks if t.get("layer") == current_layer]
-    unassigned = [t["id"] for t in tasks if not t.get("assigned_to")]
-    if unassigned:
-        scope = f"layer {current_layer} tasks" if phase == "implementation" and current_layer is not None else "all tasks"
-        print(f"Error: {scope} must be assigned before starting {phase}.", file=sys.stderr)
-        print(f"Unassigned tasks: {', '.join(unassigned)}", file=sys.stderr)
-        print("Edit .team/iterations/<id>/tasks.json to assign agents.", file=sys.stderr)
-        raise SystemExit(1)
-
-
 def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach") -> None:
     """Create an automatic checkpoint after a command completes."""
     try:
@@ -67,93 +49,6 @@ def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach")
         print(f"Checkpoint {number} created (auto)")
     except Exception as e:
         print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
-
-
-def _resolve_layer(args, iteration: dict) -> int:
-    """Resolve current layer: --layer CLI flag > iteration state > 0."""
-    cli_layer = getattr(args, "layer", None)
-    if cli_layer is not None:
-        return cli_layer
-    return iteration.get("current_layer", 0)
-
-
-def _setup_worktrees(team_dir: Path, agents: list[dict], fileguard, args, iteration: dict) -> dict | None:
-    """Set up worktrees for agents if configured. Returns worktree_map or None."""
-    worktree_config = load_worktree_config(team_dir)
-    if not worktree_config or not worktree_config.get("enabled"):
-        return None
-
-    # Only set up worktrees in phases that use them
-    phase = iteration.get("phase", "refinement")
-    if phase not in ("implementation", "code-review"):
-        return None
-
-    if not fileguard:
-        print("Warning: worktrees enabled but file_access not configured — worktrees require file tools.", file=sys.stderr)
-        return None
-
-    from gotg.worktree import ensure_git_repo, create_worktree, ensure_gitignore_entries, WorktreeError
-    import subprocess as _sp
-
-    project_root = team_dir.parent
-    try:
-        ensure_git_repo(project_root)
-    except WorktreeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        raise SystemExit(1)
-
-    # Verify HEAD is on main — worktrees branch from HEAD
-    head_result = _sp.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        cwd=project_root, capture_output=True, text=True,
-    )
-    current_branch = head_result.stdout.strip()
-    if current_branch != "main":
-        print(
-            f"Error: HEAD is on '{current_branch}', expected 'main'. "
-            "Worktrees branch from HEAD — switch to main first.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
-    for warning in ensure_gitignore_entries(project_root):
-        print(f"Warning: {warning}", file=sys.stderr)
-
-    layer = _resolve_layer(args, iteration)
-
-    worktree_map = {}
-    for agent in agents:
-        try:
-            wt_path = create_worktree(project_root, agent["name"], layer)
-            worktree_map[agent["name"]] = wt_path
-        except WorktreeError as e:
-            print(f"Error creating worktree for {agent['name']}: {e}", file=sys.stderr)
-            raise SystemExit(1)
-
-    return worktree_map
-
-
-def _load_diffs_for_code_review(team_dir: Path, iteration: dict, args) -> str | None:
-    """Load diffs for code-review phase. Returns formatted string or None."""
-    if iteration.get("phase") != "code-review":
-        return None
-
-    worktree_config = load_worktree_config(team_dir)
-    if not worktree_config or not worktree_config.get("enabled"):
-        print("Warning: code-review phase but worktrees not enabled. No diffs to load.", file=sys.stderr)
-        return None
-
-    from gotg.worktree import format_diffs_for_prompt
-
-    layer = _resolve_layer(args, iteration)
-
-    diffs = format_diffs_for_prompt(team_dir.parent, layer)
-    if diffs:
-        print(f"Code review: diffs loaded for layer {layer}")
-    else:
-        print(f"Warning: no branches found for layer {layer}. No diffs to review.", file=sys.stderr)
-
-    return diffs
 
 
 def _print_session_header(event: SessionStarted) -> None:
@@ -225,12 +120,11 @@ def run_conversation(
     ):
         if isinstance(event, SessionStarted):
             _print_session_header(event)
-        elif isinstance(event, AppendMessage):
-            append_message(log_path, event.msg)
-            print(render_message(event.msg))
-            print()
-        elif isinstance(event, AppendDebug):
-            append_debug(debug_path, event.entry)
+        elif isinstance(event, (AppendMessage, AppendDebug)):
+            persist_event(event, log_path, debug_path)
+            if isinstance(event, AppendMessage):
+                print(render_message(event.msg))
+                print()
         elif isinstance(event, PauseForApprovals):
             print("---")
             print(f"Paused: {event.pending_count} pending approval(s).")
@@ -267,31 +161,29 @@ def cmd_run(args):
     ctx = TeamContext.from_team_dir(team_dir)
     iteration, iter_dir = ctx.iteration_store.get_current()
 
-    if not iteration.get("description"):
-        print("Error: iteration description is empty. Edit .team/iteration.json first.", file=sys.stderr)
-        raise SystemExit(1)
-    if iteration.get("status") != "in-progress":
-        print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
-        raise SystemExit(1)
-
-    if len(ctx.agents) < 2:
-        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
+    try:
+        validate_iteration_for_run(iteration, iter_dir, ctx.agents)
+    except SessionSetupError as e:
+        print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "refinement"), current_layer=iteration.get("current_layer"))
+    fileguard, approval_store = build_file_infra(ctx.project_root, ctx.file_access, iter_dir)
 
-    fileguard = None
-    approval_store = None
-    if ctx.file_access:
-        from gotg.fileguard import FileGuard
-        fileguard = FileGuard(ctx.project_root, ctx.file_access)
-        if ctx.file_access.get("enable_approvals"):
-            from gotg.approvals import ApprovalStore
-            approval_store = ApprovalStore(iter_dir / "approvals.json")
+    layer_override = getattr(args, "layer", None)
+    try:
+        worktree_map, wt_warnings = setup_worktrees(ctx.team_dir, ctx.agents, fileguard, layer_override, iteration)
+    except SessionSetupError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    for w in wt_warnings:
+        print(f"Warning: {w}", file=sys.stderr)
 
-    worktree_map = _setup_worktrees(ctx.team_dir, ctx.agents, fileguard, args, iteration)
-
-    diffs_summary = _load_diffs_for_code_review(ctx.team_dir, iteration, args)
+    diffs_summary, diff_warnings = load_diffs_for_review(ctx.team_dir, iteration, layer_override)
+    for w in diff_warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    if diffs_summary:
+        layer = resolve_layer(layer_override, iteration)
+        print(f"Code review: diffs loaded for layer {layer}")
 
     run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=args.max_turns, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
@@ -382,37 +274,36 @@ def cmd_continue(args):
     ctx = TeamContext.from_team_dir(team_dir)
     iteration, iter_dir = ctx.iteration_store.get_current()
 
-    if not iteration.get("description"):
-        print("Error: iteration description is empty.", file=sys.stderr)
-        raise SystemExit(1)
-    if iteration.get("status") != "in-progress":
-        print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
-        raise SystemExit(1)
-
-    if len(ctx.agents) < 2:
-        print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
+    try:
+        validate_iteration_for_run(iteration, iter_dir, ctx.agents)
+    except SessionSetupError as e:
+        print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    _validate_task_assignments(iter_dir, iteration.get("phase", "refinement"), current_layer=iteration.get("current_layer"))
+    fileguard, approval_store = build_file_infra(ctx.project_root, ctx.file_access, iter_dir)
 
-    fileguard = None
-    approval_store = None
-    if ctx.file_access:
-        from gotg.fileguard import FileGuard
-        fileguard = FileGuard(ctx.project_root, ctx.file_access)
-        if ctx.file_access.get("enable_approvals"):
-            from gotg.approvals import ApprovalStore, apply_approved_writes
-            approval_store = ApprovalStore(iter_dir / "approvals.json")
+    layer_override = getattr(args, "layer", None)
+    try:
+        worktree_map, wt_warnings = setup_worktrees(ctx.team_dir, ctx.agents, fileguard, layer_override, iteration)
+    except SessionSetupError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    for w in wt_warnings:
+        print(f"Warning: {w}", file=sys.stderr)
 
-    worktree_map = _setup_worktrees(ctx.team_dir, ctx.agents, fileguard, args, iteration)
-
-    diffs_summary = _load_diffs_for_code_review(ctx.team_dir, iteration, args)
+    diffs_summary, diff_warnings = load_diffs_for_review(ctx.team_dir, iteration, layer_override)
+    for w in diff_warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    if diffs_summary:
+        layer = resolve_layer(layer_override, iteration)
+        print(f"Code review: diffs loaded for layer {layer}")
 
     log_path = iter_dir / "conversation.jsonl"
     history = read_phase_history(log_path)
 
     # Apply approved writes and inject denials before resuming
     if approval_store:
+        from gotg.approvals import apply_approved_writes
         # When worktrees active, route approved writes to correct agent's worktree
         fg_for_agent = None
         if worktree_map:

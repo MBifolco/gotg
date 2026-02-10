@@ -18,6 +18,8 @@ class HomeScreen(Screen):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("R", "run_session", "Run", show=False),
+        Binding("c", "continue_session", "Continue", show=False),
     ]
 
     def compose(self):
@@ -104,6 +106,31 @@ class HomeScreen(Screen):
     def action_refresh(self) -> None:
         self._load_data()
 
+    def _get_selected_data(self) -> tuple[dict, Path, str] | None:
+        """Get metadata, data_dir, and kind for the focused table's selected row."""
+        # Check which tab is active by trying to get the focused DataTable
+        for table_id, data_store, kind in [
+            ("#iter-table", "_iteration_data", "iteration"),
+            ("#groom-table", "_grooming_data", "grooming"),
+        ]:
+            try:
+                table = self.query_one(table_id, DataTable)
+                if not table.has_focus:
+                    continue
+                row_key = table.cursor_row
+                if row_key is None:
+                    return None
+                # Get the key from the row index
+                row_key_obj = table._row_order[row_key]  # noqa: SLF001
+                key_str = row_key_obj.value
+                store = getattr(self, data_store, {})
+                if key_str in store:
+                    meta, data_dir = store[key_str]
+                    return meta, data_dir, kind
+            except Exception:
+                continue
+        return None
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         row_key = event.row_key.value
         team_dir = self.app.team_dir
@@ -116,3 +143,23 @@ class HomeScreen(Screen):
             meta, data_dir = self._grooming_data[row_key]
             full_meta = load_session_metadata(team_dir, meta)
             self.app.push_screen(ChatScreen(data_dir, full_meta))
+
+    def action_run_session(self) -> None:
+        """Start a fresh run for the selected iteration/grooming."""
+        data = self._get_selected_data()
+        if data is None:
+            return
+        meta, data_dir, kind = data
+        team_dir = self.app.team_dir
+        full_meta = load_session_metadata(team_dir, meta)
+        self.app.push_screen(ChatScreen(data_dir, full_meta, mode="run", session_kind=kind))
+
+    def action_continue_session(self) -> None:
+        """Continue the selected iteration/grooming."""
+        data = self._get_selected_data()
+        if data is None:
+            return
+        meta, data_dir, kind = data
+        team_dir = self.app.team_dir
+        full_meta = load_session_metadata(team_dir, meta)
+        self.app.push_screen(ChatScreen(data_dir, full_meta, mode="continue", session_kind=kind))

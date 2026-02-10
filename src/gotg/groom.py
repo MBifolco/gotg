@@ -18,6 +18,7 @@ from gotg.events import (
     SessionStarted,
 )
 from gotg.policy import grooming_policy
+from gotg.session import persist_event
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -179,12 +180,11 @@ def run_grooming_conversation(
     ):
         if isinstance(event, SessionStarted):
             _print_grooming_header(event, topic)
-        elif isinstance(event, AppendMessage):
-            append_message(log_path, event.msg)
-            print(render_message(event.msg))
-            print()
-        elif isinstance(event, AppendDebug):
-            append_debug(debug_path, event.entry)
+        elif isinstance(event, (AppendMessage, AppendDebug)):
+            persist_event(event, log_path, debug_path)
+            if isinstance(event, AppendMessage):
+                print(render_message(event.msg))
+                print()
         elif isinstance(event, CoachAskedPM):
             print("---")
             print(f"Coach asks: {event.question}")

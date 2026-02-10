@@ -97,6 +97,26 @@
     margin: 0 0 0 0;
 }
 
+/* ── Chat input ────────────────────────────────────────────── */
+
+#chat-input {
+    dock: bottom;
+}
+
+/* ── Session status ────────────────────────────────────────── */
+
+.status-running {
+    color: $success;
+}
+
+.status-paused {
+    color: $warning;
+}
+
+.status-complete {
+    color: $text-muted;
+}
+
 /* ── Home screen ────────────────────────────────────────────── */
 
 #iter-table, #groom-table {

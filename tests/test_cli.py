@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _validate_task_assignments, _auto_checkpoint, _resolve_layer, _setup_worktrees
+from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _auto_checkpoint
+from gotg.session import validate_iteration_for_run, resolve_layer, setup_worktrees, SessionSetupError
 from gotg.conversation import read_log, read_phase_history, append_message
 
 
@@ -1168,6 +1169,9 @@ def test_run_conversation_no_tasks_json_no_task_list(tmp_path):
 
 # --- task assignment validation ---
 
+_DUMMY_AGENTS = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
+
+
 def test_validate_task_assignments_blocks_unassigned(tmp_path):
     """Pre-code-review should fail if any tasks are unassigned."""
     iter_dir = tmp_path / "iter-1"
@@ -1179,9 +1183,10 @@ def test_validate_task_assignments_blocks_unassigned(tmp_path):
          "done_criteria": "y", "status": "pending"},
     ]
     (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress", "phase": "pre-code-review"}
 
-    with pytest.raises(SystemExit):
-        _validate_task_assignments(iter_dir, "pre-code-review")
+    with pytest.raises(SessionSetupError):
+        validate_iteration_for_run(iteration, iter_dir, _DUMMY_AGENTS)
 
 
 def test_validate_task_assignments_passes_when_all_assigned(tmp_path):
@@ -1195,9 +1200,10 @@ def test_validate_task_assignments_passes_when_all_assigned(tmp_path):
          "done_criteria": "y", "status": "pending"},
     ]
     (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress", "phase": "pre-code-review"}
 
     # Should not raise
-    _validate_task_assignments(iter_dir, "pre-code-review")
+    validate_iteration_for_run(iteration, iter_dir, _DUMMY_AGENTS)
 
 
 def test_validate_task_assignments_skips_non_pre_code_review(tmp_path):
@@ -1205,17 +1211,20 @@ def test_validate_task_assignments_skips_non_pre_code_review(tmp_path):
     iter_dir = tmp_path / "iter-1"
     iter_dir.mkdir(parents=True)
     # No tasks.json at all — should not raise for refinement/planning
-    _validate_task_assignments(iter_dir, "refinement")
-    _validate_task_assignments(iter_dir, "planning")
+    iteration_r = {"id": "i", "description": "t", "status": "in-progress", "phase": "refinement"}
+    validate_iteration_for_run(iteration_r, iter_dir, _DUMMY_AGENTS)
+    iteration_p = {"id": "i", "description": "t", "status": "in-progress", "phase": "planning"}
+    validate_iteration_for_run(iteration_p, iter_dir, _DUMMY_AGENTS)
 
 
 def test_validate_task_assignments_missing_tasks_json(tmp_path):
     """Pre-code-review without tasks.json should fail."""
     iter_dir = tmp_path / "iter-1"
     iter_dir.mkdir(parents=True)
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress", "phase": "pre-code-review"}
 
-    with pytest.raises(SystemExit):
-        _validate_task_assignments(iter_dir, "pre-code-review")
+    with pytest.raises(SessionSetupError):
+        validate_iteration_for_run(iteration, iter_dir, _DUMMY_AGENTS)
 
 
 # --- auto-checkpoint ---
@@ -2078,10 +2087,8 @@ def test_setup_worktrees_disabled(tmp_path, monkeypatch):
     assert call_kwargs.get("worktree_map") is None
 
 
-def test_setup_worktrees_warns_without_file_access(tmp_path, capsys):
-    """Worktrees enabled without file_access should print a warning."""
-    from gotg.cli import _setup_worktrees
-
+def test_setup_worktrees_warns_without_file_access(tmp_path):
+    """Worktrees enabled without file_access should return a warning."""
     team = tmp_path / ".team"
     team.mkdir()
     team_config = {
@@ -2091,14 +2098,10 @@ def test_setup_worktrees_warns_without_file_access(tmp_path, capsys):
     }
     (team / "team.json").write_text(json.dumps(team_config))
 
-    class FakeArgs:
-        layer = None
-
     iteration = {"phase": "implementation"}
-    result = _setup_worktrees(team, [], None, FakeArgs(), iteration)
+    result, warnings = setup_worktrees(team, [], None, None, iteration)
     assert result is None
-    err = capsys.readouterr().err
-    assert "worktrees require file tools" in err
+    assert any("worktrees require file tools" in w for w in warnings)
 
 
 def test_cmd_worktrees_no_worktrees(tmp_path, monkeypatch, capsys):
@@ -2627,36 +2630,30 @@ def test_coach_completion_non_last_phase_message(tmp_path, capsys):
     assert "final phase" not in output
 
 
-# --- _resolve_layer ---
+# --- resolve_layer ---
 
 def test_resolve_layer_cli_override():
-    """CLI --layer flag overrides iteration state."""
-    class FakeArgs:
-        layer = 3
+    """Explicit override takes precedence over iteration state."""
     iteration = {"current_layer": 1}
-    assert _resolve_layer(FakeArgs(), iteration) == 3
+    assert resolve_layer(3, iteration) == 3
 
 
 def test_resolve_layer_from_iteration_state():
-    """Falls back to iteration.current_layer when no CLI flag."""
-    class FakeArgs:
-        layer = None
+    """Falls back to iteration.current_layer when no override."""
     iteration = {"current_layer": 2}
-    assert _resolve_layer(FakeArgs(), iteration) == 2
+    assert resolve_layer(None, iteration) == 2
 
 
 def test_resolve_layer_defaults_to_zero():
-    """Defaults to 0 when neither CLI nor iteration state has a layer."""
-    class FakeArgs:
-        layer = None
+    """Defaults to 0 when neither override nor iteration state has a layer."""
     iteration = {}
-    assert _resolve_layer(FakeArgs(), iteration) == 0
+    assert resolve_layer(None, iteration) == 0
 
 
 # --- phase-gated worktree setup ---
 
 def test_setup_worktrees_skips_refinement_phase(tmp_path):
-    """_setup_worktrees returns None for refinement phase even with worktrees enabled."""
+    """setup_worktrees returns None for refinement phase even with worktrees enabled."""
     team = tmp_path / ".team"
     team.mkdir()
     team_config = {
@@ -2667,18 +2664,15 @@ def test_setup_worktrees_skips_refinement_phase(tmp_path):
     }
     (team / "team.json").write_text(json.dumps(team_config))
 
-    class FakeArgs:
-        layer = None
-
     from gotg.fileguard import FileGuard
     fg = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
     iteration = {"phase": "refinement"}
-    result = _setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, FakeArgs(), iteration)
+    result, warnings = setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, None, iteration)
     assert result is None
 
 
 def test_setup_worktrees_active_in_implementation_phase(tmp_path):
-    """_setup_worktrees creates worktrees in implementation phase."""
+    """setup_worktrees creates worktrees in implementation phase."""
     import subprocess
     subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True, check=True)
@@ -2697,13 +2691,10 @@ def test_setup_worktrees_active_in_implementation_phase(tmp_path):
     }
     (team / "team.json").write_text(json.dumps(team_config))
 
-    class FakeArgs:
-        layer = None
-
     from gotg.fileguard import FileGuard
     fg = FileGuard(tmp_path, {"writable_paths": ["src/**"]})
     iteration = {"phase": "implementation"}
-    result = _setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, FakeArgs(), iteration)
+    result, warnings = setup_worktrees(team, [{"name": "agent-1", "role": "SE"}], fg, None, iteration)
     assert result is not None
     assert "agent-1" in result
 
@@ -3205,7 +3196,7 @@ def test_next_layer_recomputes_missing_layers(tmp_path, capsys):
     assert data["iterations"][0]["phase"] == "implementation"
 
 
-def test_validate_task_assignments_message_mentions_phase(tmp_path, capsys):
+def test_validate_task_assignments_message_mentions_phase(tmp_path):
     """Error message mentions the actual phase, not always pre-code-review."""
     iter_dir = tmp_path / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3213,15 +3204,13 @@ def test_validate_task_assignments_message_mentions_phase(tmp_path, capsys):
         {"id": "T1", "description": "x", "depends_on": [], "assigned_to": "", "status": "todo", "done_criteria": "done", "layer": 0},
     ]
     (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    iteration = {"id": "i", "description": "t", "status": "in-progress", "phase": "implementation", "current_layer": 0}
 
-    with pytest.raises(SystemExit):
-        _validate_task_assignments(iter_dir, "implementation", current_layer=0)
-
-    err = capsys.readouterr().err
-    assert "implementation" in err
+    with pytest.raises(SessionSetupError, match="implementation"):
+        validate_iteration_for_run(iteration, iter_dir, _DUMMY_AGENTS)
 
 
-def test_validate_task_assignments_scopes_to_current_layer(tmp_path, capsys):
+def test_validate_task_assignments_scopes_to_current_layer(tmp_path):
     """In implementation, only current-layer tasks are checked for assignment."""
     iter_dir = tmp_path / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3232,16 +3221,15 @@ def test_validate_task_assignments_scopes_to_current_layer(tmp_path, capsys):
     (iter_dir / "tasks.json").write_text(json.dumps(tasks))
 
     # Layer 0 — T1 is assigned, T2 is layer 1 so not checked
-    _validate_task_assignments(iter_dir, "implementation", current_layer=0)
+    iteration_l0 = {"id": "i", "description": "t", "status": "in-progress", "phase": "implementation", "current_layer": 0}
+    validate_iteration_for_run(iteration_l0, iter_dir, _DUMMY_AGENTS)
     # Should not raise — layer 0 tasks are all assigned
 
     # Layer 1 — T2 is unassigned
-    with pytest.raises(SystemExit):
-        _validate_task_assignments(iter_dir, "implementation", current_layer=1)
-
-    err = capsys.readouterr().err
-    assert "layer 1" in err
-    assert "T2" in err
+    iteration_l1 = {"id": "i", "description": "t", "status": "in-progress", "phase": "implementation", "current_layer": 1}
+    with pytest.raises(SessionSetupError, match="layer 1") as exc_info:
+        validate_iteration_for_run(iteration_l1, iter_dir, _DUMMY_AGENTS)
+    assert "T2" in str(exc_info.value)
 
 
 def test_run_header_shows_layer(tmp_path, capsys):

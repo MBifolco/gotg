@@ -70,3 +70,14 @@ class InfoTile(Vertical):
         if coach:
             name = coach if isinstance(coach, str) else coach.get("name", "coach")
             self.mount(Static(f"Coach: {escape(name)}", classes="info-field"))
+
+        # Live session status (hidden by default, updated during running sessions)
+        self.mount(Static("", id="live-status", classes="info-field"))
+
+    def update_session_status(self, state_text: str, turn: int | None = None) -> None:
+        """Update the live session status indicator."""
+        status = self.query_one("#live-status", Static)
+        if turn is not None:
+            status.update(f"Session: {state_text} (turn {turn})")
+        else:
+            status.update(f"Session: {state_text}" if state_text else "")
