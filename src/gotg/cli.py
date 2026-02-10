@@ -1318,6 +1318,20 @@ def cmd_groom_show(args):
         print()
 
 
+def cmd_ui(args):
+    try:
+        from gotg.tui import run_app
+    except ImportError:
+        print("TUI requires the 'textual' package.", file=sys.stderr)
+        print("Install with: pip install gotg[tui]", file=sys.stderr)
+        raise SystemExit(1)
+    team_dir = find_team_dir(Path.cwd())
+    if team_dir is None:
+        print("No .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+    run_app(team_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="gotg", description="AI SCRUM team tool")
     subparsers = parser.add_subparsers(dest="command")
@@ -1397,6 +1411,8 @@ def main():
     groom_show = groom_sub.add_parser("show", help="Show grooming conversation")
     groom_show.add_argument("slug", help="Session slug")
 
+    subparsers.add_parser("ui", help="Launch interactive TUI")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -1446,6 +1462,8 @@ def main():
             cmd_groom_show(args)
         else:
             groom_parser.print_help()
+    elif args.command == "ui":
+        cmd_ui(args)
     else:
         parser.print_help()
 

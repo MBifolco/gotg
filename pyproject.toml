@@ -8,6 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = ["httpx"]
 
+[project.optional-dependencies]
+tui = ["textual>=0.80"]
+
 [project.scripts]
 gotg = "gotg.cli:main"
 
@@ -15,7 +18,7 @@ gotg = "gotg.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-gotg = ["data/*.toml"]
+gotg = ["data/*.toml", "tui/*.tcss"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -5,9 +5,9 @@ GOTG is an AI product and engineering department tool. pip-installable CLI (`got
 
 ## Development Environment
 - Python 3.11 via pyenv (venv at `.venv/`)
-- Install: `.venv/bin/pip install -e .`
+- Install: `.venv/bin/pip install -e ".[tui]"` (with TUI) or `.venv/bin/pip install -e .` (CLI only)
 - Tests: `.venv/bin/python -m pytest tests/ -q`
-- 752 tests as of grooming feature
+- 779 tests as of TUI iteration 1
 
 ## API & Model
 - Default provider: **Anthropic** (Claude Sonnet)
@@ -49,7 +49,7 @@ cp /tmp/gotg-test/.team/iterations/iter-1/tasks.json run_history/tasks-${COMMIT}
 - **Don't run phases without being asked** — the user (PM) decides when to run.
 
 ## Project Layout
-- `src/gotg/` — package code (cli, agent, model, conversation, config, scaffold, tasks, groom)
+- `src/gotg/` — package code (cli, agent, model, conversation, config, scaffold, tasks, groom, tui/)
 - `tests/` — pytest tests
 - `run_history/` — archived conversation logs and artifacts from test runs
 - `narrative.md` — design log / decision journal
@@ -92,3 +92,12 @@ gotg groom show <slug>
 - Uses `grooming_policy()` — system supplement overrides phase workflow, coach gets `ask_pm` only (no `signal_phase_complete`)
 - `--max-turns` on continue is additive (N more turns from current point)
 - Synthetic iteration dict: `{"id": slug, "description": topic, "phase": None}`
+
+## TUI (Interactive Interface)
+`gotg ui` launches a Textual-based TUI for browsing iterations and grooming conversations.
+
+- **Optional dependency:** `pip install gotg[tui]` (textual)
+- **Read-only in iteration 1:** browse conversations, no live engine
+- **Home screen:** tabbed view with iterations list and grooming sessions list
+- **Chat view:** two-column layout (messages left, info tile right)
+- Lives in `src/gotg/tui/` subpackage (app, screens, widgets, CSS)

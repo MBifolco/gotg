@@ -1,0 +1,104 @@
+/* gotg TUI styles
+ * Color mapping from conversation.py AGENT_COLORS:
+ *   agent-1: cyan, agent-2: yellow, human: green,
+ *   system: magenta, coach: orange (#ff8700 = ANSI 208)
+ */
+
+/* ── Message colors ─────────────────────────────────────────── */
+
+.msg-agent-1 {
+    color: cyan;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-agent-2 {
+    color: yellow;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-human {
+    color: green;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-system {
+    color: magenta;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-coach {
+    color: #ff8700;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-default {
+    color: $text;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-pass {
+    color: $text-muted;
+    text-style: italic;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+
+.msg-empty {
+    color: $text-muted;
+    text-style: italic;
+    padding: 1 2;
+}
+
+.phase-boundary {
+    color: magenta;
+    text-style: bold;
+    border-bottom: solid $accent;
+    margin: 1 0;
+    padding: 0 1;
+}
+
+/* ── Chat layout ────────────────────────────────────────────── */
+
+#chat-layout {
+    height: 1fr;
+}
+
+#chat-main {
+    width: 3fr;
+    height: 100%;
+}
+
+#chat-sidebar {
+    width: 1fr;
+    height: 100%;
+    border-left: solid $accent;
+    padding: 1 2;
+}
+
+/* ── Info tile ──────────────────────────────────────────────── */
+
+.info-title {
+    text-style: bold;
+    margin: 0 0 1 0;
+}
+
+.info-desc {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
+
+.info-field {
+    margin: 0 0 0 0;
+}
+
+/* ── Home screen ────────────────────────────────────────────── */
+
+#iter-table, #groom-table {
+    height: 1fr;
+}
