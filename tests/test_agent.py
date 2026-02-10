@@ -846,3 +846,58 @@ def test_build_prompt_implementation_defaults_layer_to_zero():
     system = messages[0]["content"]
     assert "layer 0" in system
     assert "{current_layer}" not in system
+
+
+# --- @mention awareness ---
+
+def test_build_prompt_mention_awareness():
+    """@agent-1 in recent message adds 'specifically addressed you' to system."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    history = [
+        {"from": "agent-1", "iteration": "iter-1", "content": "my proposal"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "@agent-1 what about edge cases?"},
+    ]
+    messages = build_prompt(agent, iteration, history)
+    system = messages[0]["content"]
+    assert "specifically addressed you" in system
+    assert "agent-2" in system
+
+
+def test_build_prompt_no_mention_no_note():
+    """When no @mention, no mention note appears in system prompt."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    history = [
+        {"from": "agent-1", "iteration": "iter-1", "content": "my proposal"},
+        {"from": "agent-2", "iteration": "iter-1", "content": "looks good to me"},
+    ]
+    messages = build_prompt(agent, iteration, history)
+    system = messages[0]["content"]
+    assert "specifically addressed you" not in system
+
+
+# --- pass_turn filtering ---
+
+def test_build_prompt_pass_turn_filtered_from_prompt():
+    """Messages with pass_turn flag should be excluded from agent prompt."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {
+        "id": "iter-1", "description": "Build a thing.",
+        "status": "in-progress", "max_turns": 10,
+    }
+    history = [
+        {"from": "agent-2", "iteration": "iter-1", "content": "my proposal"},
+        {"from": "system", "iteration": "iter-1", "content": "(agent-1 passes: agree)", "pass_turn": True},
+        {"from": "agent-2", "iteration": "iter-1", "content": "continuing"},
+    ]
+    messages = build_prompt(agent, iteration, history)
+    # pass_turn message should not appear in any message content
+    all_content = " ".join(m["content"] for m in messages)
+    assert "passes: agree" not in all_content

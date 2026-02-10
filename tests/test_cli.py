@@ -200,12 +200,12 @@ def test_run_conversation_alternates_agents(tmp_path):
     }
 
     call_count = 0
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         nonlocal call_count
         call_count += 1
-        return f"Response {call_count}"
+        return {"content": f"Response {call_count}", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, agents, iteration, _default_model_config())
 
     log_path = iter_dir / "conversation.jsonl"
@@ -234,10 +234,10 @@ def test_run_conversation_resumes_from_existing(tmp_path):
         "max_turns": 4,  # 4 total, 2 already done → 2 more
     }
 
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
-        return "new response"
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
+        return {"content": "new response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     messages = read_log(log_path)
@@ -257,7 +257,7 @@ def test_run_conversation_max_turns_zero_produces_no_messages(tmp_path):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "max_turns": 0,
     }
-    with patch("gotg.cli.chat_completion", return_value="nope"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "nope", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 0
@@ -270,7 +270,7 @@ def test_run_conversation_max_turns_one_runs_single_agent(tmp_path):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "max_turns": 1,
     }
-    with patch("gotg.cli.chat_completion", return_value="only response"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "only response", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert len(messages) == 1
@@ -292,9 +292,9 @@ def test_run_conversation_already_at_max_turns(tmp_path):
     def mock_completion(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        return "should not happen"
+        return {"content": "should not happen", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
     assert call_count == 0
 
@@ -311,7 +311,7 @@ def test_run_conversation_three_agents_rotate(tmp_path):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "max_turns": 6,
     }
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
         run_conversation(iter_dir, agents, iteration, _default_model_config())
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
     assert [m["from"] for m in messages] == ["alice", "bob", "carol", "alice", "bob", "carol"]
@@ -327,15 +327,15 @@ def test_run_conversation_model_error_mid_conversation(tmp_path):
     }
 
     call_count = 0
-    def flaky_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def flaky_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 3:
             raise httpx.ConnectError("Ollama crashed")
-        return f"response {call_count}"
+        return {"content": f"response {call_count}", "operations": []}
 
     with pytest.raises(httpx.ConnectError):
-        with patch("gotg.cli.chat_completion", side_effect=flaky_completion):
+        with patch("gotg.cli.agentic_completion", side_effect=flaky_completion):
             run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
@@ -351,7 +351,7 @@ def test_run_conversation_messages_have_correct_iteration_id(tmp_path):
         "id": "iter-42-todo-design", "description": "A task",
         "status": "in-progress", "max_turns": 4,
     }
-    with patch("gotg.cli.chat_completion", return_value="ok"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "ok", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
     messages = read_log(iter_dir / "conversation.jsonl")
     assert all(m["iteration"] == "iter-42-todo-design" for m in messages)
@@ -385,7 +385,7 @@ def test_run_conversation_with_max_turns_override(tmp_path):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "max_turns": 10,
     }
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config(),
                          max_turns_override=3)
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
@@ -409,11 +409,11 @@ def test_run_conversation_skips_human_in_turn_count(tmp_path):
     }
 
     call_log = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         call_log.append("call")
-        return "new response"
+        return {"content": "new response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     assert len(call_log) == 2
@@ -466,7 +466,7 @@ def test_continue_without_message_just_continues(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="more talk"):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "more talk", "operations": []}):
                 main()
 
     messages = read_log(log_path)
@@ -486,7 +486,7 @@ def test_continue_max_turns_means_new_turns(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="extended"):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "extended", "operations": []}):
                 main()
 
     messages = read_log(log_path)
@@ -499,7 +499,7 @@ def test_continue_human_message_not_counted_in_turns(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "-m", "my input", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="response"):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
                 main()
 
     messages = read_log(iter_dir / "conversation.jsonl")
@@ -747,13 +747,15 @@ def test_run_conversation_coach_injects_after_rotation(tmp_path):
     }
 
     call_log = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        call_log.append("call")
-        if tools:
-            return {"content": "response", "tool_calls": []}
-        return "response"
+    def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
+        call_log.append("agent")
+        return {"content": "response", "operations": []}
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        call_log.append("coach")
+        return {"content": "response", "tool_calls": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -774,7 +776,8 @@ def test_run_conversation_coach_turns_not_counted(tmp_path):
         "status": "in-progress", "max_turns": 2,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -793,21 +796,22 @@ def test_run_conversation_coach_early_exit(tmp_path):
         "status": "in-progress", "max_turns": 10,
     }
 
-    call_count = 0
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        nonlocal call_count
-        call_count += 1
-        # 3rd call is the coach (after agent-1, agent-2)
-        if call_count == 3:
+    def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
+        return {"content": "response", "operations": []}
+
+    coach_call_count = 0
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        nonlocal coach_call_count
+        coach_call_count += 1
+        if coach_call_count == 1:
             return {
                 "content": "All items resolved. Recommend advancing.",
                 "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Scope agreed."}}],
             }
-        if tools:
-            return {"content": "response", "tool_calls": []}
-        return "response"
+        return {"content": "response", "tool_calls": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -826,7 +830,8 @@ def test_run_conversation_coach_no_tool_call_continues(tmp_path):
         "status": "in-progress", "max_turns": 4,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -844,7 +849,7 @@ def test_run_conversation_no_coach_backward_compatible(tmp_path):
         "status": "in-progress", "max_turns": 4,
     }
 
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config())  # no coach kwarg
 
@@ -862,11 +867,12 @@ def test_run_conversation_coach_in_participants(tmp_path):
     }
 
     captured_messages = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_messages.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", return_value={"content": "response", "tool_calls": []}):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -888,7 +894,8 @@ def test_run_conversation_three_agents_with_coach(tmp_path):
         "status": "in-progress", "max_turns": 6,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, agents, iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -912,7 +919,8 @@ def test_run_conversation_resumes_with_coach_history(tmp_path):
         "status": "in-progress", "max_turns": 4,  # 2 existing + 2 more
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -961,7 +969,8 @@ def test_continue_excludes_coach_from_turn_count(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+                 patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
                 main()
 
     messages = read_log(log_path)
@@ -983,11 +992,11 @@ def test_run_conversation_reads_groomed_md(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     system_msg = captured_prompts[0][0]["content"]
@@ -1005,11 +1014,11 @@ def test_run_conversation_no_groomed_md_no_injection(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     system_msg = captured_prompts[0][0]["content"]
@@ -1027,13 +1036,15 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        if tools:
-            return {"content": "response", "tool_calls": []}
-        return "response"
+        return {"content": "response", "operations": []}
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        captured_prompts.append(messages)
+        return {"content": "response", "tool_calls": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -1122,11 +1133,11 @@ def test_run_conversation_reads_tasks_json(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     system_msg = captured_prompts[0][0]["content"]
@@ -1144,11 +1155,11 @@ def test_run_conversation_no_tasks_json_no_task_list(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     system_msg = captured_prompts[0][0]["content"]
@@ -1241,7 +1252,7 @@ def test_cmd_run_creates_auto_checkpoint(tmp_path):
 
     with patch("sys.argv", ["gotg", "run", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="response"):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
                 main()
 
     assert (iter_dir / "checkpoints" / "1").is_dir()
@@ -1253,7 +1264,7 @@ def test_cmd_continue_creates_auto_checkpoint(tmp_path):
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", return_value="response"):
+            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
                 main()
 
     assert (iter_dir / "checkpoints" / "1").is_dir()
@@ -1421,7 +1432,7 @@ def test_run_conversation_no_fileguard_backward_compat(tmp_path):
     agents = _default_agents()
     iteration = {"id": "iter-1", "description": "Test", "status": "in-progress", "max_turns": 2}
 
-    with patch("gotg.cli.chat_completion", return_value="response"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=None)
 
     messages = [m for m in read_log(iter_dir / "conversation.jsonl") if m["from"] != "system"]
@@ -1445,7 +1456,7 @@ def test_run_conversation_with_fileguard_uses_agentic(tmp_path):
         ],
     }
 
-    with patch("gotg.model.agentic_completion", return_value=mock_result) as mock_agentic:
+    with patch("gotg.cli.agentic_completion", return_value=mock_result) as mock_agentic:
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
 
     mock_agentic.assert_called_once()
@@ -1465,7 +1476,7 @@ def test_run_conversation_fileguard_prints_status(tmp_path, capsys):
     fileguard = FileGuard(tmp_path, {"writable_paths": ["src/**", "tests/**"]})
 
     mock_result = {"content": "done", "operations": []}
-    with patch("gotg.model.agentic_completion", return_value=mock_result):
+    with patch("gotg.cli.agentic_completion", return_value=mock_result):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
 
     output = capsys.readouterr().out
@@ -1489,7 +1500,7 @@ def test_run_conversation_fileguard_write_limit(tmp_path):
         captured_executor["fn"] = kwargs["tool_executor"]
         return {"content": "done", "operations": []}
 
-    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agentic):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
 
     executor = captured_executor["fn"]
@@ -1596,7 +1607,7 @@ def test_run_conversation_pauses_on_pending_approval(tmp_path, capsys):
         store.add_request("Dockerfile", "FROM python", "agent-1", {"path": "Dockerfile", "content": "FROM python"})
         return mock_result
 
-    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agentic):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard, approval_store=store)
 
     output = capsys.readouterr().out
@@ -1619,7 +1630,7 @@ def test_run_conversation_no_pause_without_approval_store(tmp_path):
 
     mock_result = {"content": "done", "operations": []}
 
-    with patch("gotg.model.agentic_completion", return_value=mock_result):
+    with patch("gotg.cli.agentic_completion", return_value=mock_result):
         run_conversation(iter_dir, agents, iteration, _default_model_config(), fileguard=fileguard)
 
     messages = read_log(iter_dir / "conversation.jsonl")
@@ -1942,7 +1953,7 @@ def test_run_conversation_with_worktree_map_routes_writes(tmp_path):
             {"name": "file_write", "input": {"path": "src/output.py", "content": "from agent"}, "result": result},
         ]}
 
-    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agentic):
         run_conversation(iter_dir, agents, iteration, _default_model_config(),
                         fileguard=fileguard, worktree_map=worktree_map)
 
@@ -1970,7 +1981,7 @@ def test_run_conversation_without_worktree_map_backward_compat(tmp_path):
             {"name": "file_write", "input": {"path": "src/main.py", "content": "hello"}, "result": result},
         ]}
 
-    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agentic):
         run_conversation(iter_dir, agents, iteration, _default_model_config(),
                         fileguard=fileguard, worktree_map=None)
 
@@ -2005,7 +2016,7 @@ def test_run_conversation_three_agents_with_worktrees(tmp_path):
             {"name": "file_write", "input": {"path": "src/file.py", "content": "code"}, "result": result},
         ]}
 
-    with patch("gotg.model.agentic_completion", side_effect=mock_agentic):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agentic):
         run_conversation(iter_dir, agents, iteration, _default_model_config(),
                         fileguard=fileguard, worktree_map=worktree_map)
 
@@ -2027,7 +2038,7 @@ def test_run_conversation_worktree_map_prints_status(tmp_path, capsys):
     worktree_map = {"agent-1": tmp_path / "wt1", "agent-2": tmp_path / "wt2"}
 
     mock_result = {"content": "done", "operations": []}
-    with patch("gotg.model.agentic_completion", return_value=mock_result):
+    with patch("gotg.cli.agentic_completion", return_value=mock_result):
         run_conversation(iter_dir, agents, iteration, _default_model_config(),
                         fileguard=fileguard, worktree_map=worktree_map)
 
@@ -2500,11 +2511,11 @@ def test_run_conversation_passes_diffs_summary(tmp_path):
     diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++"
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), diffs_summary=diffs)
 
@@ -2523,11 +2534,11 @@ def test_run_conversation_no_diffs_no_injection(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), diffs_summary=None)
 
@@ -2547,13 +2558,15 @@ def test_run_conversation_diffs_passed_to_coach(tmp_path):
     diffs = "=== agent-1/layer-0 ===\n src/main.py | 5 +++++"
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        if tools:
-            return {"content": "response", "tool_calls": []}
-        return "response"
+        return {"content": "response", "operations": []}
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        captured_prompts.append(messages)
+        return {"content": "response", "tool_calls": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach(),
                          diffs_summary=diffs)
@@ -2572,15 +2585,14 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
         "status": "in-progress", "phase": "code-review", "max_turns": 2,
     }
 
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        if tools:
-            return {
-                "content": "All concerns resolved.",
-                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
-            }
-        return "response"
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        return {
+            "content": "All concerns resolved.",
+            "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+        }
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -2599,15 +2611,14 @@ def test_coach_completion_non_last_phase_message(tmp_path, capsys):
         "status": "in-progress", "phase": "grooming", "max_turns": 2,
     }
 
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        if tools:
-            return {
-                "content": "All done.",
-                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
-            }
-        return "response"
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        return {
+            "content": "All done.",
+            "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+        }
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -2838,15 +2849,14 @@ def test_coach_completion_implementation_suggests_advance(tmp_path, capsys):
         "status": "in-progress", "phase": "implementation", "max_turns": 2,
     }
 
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        if tools:
-            return {
-                "content": "All tasks done.",
-                "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
-            }
-        return "response"
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        return {
+            "content": "All tasks done.",
+            "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
+        }
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -3243,7 +3253,7 @@ def test_run_header_shows_layer(tmp_path, capsys):
         "current_layer": 2,
     }
 
-    with patch("gotg.cli.chat_completion", return_value="x"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "x", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     output = capsys.readouterr().out
@@ -3258,7 +3268,7 @@ def test_run_header_no_layer_without_current_layer(tmp_path, capsys):
         "status": "in-progress", "phase": "grooming", "max_turns": 0,
     }
 
-    with patch("gotg.cli.chat_completion", return_value="x"):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "x", "operations": []}):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     output = capsys.readouterr().out
@@ -3326,7 +3336,8 @@ def test_kickoff_injected_on_empty_conversation(tmp_path):
         "status": "in-progress", "phase": "grooming", "max_turns": 2,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -3351,7 +3362,8 @@ def test_kickoff_injected_after_phase_advance(tmp_path):
         "status": "in-progress", "phase": "planning", "max_turns": 4,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -3376,7 +3388,8 @@ def test_no_kickoff_on_mid_phase_resume(tmp_path):
         "status": "in-progress", "phase": "grooming", "max_turns": 4,
     }
 
-    with patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -3396,21 +3409,19 @@ def test_empty_coach_message_gets_fallback(tmp_path):
         "status": "in-progress", "phase": "grooming", "max_turns": 2,
     }
 
-    call_count = 0
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", tools=None):
-        nonlocal call_count
-        call_count += 1
-        # 3rd call is coach after agent-1, agent-2
-        if call_count == 3:
+    coach_call_count = 0
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        nonlocal coach_call_count
+        coach_call_count += 1
+        if coach_call_count == 1:
             return {
                 "content": "",
                 "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done."}}],
             }
-        if tools:
-            return {"content": "response", "tool_calls": []}
-        return "response"
+        return {"content": "response", "tool_calls": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config(), coach=_default_coach())
 
@@ -3572,11 +3583,11 @@ def test_run_conversation_uses_phase_history(tmp_path):
     }
 
     captured_prompts = []
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
-        return "response"
+        return {"content": "response", "operations": []}
 
-    with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+    with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
         run_conversation(iter_dir, _default_agents(), iteration,
                          _default_model_config())
 
@@ -3603,12 +3614,12 @@ def test_continue_uses_phase_history(tmp_path):
     })
 
     # Phase-scoped history has 0 agent turns, so max_turns=1 should allow 1 turn
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
-        return "response"
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
+        return {"content": "response", "operations": []}
 
     with patch("sys.argv", ["gotg", "continue", "--max-turns", "1"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+            with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
                 main()
 
     # Should have added at least 1 agent message in the new phase
@@ -3628,12 +3639,12 @@ def test_advance_then_continue_with_message_ordering(tmp_path):
             main()
 
     # Continue with a human message
-    def mock_completion(base_url, model, messages, api_key=None, provider="ollama"):
-        return "response"
+    def mock_completion(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
+        return {"content": "response", "operations": []}
 
     with patch("sys.argv", ["gotg", "continue", "-m", "focus on task splitting", "--max-turns", "1"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.chat_completion", side_effect=mock_completion):
+            with patch("gotg.cli.agentic_completion", side_effect=mock_completion):
                 main()
 
     # Check phase-scoped history
@@ -3835,3 +3846,304 @@ def test_notes_extraction_has_transcript_framing(tmp_path):
     user_msg = captured[0][0]["content"]  # notes uses single user message
     assert "=== TRANSCRIPT START ===" in user_msg
     assert "=== TRANSCRIPT END ===" in user_msg
+
+
+# --- pass_turn behavior ---
+
+def test_pass_turn_logged_as_system_note(tmp_path):
+    """When agent calls pass_turn, a system note is logged (not an agent message)."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    def mock_agent(**kwargs):
+        return {
+            "content": "",
+            "operations": [{"name": "pass_turn", "input": {"reason": "agree with proposal"}}],
+        }
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    pass_msgs = [m for m in messages if m.get("pass_turn")]
+    assert len(pass_msgs) == 1
+    assert pass_msgs[0]["from"] == "system"
+    assert "(agent-1 passes: agree with proposal)" == pass_msgs[0]["content"]
+
+
+def test_pass_turn_reason_in_system_note(tmp_path):
+    """The pass_turn reason text appears in the logged system note."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    def mock_agent(**kwargs):
+        return {
+            "content": "",
+            "operations": [{"name": "pass_turn", "input": {"reason": "waiting for layer 2"}}],
+        }
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    pass_msgs = [m for m in messages if m.get("pass_turn")]
+    assert "waiting for layer 2" in pass_msgs[0]["content"]
+
+
+def test_pass_turn_skips_agent_message(tmp_path):
+    """When agent passes, no agent-attributed message is logged."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 2,
+    }
+
+    call_count = 0
+    def mock_agent(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"content": "I pass", "operations": [{"name": "pass_turn", "input": {"reason": "agree"}}]}
+        return {"content": "real response", "operations": []}
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    agent_msgs = [m for m in messages if m["from"] == "agent-1"]
+    assert len(agent_msgs) == 0  # agent-1 passed, agent-2 spoke
+    agent2_msgs = [m for m in messages if m["from"] == "agent-2"]
+    assert len(agent2_msgs) == 1
+    assert agent2_msgs[0]["content"] == "real response"
+
+
+def test_pass_turn_counts_as_turn(tmp_path):
+    """Pass still increments the turn counter."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    def mock_agent(**kwargs):
+        return {"content": "", "operations": [{"name": "pass_turn", "input": {"reason": "agree"}}]}
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    # max_turns=1 means exactly 1 agent call, even with a pass
+    messages = read_log(iter_dir / "conversation.jsonl")
+    pass_msgs = [m for m in messages if m.get("pass_turn")]
+    assert len(pass_msgs) == 1  # Just the pass note
+
+
+def test_pass_turn_does_not_skip_coach_injection(tmp_path):
+    """Coach still speaks after a full rotation that includes passes."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 2,
+    }
+
+    def mock_agent(**kwargs):
+        return {"content": "", "operations": [{"name": "pass_turn", "input": {"reason": "agree"}}]}
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+         patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    coach_msgs = [m for m in messages if m["from"] == "coach"]
+    assert len(coach_msgs) == 1
+
+
+def test_pass_turn_does_not_skip_approval_check(tmp_path):
+    """Approval pause still triggers even when agent passes after writing files."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "phase": "implementation", "max_turns": 4,
+    }
+
+    from gotg.fileguard import FileGuard
+    from gotg.approvals import ApprovalStore
+
+    fg = FileGuard(tmp_path, {"writable_paths": ["src/**"], "enable_approvals": True})
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    # Simulate: agent writes a protected file (triggers pending approval) then passes
+    def mock_agent(**kwargs):
+        tool_executor = kwargs.get("tool_executor")
+        if tool_executor:
+            tool_executor("file_write", {"path": "README.md", "content": "hello"})
+            tool_executor("pass_turn", {"reason": "wrote file, passing"})
+        return {
+            "content": "",
+            "operations": [
+                {"name": "file_write", "input": {"path": "README.md", "content": "hello"}, "result": "pending approval"},
+                {"name": "pass_turn", "input": {"reason": "wrote file, passing"}},
+            ],
+        }
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), fileguard=fg,
+                         approval_store=store)
+
+    # Should have paused (returned early) due to pending approval
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # Only 1 agent turn should have executed before pause
+    pass_notes = [m for m in messages if m.get("pass_turn")]
+    assert len(pass_notes) <= 1
+
+
+def test_pass_turn_with_file_ops_logs_ops(tmp_path):
+    """File operations are logged even when the agent also passes."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    def mock_agent(**kwargs):
+        return {
+            "content": "",
+            "operations": [
+                {"name": "file_read", "input": {"path": "src/main.py"}, "result": "contents"},
+                {"name": "pass_turn", "input": {"reason": "just reading"}},
+            ],
+        }
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    # Should have: file_read op (system), pass note (system) — ignore any kickoff
+    op_msgs = [m for m in messages if m["from"] == "system" and "file_read" in m["content"]]
+    pass_msgs = [m for m in messages if m.get("pass_turn")]
+    assert len(op_msgs) == 1
+    assert len(pass_msgs) == 1
+    assert "passes:" in pass_msgs[0]["content"]
+
+
+def test_agent_always_has_pass_turn_tool(tmp_path):
+    """agentic_completion receives tools including pass_turn even without fileguard."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 1,
+    }
+
+    captured_tools = []
+    def mock_agent(**kwargs):
+        captured_tools.append(kwargs.get("tools", []))
+        return {"content": "response", "operations": []}
+
+    with patch("gotg.cli.agentic_completion", side_effect=mock_agent):
+        run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
+
+    assert len(captured_tools) == 1
+    tool_names = [t["name"] for t in captured_tools[0]]
+    assert "pass_turn" in tool_names
+
+
+# --- ask_pm behavior ---
+
+def test_ask_pm_pauses_conversation(tmp_path, capsys):
+    """Coach calls ask_pm → conversation pauses with question printed."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,
+    }
+
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        return {
+            "content": "We need PM input on the scope.",
+            "tool_calls": [{"name": "ask_pm", "input": {"question": "Should we include auth?"}}],
+        }
+
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    output = capsys.readouterr().out
+    assert "Should we include auth?" in output
+    assert "gotg continue -m" in output
+
+    # Conversation should have stopped (only 1 rotation + coach)
+    messages = read_log(iter_dir / "conversation.jsonl")
+    agent_msgs = [m for m in messages if m["from"] not in ("system", "coach")]
+    assert len(agent_msgs) == 2  # agent-1, agent-2, then coach paused
+
+
+def test_ask_pm_empty_text_gets_fallback(tmp_path):
+    """Empty coach text with ask_pm gets fallback text."""
+    iter_dir = _make_iter_dir(tmp_path)
+    iteration = {
+        "id": "iter-1", "description": "A task",
+        "status": "in-progress", "max_turns": 4,
+    }
+
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+        return {
+            "content": "",
+            "tool_calls": [{"name": "ask_pm", "input": {"question": "What's the priority?"}}],
+        }
+
+    with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}), \
+         patch("gotg.cli.chat_completion", side_effect=mock_coach):
+        run_conversation(iter_dir, _default_agents(), iteration,
+                         _default_model_config(), coach=_default_coach())
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    coach_msgs = [m for m in messages if m["from"] == "coach"]
+    assert len(coach_msgs) == 1
+    assert "(Requesting PM input: What's the priority?)" == coach_msgs[0]["content"]
+
+
+def test_ask_pm_resume_with_continue(tmp_path):
+    """After ask_pm pause, continue -m injects the PM's answer into history."""
+    # Setup: team dir with a conversation that has a coach ask_pm pause
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    team_config = json.loads((team / "team.json").read_text())
+    team_config["coach"] = {"name": "coach", "role": "Agile Coach"}
+    (team / "team.json").write_text(json.dumps(team_config, indent=2))
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "grooming", "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    log_path = iter_dir / "conversation.jsonl"
+
+    # Pre-populate with conversation up to ask_pm pause
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "idea"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "agreed"})
+    append_message(log_path, {"from": "coach", "iteration": "iter-1",
+                              "content": "(Requesting PM input: Should we include auth?)"})
+
+    # Continue with PM's answer
+    def mock_agent(**kwargs):
+        return {"content": "response", "operations": []}
+
+    with patch("sys.argv", ["gotg", "continue", "-m", "Yes, include auth", "--max-turns", "1"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with patch("gotg.cli.agentic_completion", side_effect=mock_agent), \
+                 patch("gotg.cli.chat_completion", side_effect=_mock_chat_with_tools):
+                main()
+
+    messages = read_log(log_path)
+    human_msgs = [m for m in messages if m["from"] == "human"]
+    assert len(human_msgs) == 1
+    assert "Yes, include auth" in human_msgs[0]["content"]

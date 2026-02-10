@@ -2088,7 +2088,7 @@ $9 for a calculator is untenable. The breakdown reveals why:
 
 Organized improvements into three iterations (15-17) that build on each other:
 
-**Iteration 15 — Prompt Efficiency:** Conciseness norms in system prompt ("silence means approval"), system kickoff messages per phase (template-injected as system messages, not coach-attributed — same honesty principle as signal_phase_complete), writable paths in prompts, compressed pre-code-review (interface-only, one round), layer enforcement in implementation prompt. Expected: 50-70% reduction in agent verbosity.
+**Iteration 15 — Prompt Efficiency:** Conciseness norms in system prompt ("silence means approval"), coach kickoff messages (template-injected, zero API cost) that tell agents exactly what to do, writable paths in prompts, compressed pre-code-review (interface-only, one round), layer enforcement in implementation prompt. Expected: 50-70% reduction in agent verbosity.
 
 **Iteration 16 — History Management:** Phase boundary markers in conversation.jsonl. `read_phase_history` loads only current-phase messages. Artifacts (groomed.md, tasks.json with notes) carry forward the compressed output of prior phases. Expected: 60-70% reduction in input tokens.
 
@@ -2099,6 +2099,40 @@ Combined estimate: $9 → $1-2 for equivalent task.
 ### Key insight
 
 > Principle #31: **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls.
+
+---
+
+## 47. The Directed Flow Trap
+
+### The temptation
+
+Iteration 17 was originally designed as coach-directed conversation flow — replace round-robin with a `direct_speaker` tool where the coach decides who speaks next. The cost analysis supported it: 30-50% fewer agent turns by eliminating empty confirmations and "I'll wait" messages.
+
+### Why it's wrong
+
+The `direct_speaker` model turns the coach from a facilitator into a dispatcher. In a real team Slack channel, nobody assigns speaking turns. People read the thread, respond when they have something to say, and stay quiet when they don't. gotg's value proposition is that it creates genuine team dynamics — agents discuss, disagree, converge. Making the coach a control plane pushes gotg toward the "orchestration framework" end of the spectrum and away from the "team conversation" end.
+
+The deeper problem: the coach would need to read the full conversation to decide who should speak, then that agent would also read the full conversation to respond. Same context cost, extra coach call. The savings come only from preventing agent output that pollutes future context — which can be achieved without controlling who speaks.
+
+### The real problem
+
+LLMs can't stay quiet. When you give an LLM a turn, it produces output. Always. The round-robin guarantees every agent gets a turn, and every agent fills that turn with something, even if it's just "✅ Agreed, I'm ready to move on" at 150 words. The cost isn't the output tokens — it's that those 150 words get re-read by every subsequent turn.
+
+### The fix: pass_turn tool
+
+Keep round-robin. Keep natural flow. Give agents a `pass_turn` tool call (same structural pattern as the coach's `signal_phase_complete` — out-of-band, unambiguous, no false positives from in-band text detection, per iteration 5b's lesson). When an agent has nothing to add, they call `pass_turn` instead of producing a message. The system logs a minimal system note ("agent-1 has nothing to add") that doesn't pollute the conversation context.
+
+The agent still gets prompted (one API call to decide), but the pass doesn't add a 200-word message to history. Every subsequent turn has less context to ingest. It's a context growth control, not a call elimination.
+
+This keeps the conversation conversational. The PM can jump in naturally. Agents develop their own rhythm. The coach facilitates rather than orchestrates. In the TUI, it looks like a team chat, not a managed conference call.
+
+> Principle #32: **Conversation flow should emerge, not be assigned** — controlling who speaks turns a team discussion into a conference call; instead, give agents the ability to stay quiet and let natural conversation dynamics determine who contributes.
+
+### What survives from the original plan
+
+- `ask_pm` tool for coach (renamed from `request_admin_input`) — useful when the coach genuinely needs a PM decision
+- Empty coach message fallbacks
+- The insight that fewer context-polluting messages = lower cost
 
 ---
 
@@ -2169,10 +2203,10 @@ Combined estimate: $9 → $1-2 for equivalent task.
 - ✅ **Iteration 11: Git worktree infrastructure** — complete
 - ✅ **Iteration 12: Merge workflow + PM review** — complete
 - ✅ **Iteration 13: Code review with diffs** — complete
-- ✅ **Iteration 14: End-to-end layer execution** — complete, 5-phase system with implementation phase, current_layer tracking, next-layer command
+- ⬜ **Iteration 14: End-to-end layer execution** — planned, 5-phase system with implementation phase, current_layer tracking, next-layer command
 - ⬜ **Iteration 15: Prompt efficiency & agent awareness** — planned, conciseness norms, coach kickoff messages, writable path injection, compressed pre-code-review, layer enforcement in prompts
 - ⬜ **Iteration 16: History management** — planned, phase boundary markers, phase-scoped history loading, task notes extraction, ~60-70% input token reduction
-- ⬜ **Iteration 17: Coach-directed conversation flow** — planned, direct_speaker tool, request_admin_input tool, coach controls turn order, eliminates round-robin waste
+- ⬜ **Iteration 17: Pass-turn and coach tools** — planned, pass_turn tool for agents (context growth control), ask_pm tool for coach, @mention awareness in prompts, keeps round-robin with natural conversation flow
 
 First full test run complete (calculator, $9). Iterations 9-13 working. Three optimization iterations (15-17) designed from test run analysis — target: $9 → $1-2 for equivalent task.
 
@@ -2224,7 +2258,7 @@ First full test run complete (calculator, $9). Iterations 9-13 working. Three op
 - **Input tokens are the cost driver, not output tokens** — in a multi-agent conversation, each turn re-reads the full history; 99 turns reading an ever-growing log produced ~2.7M input tokens vs ~47K output; history trimming at phase boundaries is the single highest-leverage cost intervention
 
 ### Development Strategy
-- **Iteration 15 next** — prompt efficiency and agent awareness
+- **Iteration 14 next** — end-to-end layer execution, completing the implementation pipeline
 - Iterations 15-17 optimize conversation efficiency based on first full test run findings
 - Iteration 15 (prompts) is low-risk, high-impact — all prompt text changes, minimal structural changes
 - Iteration 16 (history) is medium-risk — changes how history is loaded but doesn't change what's stored
@@ -2286,3 +2320,4 @@ First full test run complete (calculator, $9). Iterations 9-13 working. Three op
 29. **Surface decisions, don't require memorization** — contextual action bars that appear when the system needs a decision are better than commands the PM must remember; the interface should tell you what's possible right now
 30. **Match coordination overhead to problem structure** — well-specified, test-driven problems can run with minimal coordination (git + tests); ambiguous, requirements-driven problems need structured collaboration (phases + facilitation + human oversight); the same project may need both at different stages
 31. **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls
+32. **Conversation flow should emerge, not be assigned** — controlling who speaks turns a team discussion into a conference call; instead, give agents the ability to stay quiet and let natural conversation dynamics determine who contributes

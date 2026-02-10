@@ -27,7 +27,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "concerns you.\n\n"
     "Keep messages to short prose paragraphs. Avoid checkbox formatting "
     "and agreement checklists. Bullets are fine for brief lists but do not "
-    "pad them. Do not use emoji."
+    "pad them. Do not use emoji.\n\n"
+    "If you have nothing new to contribute — you agree with what's been said "
+    "and have no concerns, questions, or additions — use the pass_turn tool "
+    "instead of restating agreement. Only pass when you genuinely have nothing "
+    "to add; do not pass if you have any reservations."
 )
 
 
@@ -227,7 +231,11 @@ COACH_FACILITATION_PROMPT = (
     "resolved or explicitly deferred, use the signal_phase_complete tool "
     "to recommend advancing to the next phase\n\n"
     "Keep your messages concise — shorter than the engineers' messages. "
-    "The engineers are the experts. You manage the process."
+    "The engineers are the experts. You manage the process.\n\n"
+    "If the team is stuck on a question that requires PM authority, use the "
+    "ask_pm tool to pause and request input. If all engineers passed on the "
+    "previous rotation, consider whether the topic is resolved and either "
+    "move to the next topic or signal phase completion."
 )
 
 
@@ -252,7 +260,11 @@ COACH_FACILITATION_PROMPTS = {
         "definitions are complete, use the signal_phase_complete tool "
         "to recommend advancing to the next phase\n\n"
         "Keep your messages concise — shorter than the engineers' messages. "
-        "The engineers are the experts. You manage the process."
+        "The engineers are the experts. You manage the process.\n\n"
+        "If the team is stuck on a question that requires PM authority, use the "
+        "ask_pm tool to pause and request input. If all engineers passed on the "
+        "previous rotation, consider whether the topic is resolved and either "
+        "move to the next topic or signal phase completion."
     ),
 
     "pre-code-review": (
@@ -264,7 +276,11 @@ COACH_FACILITATION_PROMPTS = {
         "move to the next layer.\n\n"
         "Signal completion when all layers have been presented and all "
         "interface concerns resolved. Most tasks should need only one round "
-        "of discussion."
+        "of discussion.\n\n"
+        "If the team is stuck on a question that requires PM authority, use the "
+        "ask_pm tool to pause and request input. If all engineers passed on the "
+        "previous rotation, consider whether the topic is resolved and either "
+        "move to the next topic or signal phase completion."
     ),
 
     "implementation": (
@@ -286,7 +302,11 @@ COACH_FACILITATION_PROMPTS = {
         "confirmed their tasks are done. If any agent has not confirmed, "
         "do NOT signal\n\n"
         "Keep your messages concise. Engineers are doing the work. "
-        "You track progress."
+        "You track progress.\n\n"
+        "If the team is stuck on a question that requires PM authority, use the "
+        "ask_pm tool to pause and request input. If all engineers passed on the "
+        "previous rotation, consider whether the topic is resolved and either "
+        "move to the next topic or signal phase completion."
     ),
 
     "code-review": (
@@ -305,7 +325,11 @@ COACH_FACILITATION_PROMPTS = {
         "6. Signal completion only when all concerns resolved and every branch "
         "reviewed. Include outcome: approved (all resolved) or changes-requested "
         "(with summary)\n\n"
-        "Keep your messages concise. Engineers are experts. You manage the process."
+        "Keep your messages concise. Engineers are experts. You manage the process.\n\n"
+        "If the team is stuck on a question that requires PM authority, use the "
+        "ask_pm tool to pause and request input. If all engineers passed on the "
+        "previous rotation, consider whether the topic is resolved and either "
+        "move to the next topic or signal phase completion."
     ),
 }
 
@@ -327,6 +351,48 @@ COACH_TOOLS = [
                 }
             },
             "required": ["summary"],
+        },
+    },
+    {
+        "name": "ask_pm",
+        "description": (
+            "Pause the conversation and request input from the project "
+            "manager. Use when a decision requires PM authority or when "
+            "the team is stuck on a question only the PM can answer."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "What you need the PM to decide or clarify",
+                }
+            },
+            "required": ["question"],
+        },
+    },
+]
+
+
+AGENT_TOOLS = [
+    {
+        "name": "pass_turn",
+        "description": (
+            "Call this when you have nothing new to contribute to the "
+            "current discussion. Do not call this if you have concerns, "
+            "questions, disagreements, or new information to share. "
+            "Only pass when you genuinely agree with everything said "
+            "and have nothing to add."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Brief reason for passing (e.g., 'agree with proposal', 'waiting for layer 2')",
+                }
+            },
+            "required": ["reason"],
         },
     }
 ]

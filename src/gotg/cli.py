@@ -12,12 +12,13 @@ from gotg.config import (
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
 from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
-from gotg.model import chat_completion
+from gotg.model import chat_completion, agentic_completion
 from gotg.scaffold import (
     init_project, COACH_GROOMING_PROMPT, COACH_PLANNING_PROMPT,
-    COACH_NOTES_EXTRACTION_PROMPT, COACH_TOOLS,
+    COACH_NOTES_EXTRACTION_PROMPT, COACH_TOOLS, AGENT_TOOLS,
     should_inject_kickoff, format_phase_kickoff,
 )
+from gotg.tools import format_tool_operation
 
 
 def find_team_dir(cwd: Path) -> Path | None:
@@ -233,79 +234,100 @@ def run_conversation(
             "messages": prompt,
         })
 
+        # Build tool list: always include AGENT_TOOLS (pass_turn),
+        # add FILE_TOOLS when file access is enabled
+        agent_tools = list(AGENT_TOOLS)
         if fileguard:
-            from gotg.model import agentic_completion
-            from gotg.tools import FILE_TOOLS, execute_file_tool, format_tool_operation
+            from gotg.tools import FILE_TOOLS, execute_file_tool
 
-            # Select per-agent FileGuard when worktrees active.
-            # IMPORTANT: agent_fg must be computed inside the loop because `agent`
-            # changes each iteration. The tool_executor closure captures agent_fg,
-            # and since the closure is re-created each iteration, it gets the right one.
-            # Do NOT refactor tool_executor outside this loop — it would break this.
             if worktree_map and agent["name"] in worktree_map:
                 agent_fg = fileguard.with_root(worktree_map[agent["name"]])
             else:
                 agent_fg = fileguard
 
+            agent_tools.extend(FILE_TOOLS)
             write_count = 0
 
             def tool_executor(name, inp):
                 nonlocal write_count
+                if name == "pass_turn":
+                    return "Turn passed."
                 if name == "file_write":
                     write_count += 1
                     if write_count > agent_fg.max_files_per_turn:
                         return f"Error: write limit reached ({agent_fg.max_files_per_turn} per turn)"
                 return execute_file_tool(name, inp, agent_fg, approval_store=approval_store, agent_name=agent["name"])
-
-            result = agentic_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=prompt,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-                tools=FILE_TOOLS,
-                tool_executor=tool_executor,
-            )
-            response_text = result["content"]
-
-            # Log file operations as system messages
-            for op in result["operations"]:
-                op_msg = {
-                    "from": "system",
-                    "iteration": iteration["id"],
-                    "content": format_tool_operation(op),
-                }
-                append_message(log_path, op_msg)
-                print(render_message(op_msg))
-                print()
-                history.append(op_msg)
-
-            # Debug log full tool details
-            if result["operations"]:
-                append_debug(debug_path, {
-                    "turn": turn,
-                    "agent": agent["name"],
-                    "tool_operations": result["operations"],
-                })
         else:
-            response_text = chat_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=prompt,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-            )
+            def tool_executor(name, inp):
+                if name == "pass_turn":
+                    return "Turn passed."
+                return f"Unknown tool: {name}"
 
-        msg = {
-            "from": agent["name"],
-            "iteration": iteration["id"],
-            "content": response_text,
-        }
-        append_message(log_path, msg)
-        print(render_message(msg))
-        print()
+        result = agentic_completion(
+            base_url=model_config["base_url"],
+            model=model_config["model"],
+            messages=prompt,
+            api_key=model_config.get("api_key"),
+            provider=model_config.get("provider", "ollama"),
+            tools=agent_tools,
+            tool_executor=tool_executor,
+        )
+        response_text = result["content"]
 
-        history.append(msg)
+        # Log file operations first (even if agent passed)
+        for op in result.get("operations", []):
+            if op.get("name") == "pass_turn":
+                continue
+            op_msg = {
+                "from": "system",
+                "iteration": iteration["id"],
+                "content": format_tool_operation(op),
+            }
+            append_message(log_path, op_msg)
+            print(render_message(op_msg))
+            print()
+            history.append(op_msg)
+
+        if result.get("operations"):
+            append_debug(debug_path, {
+                "turn": turn,
+                "agent": agent["name"],
+                "tool_operations": result["operations"],
+            })
+
+        # Check for pass_turn
+        pass_called = any(
+            op.get("name") == "pass_turn"
+            for op in result.get("operations", [])
+        )
+
+        if pass_called:
+            reason = ""
+            for op in result["operations"]:
+                if op.get("name") == "pass_turn":
+                    reason = op.get("input", {}).get("reason", "")
+                    break
+            pass_msg = {
+                "from": "system",
+                "iteration": iteration["id"],
+                "content": f"({agent['name']} passes: {reason})",
+                "pass_turn": True,
+            }
+            append_message(log_path, pass_msg)
+            print(render_message(pass_msg))
+            print()
+            history.append(pass_msg)
+        else:
+            msg = {
+                "from": agent["name"],
+                "iteration": iteration["id"],
+                "content": response_text,
+            }
+            append_message(log_path, msg)
+            print(render_message(msg))
+            print()
+            history.append(msg)
+
         turn += 1
 
         # Check for pending approvals — pause conversation if any
@@ -341,6 +363,11 @@ def run_conversation(
             if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
                 coach_text = "(Phase complete signal sent.)"
 
+            # Fallback for empty coach messages with ask_pm
+            if not coach_text.strip() and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
+                question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
+                coach_text = f"(Requesting PM input: {question})"
+
             coach_msg = {
                 "from": coach["name"],
                 "iteration": iteration["id"],
@@ -363,6 +390,15 @@ def run_conversation(
                     print("Run `gotg continue` to keep discussing if needed.")
                 else:
                     print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
+                return
+
+            # Coach requests PM input
+            ask_pm_calls = [tc for tc in coach_tool_calls if tc["name"] == "ask_pm"]
+            if ask_pm_calls:
+                question = ask_pm_calls[0]["input"]["question"]
+                print("---")
+                print(f"Coach asks: {question}")
+                print("Reply with: gotg continue -m 'your answer'")
                 return
 
     print("---")

@@ -91,6 +91,24 @@ def build_prompt(
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)
 
+    # @mention awareness: check recent messages after our last turn
+    agent_last_turn = -1
+    for i, m in enumerate(history):
+        if m["from"] == agent_name:
+            agent_last_turn = i
+    recent = history[agent_last_turn + 1:] if agent_last_turn >= 0 else history[-3:]
+    mentions = [
+        m for m in recent
+        if m["from"] not in (agent_name, "system") and f"@{agent_name}" in m["content"]
+    ]
+    if mentions:
+        mentioner = mentions[-1]["from"]
+        system_parts.append(
+            f"Note: {mentioner} specifically addressed you with @{agent_name} "
+            "in a recent message. They may be waiting for your response on "
+            "a specific point."
+        )
+
     system_content = "\n\n".join(system_parts)
 
     messages = [{"role": "system", "content": system_content}]
@@ -104,6 +122,8 @@ def build_prompt(
         # Consolidate consecutive non-self messages into a single user message
         pending_parts = []
         for msg in history:
+            if msg.get("pass_turn"):
+                continue  # Don't include pass notes in agent prompt context
             if msg["from"] == agent_name:
                 # Flush any pending user parts first
                 if pending_parts:

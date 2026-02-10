@@ -178,7 +178,7 @@ def test_coach_facilitation_prompt_exists():
 def test_coach_tools_exists():
     from gotg.scaffold import COACH_TOOLS
     assert isinstance(COACH_TOOLS, list)
-    assert len(COACH_TOOLS) == 1
+    assert len(COACH_TOOLS) == 2
     tool = COACH_TOOLS[0]
     assert tool["name"] == "signal_phase_complete"
     assert "input_schema" in tool
@@ -581,3 +581,35 @@ def test_format_agent_task_assignments_no_file(tmp_path):
     from gotg.scaffold import format_agent_task_assignments
     agents = [{"name": "agent-1"}]
     assert format_agent_task_assignments(tmp_path, agents) == "No tasks assigned yet."
+
+
+# --- agent tools (pass_turn) ---
+
+def test_agent_tools_pass_turn_schema():
+    from gotg.scaffold import AGENT_TOOLS
+    assert isinstance(AGENT_TOOLS, list)
+    assert len(AGENT_TOOLS) == 1
+    tool = AGENT_TOOLS[0]
+    assert tool["name"] == "pass_turn"
+    assert "input_schema" in tool
+    schema = tool["input_schema"]
+    assert "reason" in schema["properties"]
+    assert "reason" in schema["required"]
+
+
+# --- coach ask_pm tool ---
+
+def test_coach_tools_ask_pm_schema():
+    from gotg.scaffold import COACH_TOOLS
+    ask_pm = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]
+    assert len(ask_pm) == 1
+    tool = ask_pm[0]
+    schema = tool["input_schema"]
+    assert "question" in schema["properties"]
+    assert "question" in schema["required"]
+
+
+def test_coach_facilitation_prompts_mention_ask_pm():
+    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    for phase, prompt in COACH_FACILITATION_PROMPTS.items():
+        assert "ask_pm" in prompt, f"Phase {phase} facilitation prompt doesn't mention ask_pm"
