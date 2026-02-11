@@ -114,7 +114,7 @@ async def test_show_loading_mounts_indicator():
         ml.show_loading()
         await pilot.pause()
 
-        indicators = ml.query("#ml-loading")
+        indicators = ml.query(".ml-loading")
         assert len(indicators) == 1
 
 
@@ -135,7 +135,7 @@ async def test_show_loading_idempotent():
         ml.show_loading()
         await pilot.pause()
 
-        indicators = ml.query("#ml-loading")
+        indicators = ml.query(".ml-loading")
         assert len(indicators) == 1
 
 
@@ -157,7 +157,7 @@ async def test_hide_loading_removes_indicator():
         ml.hide_loading()
         await pilot.pause()
 
-        indicators = ml.query("#ml-loading")
+        indicators = ml.query(".ml-loading")
         assert len(indicators) == 0
 
 
@@ -177,13 +177,13 @@ async def test_hide_loading_noop_when_not_shown():
         ml.hide_loading()  # Should not raise
         await pilot.pause()
 
-        indicators = ml.query("#ml-loading")
+        indicators = ml.query(".ml-loading")
         assert len(indicators) == 0
 
 
 @pytest.mark.asyncio
-async def test_append_message_hides_loading():
-    """append_message hides loading indicator before mounting the message."""
+async def test_append_message_keeps_loading():
+    """append_message does not remove loading indicator (caller manages it)."""
     from textual.app import App
 
     class TestApp(App):
@@ -200,10 +200,10 @@ async def test_append_message_hides_loading():
         ml.append_message({"from": "agent-1", "content": "hello"})
         await pilot.pause()
 
-        # Loading indicator should be gone after append
-        indicators = ml.query("#ml-loading")
-        assert len(indicators) == 0
-        # But the message should be there
+        # Loading indicator stays — caller is responsible for hide_loading()
+        indicators = ml.query(".ml-loading")
+        assert len(indicators) == 1
+        # Message should be there too
         chatboxes = ml.query(Chatbox)
         assert len(chatboxes) == 1
 

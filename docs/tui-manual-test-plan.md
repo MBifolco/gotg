@@ -4,8 +4,9 @@ Exhaustive walkthrough covering every screen, binding, action, and user-visible 
 
 ## Prerequisites
 
+- **Python 3.11+**
+- Installed from source: `pip install -e ".[tui]"` (from the gotg repo root)
 - Project initialized with `gotg init` (`.team/` directory exists)
-- `pip install gotg[tui]`
 - A working model config in `team.json` (for live session tests)
 - At least one iteration with conversation history (for viewing tests)
 - Ideally a second project in various states (pending iteration, completed phases, approvals pending) to avoid needing to reach every state from scratch

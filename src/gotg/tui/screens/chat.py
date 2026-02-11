@@ -58,6 +58,7 @@ class ChatScreen(Screen):
         Binding("a", "manage_approvals", "Approvals", show=False),
         Binding("p", "advance_phase", "Advance", show=False),
         Binding("d", "open_review", "Diffs", show=False),
+        Binding("t", "manage_tasks", "Tasks", show=False),
     ]
 
     session_state: reactive[SessionState] = reactive(SessionState.VIEWING)
@@ -96,7 +97,15 @@ class ChatScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Load existing messages
+        # Show loading indicator immediately while messages parse
+        msg_list = self.query_one("#message-list", MessageList)
+        msg_list.show_loading()
+
+        # Defer heavy I/O + widget mounting so the screen paints first
+        self.call_after_refresh(self._load_initial_messages)
+
+    def _load_initial_messages(self) -> None:
+        """Parse conversation log and populate the message list."""
         messages = read_log(self._log_path) if self._log_path.exists() else []
 
         msg_list = self.query_one("#message-list", MessageList)
@@ -123,6 +132,8 @@ class ChatScreen(Screen):
 
     def watch_session_state(self, state: SessionState) -> None:
         """React to state changes by updating UI."""
+        if not self.is_mounted:
+            return  # Children not composed yet; on_mount handles initial state
         input_widget = self.query_one("#chat-input", Input)
         info = self.query_one("#info-tile", InfoTile)
         msg_list = self.query_one("#message-list", MessageList)
@@ -136,6 +147,7 @@ class ChatScreen(Screen):
             input_widget.placeholder = "Press R to run, C to continue..."
             input_widget.disabled = False
             info.update_session_status("")
+            msg_list.focus()
         elif state == SessionState.RUNNING:
             input_widget.placeholder = "Session running..."
             input_widget.disabled = True
@@ -326,8 +338,10 @@ class ChatScreen(Screen):
         elif isinstance(event, CoachAskedPM):
             self._pause_reason = PauseReason.COACH_QUESTION
             self.session_state = SessionState.PAUSED
+            msg_list = self.query_one("#message-list", MessageList)
+            msg_list.append_coach_prompt(event.question)
             self.query_one("#action-bar", ActionBar).show(
-                f"Coach asks: {event.question}"
+                "Type reply and press Enter."
             )
 
         elif isinstance(event, PhaseCompleteSignaled):
@@ -357,9 +371,15 @@ class ChatScreen(Screen):
             # Patch metadata for display only — R → run reloads from disk
             self.metadata["phase"] = event.to_phase
             self.query_one("#info-tile", InfoTile).update_phase(event.to_phase)
-            self.query_one("#action-bar", ActionBar).show(
-                f"Advanced: {event.from_phase} -> {event.to_phase}. Press R to run."
-            )
+            if event.to_phase == "pre-code-review":
+                self.query_one("#action-bar", ActionBar).show(
+                    "Assigning tasks..."
+                )
+                self._open_task_assign()
+            else:
+                self.query_one("#action-bar", ActionBar).show(
+                    f"Advanced: {event.from_phase} -> {event.to_phase}. Press R to run."
+                )
 
         elif isinstance(event, AdvanceError):
             if event.partial:
@@ -480,6 +500,43 @@ class ChatScreen(Screen):
         except Exception as e:
             self.post_message(SessionError(f"Advance failed: {e}"))
 
+    def action_manage_tasks(self) -> None:
+        """Open task assignment screen."""
+        if self.session_state != SessionState.VIEWING:
+            return
+        if self._session_kind != "iteration":
+            return
+        phase = self.metadata.get("phase")
+        if phase not in ("pre-code-review", "implementation"):
+            return
+        self._open_task_assign()
+
+    def _open_task_assign(self) -> None:
+        """Push the TaskAssignScreen."""
+        from gotg.config import load_team_config
+        from gotg.tui.screens.task_assign import TaskAssignScreen
+
+        agents = load_team_config(self.app.team_dir).get("agents", [])
+        self.app.push_screen(TaskAssignScreen(self.data_dir, agents))
+
+    def _update_task_status_bar(self) -> None:
+        """Update action bar with task assignment status."""
+        import json
+
+        tasks_path = self.data_dir / "tasks.json"
+        bar = self.query_one("#action-bar", ActionBar)
+        if not tasks_path.exists():
+            bar.show("Press R to run, T to assign tasks.")
+            return
+        tasks = json.loads(tasks_path.read_text())
+        unassigned = sum(1 for t in tasks if not t.get("assigned_to"))
+        if unassigned:
+            bar.show(
+                f"{unassigned} task(s) unassigned. Press T to assign, then R to run."
+            )
+        else:
+            bar.show("All tasks assigned. Press R to run.")
+
     def action_open_review(self) -> None:
         """Open review screen for code-review diffs and merge."""
         if self.session_state != SessionState.PAUSED:
@@ -498,6 +555,13 @@ class ChatScreen(Screen):
 
     def on_screen_resume(self) -> None:
         """Refresh state when returning from pushed screens."""
+        if self.session_state == SessionState.VIEWING:
+            # Returning from TaskAssignScreen or similar
+            phase = self.metadata.get("phase")
+            if phase in ("pre-code-review", "implementation"):
+                self._update_task_status_bar()
+            return
+
         if self.session_state != SessionState.PAUSED:
             return
 

@@ -5,8 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gotg"
 version = "0.1.0"
+description = "AI agents collaborating like real engineering teams"
+readme = "README.md"
+license = "MIT"
+authors = [{name = "biff-ai"}]
 requires-python = ">=3.11"
 dependencies = ["httpx"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 
 [project.optional-dependencies]
 tui = ["textual>=0.80"]

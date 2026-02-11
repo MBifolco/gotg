@@ -51,6 +51,16 @@ class Chatbox(Vertical):
 MessageWidget = Chatbox
 
 
+class CoachPrompt(Static):
+    """Coach question to the PM — visually distinct from chat messages."""
+
+    def __init__(self, question: str) -> None:
+        super().__init__(
+            f"[bold]Coach asks:[/bold] {escape(question)}",
+            classes="coach-prompt",
+        )
+
+
 class PhaseMarker(Static):
     """Phase boundary separator line."""
 
@@ -78,10 +88,12 @@ class MessageList(VerticalScroll):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._agent_index: dict[str, int] = {}
+        self._loading_visible = False
 
     def load_messages(self, messages: list[dict]) -> None:
         self.remove_children()
         self._agent_index.clear()
+        self._loading_visible = False
         if not messages:
             self.mount(Static("No messages yet.", classes="msg-empty"))
             return
@@ -93,8 +105,12 @@ class MessageList(VerticalScroll):
         """Append a single message. Only auto-scrolls if user is near the bottom."""
         for e in self.query(".msg-empty"):
             e.remove()
-        self.hide_loading()
         self.mount(_make_widget(msg, self._agent_index))
+        self._maybe_scroll()
+
+    def append_coach_prompt(self, question: str) -> None:
+        """Append a coach question as a visually distinct prompt."""
+        self.mount(CoachPrompt(question))
         self._maybe_scroll()
 
     def _maybe_scroll(self) -> None:
@@ -104,11 +120,14 @@ class MessageList(VerticalScroll):
 
     def show_loading(self) -> None:
         """Show a loading spinner at the bottom of the message list."""
-        if not self.query("#ml-loading"):
-            self.mount(LoadingIndicator(id="ml-loading"))
-            self._maybe_scroll()
+        if self._loading_visible:
+            return
+        self._loading_visible = True
+        self.mount(LoadingIndicator(classes="ml-loading"))
+        self._maybe_scroll()
 
     def hide_loading(self) -> None:
         """Remove the loading spinner."""
-        for w in self.query("#ml-loading"):
+        self._loading_visible = False
+        for w in self.query(".ml-loading"):
             w.remove()

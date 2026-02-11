@@ -80,6 +80,13 @@
     padding: 1 2;
 }
 
+.coach-prompt {
+    background: $surface;
+    border: wide #ff8700;
+    padding: 1 2;
+    margin: 1 0;
+}
+
 .phase-boundary {
     color: magenta;
     text-style: bold;
@@ -124,7 +131,7 @@
 
 /* ── Loading indicator ─────────────────────────────────────── */
 
-#ml-loading {
+.ml-loading {
     height: 3;
     margin: 0 1;
 }
@@ -133,6 +140,7 @@
 
 #chat-input {
     dock: bottom;
+    margin: 1 0;
 }
 
 /* ── Session status ────────────────────────────────────────── */
@@ -207,6 +215,20 @@
 }
 
 #review-table {
+    height: 1fr;
+}
+
+/* ── Task assignment screen ──────────────────────────────── */
+
+#task-layout {
+    height: 1fr;
+}
+
+#task-table {
+    height: 1fr;
+}
+
+#task-layout > ContentViewer {
     height: 1fr;
 }
 

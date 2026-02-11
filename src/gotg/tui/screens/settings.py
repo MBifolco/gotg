@@ -31,7 +31,7 @@ PROVIDER_OPTIONS = [
 PROVIDER_PRESETS = {
     "ollama": {"base_url": "http://localhost:11434", "api_key": ""},
     "anthropic": {"base_url": "https://api.anthropic.com", "api_key": "$ANTHROPIC_API_KEY"},
-    "openai": {"base_url": "https://api.openai.com/v1", "api_key": "$OPENAI_API_KEY"},
+    "openai": {"base_url": "https://api.openai.com", "api_key": "$OPENAI_API_KEY"},
 }
 
 

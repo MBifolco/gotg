@@ -270,7 +270,7 @@ After merging a layer into main, the next layer's worktrees branch from the upda
 
 | Command | Description |
 |---------|-------------|
-| `gotg ui` | Launch the terminal UI (requires `pip install gotg[tui]`) |
+| `gotg ui` | Launch the terminal UI (requires the `tui` extra — see [Terminal UI](#terminal-ui)) |
 | `gotg init [path]` | Initialize `.team/` in a git repo (defaults to current directory) |
 | `gotg run [--max-turns N] [--layer N]` | Start the agent conversation |
 | `gotg continue [-m MSG] [--max-turns N] [--layer N]` | Resume with optional human input |
