@@ -6,6 +6,8 @@ import json
 import time
 from pathlib import Path
 
+from gotg.tui.helpers import count_jsonl_lines
+
 
 def list_iterations(team_dir: Path) -> list[dict]:
     """List all iterations with enriched metadata.
@@ -22,12 +24,9 @@ def list_iterations(team_dir: Path) -> list[dict]:
     for it in data.get("iterations", []):
         it_dir = team_dir / "iterations" / it["id"]
         log_path = it_dir / "conversation.jsonl"
-        msg_count = 0
+        msg_count = count_jsonl_lines(log_path)
         last_modified: float | None = None
         if log_path.exists():
-            msg_count = sum(
-                1 for line in log_path.read_text().splitlines() if line.strip()
-            )
             last_modified = log_path.stat().st_mtime
         result.append({
             **it,

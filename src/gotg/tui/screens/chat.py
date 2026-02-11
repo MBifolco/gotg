@@ -25,6 +25,7 @@ from gotg.events import (
     SessionStarted,
 )
 from gotg.session import persist_event
+from gotg.tui.helpers import is_agent_turn, resolve_coach_name
 from gotg.tui.messages import EngineEvent, SessionError
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
@@ -115,12 +116,8 @@ class ChatScreen(Screen):
 
     def _count_agent_turns(self, messages: list[dict]) -> int:
         """Count engineering agent turns (not human/system/coach)."""
-        non_agent = {"human", "system"}
-        coach = self.metadata.get("coach")
-        if coach:
-            coach_name = coach if isinstance(coach, str) else coach.get("name", "coach")
-            non_agent.add(coach_name)
-        return sum(1 for msg in messages if msg.get("from") not in non_agent)
+        coach_name = resolve_coach_name(self.metadata.get("coach"))
+        return sum(1 for msg in messages if is_agent_turn(msg, coach_name))
 
     # ── State machine ────────────────────────────────────────
 
@@ -128,6 +125,12 @@ class ChatScreen(Screen):
         """React to state changes by updating UI."""
         input_widget = self.query_one("#chat-input", Input)
         info = self.query_one("#info-tile", InfoTile)
+        msg_list = self.query_one("#message-list", MessageList)
+
+        if state == SessionState.RUNNING:
+            msg_list.show_loading()
+        else:
+            msg_list.hide_loading()
 
         if state == SessionState.VIEWING:
             input_widget.placeholder = "Press R to run, C to continue..."
@@ -171,7 +174,9 @@ class ChatScreen(Screen):
                 "content": human_message,
             }
             append_message(self._log_path, msg)
-            self.query_one("#message-list", MessageList).append_message(msg)
+            msg_list = self.query_one("#message-list", MessageList)
+            msg_list.append_message(msg)
+            msg_list.show_loading()
 
         self.run_worker(self._run_engine, thread=True)
 
@@ -223,12 +228,9 @@ class ChatScreen(Screen):
                         return
 
                 history = read_phase_history(self._log_path)
-                # Compute additive max_turns for continue
-                non_agent = {"human", "system"}
-                if ctx.coach:
-                    non_agent.add(ctx.coach["name"])
+                coach_name = ctx.coach["name"] if ctx.coach else None
                 current_agent_turns = sum(
-                    1 for msg in history if msg.get("from") not in non_agent
+                    1 for msg in history if is_agent_turn(msg, coach_name)
                 )
                 max_turns = current_agent_turns + iteration.get("max_turns", 30)
 
@@ -300,18 +302,15 @@ class ChatScreen(Screen):
             self._turn_count = event.turn
 
         elif isinstance(event, AppendMessage):
-            self.query_one("#message-list", MessageList).append_message(event.msg)
-            # Count agent turns (not system/human/coach)
-            sender = event.msg.get("from", "")
-            non_agent = {"human", "system"}
-            coach = self.metadata.get("coach")
-            if coach:
-                coach_name = coach if isinstance(coach, str) else coach.get("name", "coach")
-                non_agent.add(coach_name)
-            if sender not in non_agent:
+            msg_list = self.query_one("#message-list", MessageList)
+            msg_list.append_message(event.msg)
+            coach_name = resolve_coach_name(self.metadata.get("coach"))
+            if is_agent_turn(event.msg, coach_name):
                 self._turn_count += 1
             info = self.query_one("#info-tile", InfoTile)
             info.update_session_status("Running", self._turn_count)
+            if self.session_state == SessionState.RUNNING:
+                msg_list.show_loading()
 
         elif isinstance(event, AppendDebug):
             pass  # Already persisted in worker

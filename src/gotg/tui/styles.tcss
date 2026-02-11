@@ -1,46 +1,71 @@
 /* gotg TUI styles
- * Color mapping from conversation.py AGENT_COLORS:
- *   agent-1: cyan, agent-2: yellow, human: green,
- *   system: magenta, coach: orange (#ff8700 = ANSI 208)
+ *
+ * Convention:
+ *   - This file: global layout (screen layouts, message styling, phase boundaries)
+ *   - DEFAULT_CSS on widgets: self-contained component styling (ActionBar, ContentViewer)
+ *
+ * Color palette (index-based for agents, fixed for roles):
+ *   agent-0: cyan, agent-1: yellow, agent-2: green, agent-3: #af87ff
+ *   human: green, system: magenta, coach: orange (#ff8700 = ANSI 208)
  */
 
-/* ── Message colors ─────────────────────────────────────────── */
+/* ── Chatbox (message containers) ────────────────────────────── */
 
-.msg-agent-1 {
-    color: cyan;
-    padding: 0 1;
+.chatbox-agent-0 {
+    border: solid cyan;
     margin: 0 0 1 0;
+    height: auto;
 }
 
-.msg-agent-2 {
-    color: yellow;
-    padding: 0 1;
+.chatbox-agent-1 {
+    border: solid yellow;
     margin: 0 0 1 0;
+    height: auto;
 }
 
-.msg-human {
-    color: green;
-    padding: 0 1;
+.chatbox-agent-2 {
+    border: solid $success;
     margin: 0 0 1 0;
+    height: auto;
 }
 
-.msg-system {
-    color: magenta;
-    padding: 0 1;
+.chatbox-agent-3 {
+    border: solid #af87ff;
     margin: 0 0 1 0;
+    height: auto;
 }
 
-.msg-coach {
-    color: #ff8700;
-    padding: 0 1;
+.chatbox-human {
+    border: solid green;
     margin: 0 0 1 0;
+    height: auto;
 }
 
-.msg-default {
-    color: $text;
-    padding: 0 1;
+.chatbox-system {
+    border: solid magenta;
     margin: 0 0 1 0;
+    height: auto;
 }
+
+.chatbox-coach {
+    border: solid #ff8700;
+    margin: 0 0 1 0;
+    height: auto;
+}
+
+.chatbox-default {
+    border: solid gray;
+    margin: 0 0 1 0;
+    height: auto;
+}
+
+/* Tighten Markdown padding inside chatboxes */
+.chatbox-md {
+    padding: 0 1;
+    margin: 0;
+}
+
+/* ── Metadata messages (not chatboxes) ───────────────────────── */
 
 .msg-pass {
     color: $text-muted;
@@ -97,6 +122,13 @@
     margin: 0 0 0 0;
 }
 
+/* ── Loading indicator ─────────────────────────────────────── */
+
+#ml-loading {
+    height: 3;
+    margin: 0 1;
+}
+
 /* ── Chat input ────────────────────────────────────────────── */
 
 #chat-input {
@@ -123,6 +155,17 @@
     height: 1fr;
 }
 
+.empty-state {
+    color: $text-muted;
+    text-style: italic;
+    text-align: center;
+    padding: 3 2;
+}
+
+#info-content {
+    padding: 1 2;
+}
+
 /* ── Approval screen ──────────────────────────────────────── */
 
 #approval-layout {
@@ -147,6 +190,26 @@
     dock: bottom;
 }
 
+/* ── Review screen ───────────────────────────────────────── */
+
+#review-layout {
+    height: 1fr;
+}
+
+#review-left {
+    width: 2fr;
+    height: 100%;
+}
+
+#review-right {
+    width: 3fr;
+    height: 100%;
+}
+
+#review-table {
+    height: 1fr;
+}
+
 /* ── Content viewer ───────────────────────────────────────── */
 
 .cv-header {
@@ -159,4 +222,54 @@
     color: $text-muted;
     text-style: italic;
     padding: 1 2;
+}
+
+/* ── Settings screen ─────────────────────────────────────── */
+
+.settings-section {
+    text-style: bold;
+    color: $accent;
+    margin: 1 0 0 0;
+    border-bottom: solid $accent;
+}
+
+#settings-scroll {
+    padding: 1 2;
+}
+
+#settings-scroll > .field-label {
+    margin: 1 0 0 0;
+    text-style: bold;
+}
+
+#settings-scroll > .hint {
+    color: $text-muted;
+    margin: 1 0 0 0;
+}
+
+#agent-table {
+    height: auto;
+    max-height: 10;
+}
+
+#settings-scroll > .button-row {
+    height: auto;
+    margin: 0 0 0 0;
+}
+
+#settings-scroll > .button-row > Button {
+    margin: 0 1 0 0;
+}
+
+#settings-scroll > .switch-row {
+    height: auto;
+    margin: 0 0 0 0;
+}
+
+#settings-scroll > .switch-row > Label {
+    margin: 0 1 0 0;
+}
+
+#settings-scroll > .switch-row > Switch {
+    height: auto;
 }

@@ -4,7 +4,7 @@ GOTG is an AI product and engineering department. We've taken real-world experie
 
 ## Prerequisites
 
-- **Python 3.10+** (3.11+ recommended)
+- **Python 3.11+**
 - **Git** (required — `gotg init` requires a git repository)
 - One of:
   - **Anthropic API key** (recommended — Claude Sonnet)
@@ -19,6 +19,9 @@ cd gotg
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+
+# Optional: install the TUI
+pip install -e ".[tui]"
 ```
 
 ## End-to-End Walkthrough
@@ -267,6 +270,7 @@ After merging a layer into main, the next layer's worktrees branch from the upda
 
 | Command | Description |
 |---------|-------------|
+| `gotg ui` | Launch the terminal UI (requires `pip install gotg[tui]`) |
 | `gotg init [path]` | Initialize `.team/` in a git repo (defaults to current directory) |
 | `gotg run [--max-turns N] [--layer N]` | Start the agent conversation |
 | `gotg continue [-m MSG] [--max-turns N] [--layer N]` | Resume with optional human input |
@@ -461,6 +465,70 @@ Key properties:
 
 When an idea crystallizes, create an iteration manually and start from refinement.
 
+## Terminal UI
+
+GOTG includes a full terminal UI for managing iterations, running sessions, and reviewing code — all without leaving the terminal.
+
+```bash
+pip install -e ".[tui]"   # One-time setup (installs Textual)
+gotg ui
+```
+
+### Home Screen
+
+The home screen shows all iterations and grooming sessions in tabbed tables. From here you can:
+
+- **Enter** — Open a conversation to read it
+- **R** — Run a session (starts the engine immediately)
+- **C** — Continue a session
+- **N** — Create a new iteration or grooming session
+- **E** — Edit iteration properties (description, max turns, status)
+- **S** — Open settings to configure model, agents, coach, file access, and worktrees
+
+### Chat Screen
+
+The chat screen displays conversations with full Markdown rendering — headings, bold, lists, and syntax-highlighted code blocks. Each agent gets a distinct border color. During a live session:
+
+- Messages stream in real time with a loading spinner between arrivals
+- Smart auto-scroll keeps you at the bottom, but won't yank you back if you scroll up to read earlier messages
+- **R** — Start a new run
+- **C** — Continue (or type a message and press Enter to reply to the coach)
+- **P** — Advance to the next phase when the coach signals phase complete
+- **A** — Open the approval screen when file writes need review
+- **D** — Open the diff review screen when code review is complete
+- **Home/End** — Jump to top/bottom of the conversation
+
+### Approval Screen
+
+When agents request file writes outside writable paths (with approvals enabled), the session pauses and you can review each request:
+
+- Select a request to see the file content with syntax highlighting
+- **A** — Approve the selected request
+- **Y** — Approve all pending requests
+- **D** — Deny with an optional reason
+
+### Review Screen
+
+After code review, inspect agent diffs and merge:
+
+- Select a branch to see its diff with syntax highlighting
+- **M** — Merge the selected branch
+- **Y** — Merge all branches
+- **N** — Advance to the next implementation layer (after all branches are merged)
+- **F** — Mark iteration as done (when all layers are complete)
+
+### Settings Screen
+
+Edit `team.json` without leaving the UI:
+
+- Model configuration with provider presets (Ollama, Anthropic, OpenAI)
+- Agent CRUD — add, edit, and remove agents (minimum 2)
+- Coach toggle — enable/disable with a switch
+- File access and worktree configuration
+- **Ctrl+S** — Save changes
+
+Press **?** from any screen to see all available keybindings.
+
 ## Conversation Log Format
 
 Messages are stored as newline-delimited JSON (JSONL):
@@ -495,7 +563,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~723 tests
+pytest -q                     # ~977 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```

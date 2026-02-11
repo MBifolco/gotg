@@ -2201,6 +2201,58 @@ The engine has no `print()`, no `sys.exit()`, no direct file writes. Side effect
 
 ---
 
+## 49. Building the TUI
+
+### The approach
+
+The TUI was planned as ten development iterations, each delivering a usable increment. The architecture from the R1-R6 refactor made this possible: the event-driven engine (`run_session` yielding events via sync generator), the session.py bridge layer (shared domain functions between CLI and TUI), and the policy system (same engine, different configuration) meant the TUI never needed to duplicate core logic.
+
+The key architectural decision: **no async**. The engine is a sync generator. Textual runs it in worker threads via `run_worker(thread=True)`. Events flow from the worker thread to the UI thread via `post_message()`. 650+ tests stay sync. The async migration is deferred to when parallel agents actually need it — paying the complexity tax earlier would have slowed every TUI iteration for zero user-visible benefit.
+
+### Ten iterations
+
+**Iteration 1: Read-only viewer.** `gotg ui` launches a Textual app. HomeScreen with TabbedContent (Iterations | Grooming) lists all sessions. Selecting one opens a ChatScreen showing the full conversation history, color-coded by speaker. Right column shows a static InfoTile (phase, turn count, agents, description). Pure UI scaffolding — no engine interaction. Validated the layout, widget structure, and Textual learning curve without risking the conversation system. Optional dependency: `pip install gotg[tui]`.
+
+**Iteration 2: Live conversation streaming.** Text input at bottom of chat view. "Run" and "Continue" launch `run_session` in a worker thread. Messages stream in real-time. ChatScreen state machine (VIEWING → RUNNING → PAUSED → COMPLETE) with action bar for pause events. Extracted `persist_event()` and session setup helpers into session.py — the shared persistence layer both CLI and TUI call. CLI calls persist then prints; TUI calls persist then posts to widgets.
+
+**Iteration 3: Approval management.** ApprovalScreen with split-view (DataTable of requests + ContentViewer with syntax highlighting). Approve (a), deny (d) with reason input, approve-all (y). Extracted `apply_and_inject()` into session.py. When returning from ApprovalScreen, ChatScreen refreshes approval count via `on_screen_resume`. The split-view design is genuinely better than the CLI's one-at-a-time workflow — the PM can scroll through requests and read each file before deciding.
+
+**Iteration 4: Phase advance.** Press P when phase-complete to advance. New ADVANCING state in ChatScreen state machine. Extracted `advance_phase()` into session.py with `chat_call` + `on_progress` parameters (bridge pattern). Progress feedback during LLM extractions via AdvanceProgress events. After advance → VIEWING (not auto-start) so the PM can review artifacts before pressing R.
+
+**Iteration 5: Review, merge, and next-layer.** ReviewScreen with DataTable (branches) + ContentViewer (diff display with Rich "diff" lexer). Merge selected (m), merge all (y), next-layer (n). Extracted `load_review_branches()`, `merge_branches()`, and `advance_next_layer()` into session.py. Conflict handling drops to CLI — git conflict resolution is inherently interactive. Completes the full code-review workflow loop in the TUI.
+
+**Iteration 6: Refactor + app shell.** Code quality fixes (extracted helpers, deduplicated patterns, CSS conventions). Modal infrastructure: TextInputModal and ConfirmModal as reusable ModalScreen[T] components. Help overlay (? key) for keybinding discoverability. Enhanced HomeScreen with N (new iteration), G (new grooming), E (edit), S (settings) bindings and an Info tab. Empty states as first-class — every screen that can be empty shows a helpful message with the keybinding to fix it.
+
+**Iteration 7: Iteration lifecycle completion.** Multi-field EditIterationModal (description, max_turns, status). Mark-done via F key in ReviewScreen when all layers complete. Transparent current-iteration switching when running a non-current iteration. `switch_current_iteration()` and `ITERATION_STATUSES` added to config.py.
+
+**Iteration 8: Settings screen.** SettingsScreen with Collapsible sections: model configuration, agents (DataTable with add/delete/edit), coach toggle, file access paths, worktree toggle. Explicit save (Ctrl+S) rather than auto-save — destructive changes shouldn't be instant. Graceful degradation for malformed team.json.
+
+**Iteration 9: Markdown message rendering.** Chatbox widget replacing MessageWidget — border with border_title for sender name, Markdown widget for content rendering (code blocks, lists, bold, inline code), role-based CSS classes for visual differentiation. Isolated as its own iteration for a clean revert boundary since it touches every message in every conversation view.
+
+**Iteration 10: Chat polish + checkpoints.** Smart auto-scroll (only scroll if user is near bottom). Loading indicator (Textual spinner during RUNNING). Checkpoint management (K to create, L to list/restore with safety prompt). TextArea replacing single-line Input for multi-line replies.
+
+### The session.py bridge layer
+
+Each TUI iteration extracted shared domain logic from cli.py into session.py, following the same pattern: functions raise exceptions instead of calling sys.exit, return data instead of printing, and accept callback parameters for progress reporting. By iteration 5, session.py contains:
+
+- `persist_event()` — shared event persistence (iteration 2)
+- Session setup helpers: `resolve_layer`, `build_file_infra`, `setup_worktrees`, `validate_iteration_for_run` (iteration 2)
+- `apply_and_inject()` — approval application and denial injection (iteration 3)
+- `advance_phase()` — phase transition with LLM extractions (iteration 4)
+- `load_review_branches()`, `merge_branches()`, `advance_next_layer()` — code review workflow (iteration 5)
+
+The CLI became thinner with each extraction. cmd_advance went from 110 lines to ~15. cmd_merge, cmd_review, cmd_next_layer similarly reduced. Both interfaces call the same domain functions — the CLI wraps them with print/sys.exit, the TUI wraps them with widgets/notifications.
+
+### Post-TUI state
+
+After iteration 10, the TUI is a complete interface. A user can `gotg init`, launch `gotg ui`, and do everything from the TUI: configure settings, create iterations, run conversations, approve file writes, advance phases, review diffs, merge branches, manage checkpoints, create grooming sessions, and mark iterations done. The CLI becomes a power-user and scripting tool rather than the primary interface.
+
+> Principle #34: **Build the read-only view first** — validating layout and widget structure without engine interaction means you learn the UI framework's idioms before risking the core system; the first TUI iteration should be a viewer, not a controller.
+
+> Principle #35: **Extract the bridge layer incrementally** — each TUI iteration extracts the domain functions it needs from the CLI into a shared module; by the end, the CLI is thin wrappers and the domain logic is reusable.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2278,8 +2330,19 @@ The engine has no `print()`, no `sys.exit()`, no direct file writes. Side effect
 - ✅ **Refactor R4: Prompt externalization (TOML)** — complete, prompts.toml, prompts.py, Python 3.11+ requirement
 - ✅ **Refactor R5: Session policies** — complete, SessionPolicy dataclass, iteration_policy() and grooming_policy() factories
 - 🔄 **Refactor R6: Grooming-to-refinement rename** — in progress, mechanical rename with backward-compat parsing
+- ⬜ **Grooming feature** — planned, gotg groom "topic" for freeform pre-iteration exploration, grooming_policy() factory, .team/grooming/<slug>/ directory structure
+- ⬜ **TUI Iteration 1: Read-only viewer** — planned, gotg ui launches Textual app, HomeScreen with iteration/grooming lists, ChatScreen with conversation history, InfoTile sidebar
+- ⬜ **TUI Iteration 2: Live conversation streaming** — planned, run_session in worker thread, messages stream in real-time, ChatScreen state machine, persist_event + session setup helpers extracted to session.py
+- ⬜ **TUI Iteration 3: Approval management** — planned, ApprovalScreen with split-view (DataTable + syntax-highlighted ContentViewer), apply_and_inject extracted to session.py
+- ⬜ **TUI Iteration 4: Phase advance** — planned, P key to advance, ADVANCING state, advance_phase extracted to session.py with progress callbacks
+- ⬜ **TUI Iteration 5: Review, merge, next-layer** — planned, ReviewScreen with diff viewer, merge workflow, load_review_branches + merge_branches + advance_next_layer extracted to session.py
+- ⬜ **TUI Iteration 6: Refactor + app shell** — planned, helpers extraction, modal infrastructure (TextInputModal, ConfirmModal), help overlay, enhanced HomeScreen bindings, empty states
+- ⬜ **TUI Iteration 7: Iteration lifecycle** — planned, EditIterationModal, mark-done, switch-current, ITERATION_STATUSES
+- ⬜ **TUI Iteration 8: Settings screen** — planned, SettingsScreen with Collapsible sections, explicit save, agent management
+- ⬜ **TUI Iteration 9: Markdown rendering** — planned, Chatbox widget replacing MessageWidget, Rich Markdown content, role-based border styling
+- ⬜ **TUI Iteration 10: Chat polish + checkpoints** — planned, smart auto-scroll, loading indicator, checkpoint management (K/L bindings), TextArea input
 
-First full test run complete (calculator, $9). Iterations 9-17 complete. Architectural refactor (R1-R6) restructured codebase for TUI, grooming feature, and parallel agents. Next: second test run to validate cost optimizations, then grooming feature or TUI.
+First full test run complete (calculator, $9). Iterations 1-17 complete. Architectural refactor (R1-R6) restructured codebase for TUI, grooming feature, and parallel agents. Grooming feature designed and ready for implementation. TUI roadmap: 10 iterations from read-only viewer to complete self-sufficient interface.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -2331,16 +2394,19 @@ First full test run complete (calculator, $9). Iterations 9-17 complete. Archite
 - **Event-driven engines decouple rendering from logic** — yielding events from a sync generator lets the CLI print while the TUI updates widgets, without the engine knowing which; the alternative (engine calls print directly) means rewriting the engine for every new frontend
 - **Session policies prevent branching inside engines** — configuring behavior via a policy dataclass means the engine doesn't need `if kind == "grooming"` branches; new session types are new policy factories, not new engine code
 - **Refactor when duplication would otherwise occur, not before** — the grooming feature and TUI both needed the conversation engine decoupled from CLI concerns; extracting earlier would have been speculative, extracting later would have meant maintaining two copies of run_conversation
+- **Sync generators in worker threads avoid premature async migration** — Textual's run_worker(thread=True) + post_message() lets a sync engine drive an async UI framework; the async tax (pytest-asyncio on 650+ tests, httpx.AsyncClient, AsyncIterator) is deferred until parallel agents actually need it
+- **The bridge layer pattern (session.py) emerges incrementally** — each TUI iteration extracts exactly the domain functions it needs from cli.py; by iteration 5, session.py contains all shared logic and the CLI is thin wrappers; planning the full extraction upfront would have been speculative
+- **Read-only viewers validate UI framework choices without risk** — building the TUI's first iteration as a pure conversation viewer meant learning Textual's widget model, CSS system, and screen navigation on a problem that couldn't break the conversation engine
 
 ### Development Strategy
 - **R6 finishing** — grooming-to-refinement rename, final refactor iteration
-- Post-refactor: codebase is ready for grooming feature (1 iteration), TUI (2-3 iterations), parallel agents (2 iterations)
-- Iterations 14-17 (optimization) can proceed on the refactored codebase — engine.py replaces run_conversation, policy.py configures behavior, prompts.toml holds prompt text
-- Iteration 15 (prompts) becomes a prompts.toml edit + engine policy change — simpler than before
-- Iteration 16 (history) is already partially implemented via ConversationStore.read_phase_history()
-- Iteration 17 (pass_turn) adds to AGENT_TOOLS in prompts.toml and engine event handling
-- The grooming feature is now ~1 iteration: `cmd_groom` thin wrapper + `grooming_policy()` factory (already stubbed in R5) + `.team/grooming/<slug>/` directory structure
-- TUI work can begin once R6 is complete — engine events map directly to Textual widget updates
+- **Grooming feature next** — ~1 iteration, grooming_policy() already stubbed, .team/grooming/<slug>/ directory structure, gotg groom "topic" command
+- **TUI roadmap: 10 iterations** — read-only viewer (1) → live streaming (2) → approvals (3) → phase advance (4) → review/merge (5) → refactor + app shell (6) → iteration lifecycle (7) → settings (8) → markdown rendering (9) → chat polish + checkpoints (10)
+- TUI iterations 1-5 build the core workflow (run, approve, advance, review, merge); iterations 6-10 make the TUI self-sufficient (create/edit/settings/polish)
+- Each TUI iteration extracts shared domain logic from cli.py into session.py — incremental bridge layer construction
+- No async until parallel agents need it — worker threads + post_message, engine stays sync generator
+- After TUI iteration 10: full workflow from gotg ui, CLI becomes power-user/scripting tool
+- Second full test run to validate cost optimizations can happen anytime — independent of TUI work
 - Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
 - Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
@@ -2348,14 +2414,12 @@ First full test run complete (calculator, $9). Iterations 9-17 complete. Archite
 
 ### Deferred (Intentionally)
 - **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (ready after R6 — grooming_policy() already stubbed)
-- `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature)
+- `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature + TUI iteration 7 lifecycle)
 - Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient)
 - File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
-- TUI chat interface (Textual — ready after R6; engine events map to widgets, sync generator in worker thread; see section 44)
-- Autonomous implementation mode — Carlini-style test-driven agent execution during implementation phase; agents pick tasks, write code, run tests in a loop; structured phases retained for design work (see section 45)
-- Parallel agent execution — async engine, fan-out/fan-in turns, concurrent model calls (see refactor plan post-R6 readiness section)
+- Parallel agent execution — async engine, fan-out/fan-in turns, concurrent model calls (requires async migration of engine + model.py)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Automated evaluation (after manual rubric is trusted)
 - Context window management beyond phase boundaries (sliding window within long phases, message summarization for very long implementation runs)
@@ -2396,3 +2460,5 @@ First full test run complete (calculator, $9). Iterations 9-17 complete. Archite
 31. **The conversation is the most expensive artifact** — every word an agent writes gets re-read by every subsequent turn of every participant; conciseness, history trimming, and directed flow are not optimizations, they're cost-of-operation controls
 32. **Conversation flow should emerge, not be assigned** — controlling who speaks turns a team discussion into a conference call; instead, give agents the ability to stay quiet and let natural conversation dynamics determine who contributes
 33. **Refactor when the next feature requires a second copy of existing code** — the right time to decompose is when you'd otherwise duplicate; earlier is speculative, later means you're already maintaining two copies
+34. **Build the read-only view first** — validating layout and widget structure without engine interaction means you learn the UI framework's idioms before risking the core system; the first TUI iteration should be a viewer, not a controller
+35. **Extract the bridge layer incrementally** — each TUI iteration extracts the domain functions it needs from the CLI into a shared module; by the end, the CLI is thin wrappers and the domain logic is reusable

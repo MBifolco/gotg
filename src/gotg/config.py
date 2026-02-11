@@ -98,6 +98,7 @@ def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
 
 
 PHASE_ORDER = ["refinement", "planning", "pre-code-review", "implementation", "code-review"]
+ITERATION_STATUSES = ["pending", "in-progress", "done"]
 
 _PHASE_ALIASES = {"grooming": "refinement"}
 
@@ -105,6 +106,47 @@ _PHASE_ALIASES = {"grooming": "refinement"}
 def _normalize_phase(phase: str) -> str:
     """Normalize legacy phase names (e.g. 'grooming' → 'refinement')."""
     return _PHASE_ALIASES.get(phase, phase)
+
+
+def create_iteration(
+    team_dir: Path,
+    iteration_id: str,
+    description: str = "",
+    max_turns: int = 30,
+    set_current: bool = True,
+) -> dict:
+    """Create a new iteration and return its dict.
+
+    Raises ValueError if an iteration with the given ID already exists.
+    """
+    iter_path = team_dir / "iteration.json"
+    data = json.loads(iter_path.read_text())
+    existing_ids = {it["id"] for it in data.get("iterations", [])}
+    if iteration_id in existing_ids:
+        raise ValueError(f"Iteration '{iteration_id}' already exists.")
+
+    iteration = {
+        "id": iteration_id,
+        "title": "",
+        "description": description,
+        "status": "pending",
+        "phase": "refinement",
+        "max_turns": max_turns,
+    }
+    data["iterations"].append(iteration)
+    if set_current:
+        data["current"] = iteration_id
+
+    iter_path.write_text(json.dumps(data, indent=2) + "\n")
+
+    # Create iteration directory with empty conversation log
+    iter_dir = team_dir / "iterations" / iteration_id
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    log_path = iter_dir / "conversation.jsonl"
+    if not log_path.exists():
+        log_path.touch()
+
+    return iteration
 
 
 def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:
@@ -125,6 +167,17 @@ def save_iteration_phase(team_dir: Path, iteration_id: str, new_phase: str) -> N
     save_iteration_fields(team_dir, iteration_id, phase=new_phase)
 
 
+def switch_current_iteration(team_dir: Path, iteration_id: str) -> None:
+    """Switch the current iteration pointer to the given ID."""
+    iter_path = team_dir / "iteration.json"
+    data = json.loads(iter_path.read_text())
+    existing_ids = {it["id"] for it in data.get("iterations", [])}
+    if iteration_id not in existing_ids:
+        raise ValueError(f"Iteration '{iteration_id}' not found.")
+    data["current"] = iteration_id
+    iter_path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def load_file_access(team_dir: Path) -> dict | None:
     """Read file_access config from team.json. Returns None if not configured."""
     team_config = json.loads((team_dir / "team.json").read_text())
@@ -135,6 +188,17 @@ def load_worktree_config(team_dir: Path) -> dict | None:
     """Read worktrees config from team.json. Returns None if not configured."""
     team_config = json.loads((team_dir / "team.json").read_text())
     return team_config.get("worktrees")
+
+
+def load_team_config(team_dir: Path) -> dict:
+    """Load the full team.json as a dict."""
+    return json.loads((team_dir / "team.json").read_text())
+
+
+def save_team_config(team_dir: Path, config: dict) -> None:
+    """Write the full team.json."""
+    team_path = team_dir / "team.json"
+    team_path.write_text(json.dumps(config, indent=2) + "\n")
 
 
 def save_model_config(team_dir: Path, model_config: dict) -> None:
@@ -168,3 +232,9 @@ class IterationStore:
 
     def save_phase(self, iteration_id: str, phase: str) -> None:
         save_iteration_phase(self.team_dir, iteration_id, phase)
+
+    def create(self, iteration_id: str, **kwargs) -> dict:
+        return create_iteration(self.team_dir, iteration_id, **kwargs)
+
+    def set_current(self, iteration_id: str) -> None:
+        switch_current_iteration(self.team_dir, iteration_id)

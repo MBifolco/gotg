@@ -149,10 +149,10 @@ async def test_advance_from_phase_complete(tmp_path):
 
         assert app.screen.session_state == SessionState.VIEWING
 
-        # Verify transition messages appear
+        # Verify transition messages appear (Chatbox + PhaseMarker + Static children)
         msg_list = app.screen.query_one("#message-list", MessageList)
-        widgets = msg_list.query(MessageWidget)
-        assert len(widgets) >= 4  # 2 existing + boundary + transition
+        children = list(msg_list.children)
+        assert len(children) >= 4  # 2 existing + boundary + transition
 
 
 @pytest.mark.asyncio

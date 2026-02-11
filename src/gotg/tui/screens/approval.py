@@ -10,16 +10,9 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input
 
 from gotg.approvals import ApprovalStore
+from gotg.tui.helpers import format_size, get_selected_row_key
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.content_viewer import ContentViewer
-
-
-def _format_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes}B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f}K"
-    return f"{size_bytes / (1024 * 1024):.1f}M"
 
 
 class ApprovalScreen(Screen):
@@ -91,7 +84,7 @@ class ApprovalScreen(Screen):
                 req["id"],
                 req["path"],
                 req["requested_by"],
-                _format_size(req["content_size"]),
+                format_size(req["content_size"]),
                 status_display,
                 key=row_key,
             )
@@ -108,12 +101,9 @@ class ApprovalScreen(Screen):
     def _get_selected_request(self) -> dict | None:
         """Get the request dict for the currently selected table row."""
         table = self.query_one("#approval-table", DataTable)
-        if table.row_count == 0:
+        key_str = get_selected_row_key(table)
+        if key_str is None:
             return None
-        row_idx = table.cursor_row
-        if row_idx is None:
-            return None
-        key_str = table.ordered_rows[row_idx].key.value
         return self._requests.get(key_str)
 
     def on_data_table_cursor_moved(self, event: DataTable.CursorMoved) -> None:

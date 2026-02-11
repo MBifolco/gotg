@@ -20,6 +20,7 @@ from gotg.session import (
     load_review_branches,
     merge_branches,
 )
+from gotg.tui.helpers import get_selected_row_key
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.content_viewer import ContentViewer
 
@@ -62,6 +63,7 @@ class ReviewScreen(Screen):
         Binding("m", "merge_selected", "Merge", show=False),
         Binding("y", "merge_all", "Merge All", show=False),
         Binding("n", "next_layer", "Next Layer", show=False),
+        Binding("f", "finish_iteration", "Finish", show=False),
         Binding("r", "refresh", "Refresh", show=False),
     ]
 
@@ -78,6 +80,7 @@ class ReviewScreen(Screen):
         self._project_root = team_dir.parent
         self._review: ReviewResult | None = None
         self._merging = False
+        self._all_layers_done = False
         self._branches: dict[str, dict] = {}
 
     def compose(self):
@@ -179,12 +182,9 @@ class ReviewScreen(Screen):
     def _get_selected_branch(self) -> dict | None:
         """Get branch info for the currently selected table row."""
         table = self.query_one("#review-table", DataTable)
-        if table.row_count == 0:
+        key_str = get_selected_row_key(table)
+        if key_str is None:
             return None
-        row_idx = table.cursor_row
-        if row_idx is None:
-            return None
-        key_str = table.ordered_rows[row_idx].key.value
         return self._branches.get(key_str)
 
     # ── DataTable events ──────────────────────────────────────
@@ -238,9 +238,10 @@ class ReviewScreen(Screen):
         bar = self.query_one("#review-action-bar", ActionBar)
 
         if result.all_done:
+            self._all_layers_done = True
             bar.show(
                 f"All layers complete (through layer {result.from_layer}). "
-                "Iteration done. Press Esc to go back."
+                "Press F to mark done, Esc to go back."
             )
         else:
             bar.show(
@@ -333,6 +334,14 @@ class ReviewScreen(Screen):
                 self._merging = False
 
         self.run_worker(_worker, thread=True)
+
+    def action_finish_iteration(self) -> None:
+        if not self._all_layers_done:
+            return
+        from gotg.config import save_iteration_fields
+        save_iteration_fields(self._team_dir, self._iteration["id"], status="done")
+        self.notify(f"Iteration {self._iteration['id']} marked as done.")
+        self.app.pop_screen()
 
     def action_refresh(self) -> None:
         if self._merging:
