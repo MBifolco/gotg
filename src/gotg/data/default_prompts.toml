@@ -349,7 +349,9 @@ Signal that all scope items are resolved or explicitly deferred and the team is 
 
 [tools.ask_pm]
 description = '''
-Pause the conversation and request input from the project manager. You MUST call this tool whenever the team needs PM input — the PM cannot see your messages unless you use this tool. Use for scope decisions, priority calls, requirement clarifications, confirmation to proceed, or any question only the PM can answer. Do not write questions to the PM in your message text; that does not reach them. If the PM's response is unclear, call this tool again.'''
+Pause the conversation and request input from the project manager. You MUST call this tool whenever the team needs PM input — the PM cannot see your messages unless you use this tool. Use for scope decisions, priority calls, requirement clarifications, confirmation to proceed, or any question only the PM can answer. Do not write questions to the PM in your message text; that does not reach them. If the PM's response is unclear, call this tool again.
+
+When offering the PM a fixed set of choices (e.g., "Should we proceed?", "Which approach?"), set response_type to "decision" and provide 2-5 concise option labels in the options array. The PM will see these as selectable choices. Use "feedback" (the default) only for open-ended questions where the PM must type a freeform answer. Prefer "decision" whenever the set of reasonable responses is known.'''
 
 # ── Grooming mode (freeform pre-iteration exploration) ───────────
 

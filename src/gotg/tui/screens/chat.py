@@ -122,11 +122,48 @@ class ChatScreen(Screen):
         # Auto-start if mode is run or continue
         if self._mode in ("run", "continue"):
             self._start_session(self._mode)
+            return
+
+        # Restore paused state if conversation ended with a phase complete signal
+        if self._session_kind == "iteration" and messages:
+            self._restore_pause_state(messages)
 
     def _count_agent_turns(self, messages: list[dict]) -> int:
         """Count engineering agent turns (not human/system/coach)."""
         coach_name = resolve_coach_name(self.metadata.get("coach"))
         return sum(1 for msg in messages if is_agent_turn(msg, coach_name))
+
+    def _restore_pause_state(self, messages: list[dict]) -> None:
+        """Detect if the conversation was paused mid-session and restore UI state."""
+        # Walk backwards past pass_turn system messages to find the real last content
+        last_content_msg = None
+        for msg in reversed(messages):
+            if not msg.get("pass_turn") and msg.get("from") != "system":
+                last_content_msg = msg
+                break
+
+        if not last_content_msg:
+            return
+
+        phase = self.metadata.get("phase")
+
+        # Detect phase complete signal (coach message ending the session)
+        if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
+            self._pause_reason = PauseReason.PHASE_COMPLETE
+            self.session_state = SessionState.PAUSED
+            if phase == "code-review":
+                self.query_one("#action-bar", ActionBar).show(
+                    "Code review complete. Press D to review diffs and merge."
+                )
+            else:
+                self.query_one("#action-bar", ActionBar).show(
+                    "Phase complete. Press P to advance, C to continue discussing."
+                )
+            return
+
+        # Detect task assignment needed (pre-code-review/implementation with unassigned tasks)
+        if phase in ("pre-code-review", "implementation"):
+            self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────
 
@@ -138,7 +175,7 @@ class ChatScreen(Screen):
         info = self.query_one("#info-tile", InfoTile)
         msg_list = self.query_one("#message-list", MessageList)
 
-        if state == SessionState.RUNNING:
+        if state in (SessionState.RUNNING, SessionState.ADVANCING):
             msg_list.show_loading()
         else:
             msg_list.hide_loading()
@@ -340,9 +377,16 @@ class ChatScreen(Screen):
             self.session_state = SessionState.PAUSED
             msg_list = self.query_one("#message-list", MessageList)
             msg_list.append_coach_prompt(event.question)
-            self.query_one("#action-bar", ActionBar).show(
-                "Type reply and press Enter."
-            )
+            if event.options:
+                from gotg.tui.modals.decision import DecisionModal
+                self.app.push_screen(
+                    DecisionModal(event.question, event.options),
+                    callback=self._on_decision_result,
+                )
+            else:
+                self.query_one("#action-bar", ActionBar).show(
+                    "Type reply and press Enter."
+                )
 
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
@@ -395,6 +439,17 @@ class ChatScreen(Screen):
         """Handle worker thread errors."""
         self.session_state = SessionState.VIEWING
         self.notify(f"Session error: {message.error}", severity="error")
+
+    # ── Decision modal callback ─────────────────────────────
+
+    def _on_decision_result(self, result: str | None) -> None:
+        """Handle the result from DecisionModal."""
+        if result is None:
+            self.query_one("#action-bar", ActionBar).show(
+                "Decision cancelled. Type reply and press Enter, or press C to continue."
+            )
+            return
+        self._start_session("continue", human_message=result)
 
     # ── Input handling ───────────────────────────────────────
 

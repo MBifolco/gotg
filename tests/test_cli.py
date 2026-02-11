@@ -2353,7 +2353,8 @@ def test_cmd_merge_abort(tmp_path, monkeypatch, capsys):
     assert "Merge aborted" in output
 
 
-def test_cmd_merge_dirty_worktree_blocks(tmp_path, monkeypatch, capsys):
+def test_cmd_merge_dirty_worktree_auto_commits(tmp_path, monkeypatch, capsys):
+    """Dirty worktrees are auto-committed before merge (not rejected)."""
     _make_git_project_with_team(tmp_path)
     from gotg.worktree import create_worktree, commit_worktree
     wt = create_worktree(tmp_path, "agent-1", 0)
@@ -2363,13 +2364,14 @@ def test_cmd_merge_dirty_worktree_blocks(tmp_path, monkeypatch, capsys):
     (wt / "src" / "dirty.py").write_text("uncommitted")
 
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit):
-        with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
-            main()
+    with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+        main()
 
-    output = capsys.readouterr().err
-    assert "uncommitted changes" in output
-    assert "commit-worktrees" in output
+    output = capsys.readouterr().out
+    assert "Auto-committing" in output
+    assert "Merged" in output
+    # File should be on main after merge
+    assert (tmp_path / "src" / "dirty.py").exists()
 
 
 # --- Integration tests ---

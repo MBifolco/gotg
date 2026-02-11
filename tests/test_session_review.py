@@ -253,6 +253,27 @@ def test_merge_raises_on_dirty_main(tmp_path):
         merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
 
 
+def test_merge_auto_commits_dirty_worktrees(tmp_path):
+    """Dirty worktrees are auto-committed before merge (not rejected)."""
+    team, iter_dir, iteration = _make_team_dir(tmp_path)
+    wt = _create_branch_with_changes(tmp_path, "agent-1", 0)
+
+    # Dirty the worktree after initial commit (simulates code-review writes)
+    (wt / "src" / "extra.py").write_text("# added during code review")
+
+    progress_msgs = []
+    results = merge_branches(
+        tmp_path, layer=0, branches=["agent-1/layer-0"],
+        on_progress=progress_msgs.append,
+    )
+    assert len(results) == 1
+    assert results[0].success is True
+    # Auto-commit progress message should appear
+    assert any("Auto-committing" in m for m in progress_msgs)
+    # File should be on main after merge
+    assert (tmp_path / "src" / "extra.py").exists()
+
+
 def test_merge_calls_on_progress(tmp_path):
     """on_progress callback is called per branch."""
     team, iter_dir, iteration = _make_team_dir(tmp_path)

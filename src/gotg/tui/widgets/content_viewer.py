@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 from rich.markup import escape
 from rich.syntax import Syntax
 from textual.containers import VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Collapsible, Static
 
 _LEXER_MAP = {
     "py": "python", "js": "javascript", "ts": "typescript",
@@ -14,6 +16,24 @@ _LEXER_MAP = {
     "css": "css", "html": "html", "sql": "sql",
     "rs": "rust", "go": "go", "rb": "ruby",
 }
+
+
+def parse_diff_files(content: str) -> list[tuple[str, str]]:
+    """Parse unified diff into (filename, diff_section) pairs.
+
+    Splits on 'diff --git' boundaries.  Returns empty list if the content
+    isn't a standard unified diff (e.g. stat-only output).
+    """
+    parts = re.split(r"(?=^diff --git )", content, flags=re.MULTILINE)
+    files: list[tuple[str, str]] = []
+    for part in parts:
+        part = part.strip()
+        if not part.startswith("diff --git "):
+            continue
+        m = re.match(r"diff --git a/.+? b/(.+)", part.split("\n")[0])
+        filename = m.group(1) if m else "(unknown file)"
+        files.append((filename, part))
+    return files
 
 
 class ContentViewer(VerticalScroll):
@@ -44,11 +64,27 @@ class ContentViewer(VerticalScroll):
         self.scroll_home(animate=False)
 
     def show_diff(self, title: str, content: str) -> None:
-        """Display diff content with a title header."""
+        """Display diff content organized by file with collapsible sections."""
         self.remove_children()
         self.mount(Static(f"[bold]{escape(title)}[/bold]", classes="cv-header"))
-        syntax = Syntax(content, "diff", theme="monokai", line_numbers=False)
-        self.mount(Static(syntax, classes="cv-content"))
+
+        files = parse_diff_files(content)
+        if not files:
+            # Not a unified diff (e.g. stat-only) — show as-is
+            syntax = Syntax(content, "diff", theme="monokai", line_numbers=False)
+            self.mount(Static(syntax, classes="cv-content"))
+        else:
+            for i, (filename, diff_section) in enumerate(files):
+                syntax = Syntax(
+                    diff_section, "diff", theme="monokai", line_numbers=False,
+                )
+                self.mount(Collapsible(
+                    Static(syntax, classes="cv-content"),
+                    title=filename,
+                    collapsed=i > 0,
+                    classes="cv-diff-file",
+                ))
+
         self.scroll_home(animate=False)
 
     def clear_content(self) -> None:

@@ -99,24 +99,33 @@ class MessageList(VerticalScroll):
             return
         for msg in messages:
             self.mount(_make_widget(msg, self._agent_index))
-        self.scroll_end(animate=False)
+        self.call_after_refresh(self.scroll_end, animate=False)
+
+    def _mount_before_spinner(self, widget) -> None:
+        """Mount a widget, inserting before the loading spinner if present."""
+        spinners = self.query(".ml-loading")
+        if spinners:
+            self.mount(widget, before=spinners.first())
+        else:
+            self.mount(widget)
 
     def append_message(self, msg: dict) -> None:
         """Append a single message. Only auto-scrolls if user is near the bottom."""
         for e in self.query(".msg-empty"):
             e.remove()
-        self.mount(_make_widget(msg, self._agent_index))
+        self._mount_before_spinner(_make_widget(msg, self._agent_index))
         self._maybe_scroll()
 
     def append_coach_prompt(self, question: str) -> None:
         """Append a coach question as a visually distinct prompt."""
-        self.mount(CoachPrompt(question))
+        self._mount_before_spinner(CoachPrompt(question))
         self._maybe_scroll()
 
     def _maybe_scroll(self) -> None:
         """Auto-scroll only if user is at or near the bottom."""
         if self.is_vertical_scroll_end or self.max_scroll_y == 0:
-            self.scroll_end(animate=False)
+            # Defer until after layout so scroll target reflects new content
+            self.call_after_refresh(self.scroll_end, animate=False)
 
     def show_loading(self) -> None:
         """Show a loading spinner at the bottom of the message list."""

@@ -286,8 +286,11 @@ def _do_coach_turn(
     if policy.stop_on_ask_pm:
         ask_pm_calls = [tc for tc in coach_tool_calls if tc["name"] == "ask_pm"]
         if ask_pm_calls:
-            question = ask_pm_calls[0]["input"]["question"]
-            yield CoachAskedPM(question)
+            inp = ask_pm_calls[0]["input"]
+            question = inp["question"]
+            response_type = inp.get("response_type", "feedback")
+            options = tuple(inp.get("options", []))
+            yield CoachAskedPM(question, response_type=response_type, options=options)
             return True
 
     return False

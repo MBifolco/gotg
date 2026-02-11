@@ -189,8 +189,9 @@ class ReviewScreen(Screen):
 
     # ── DataTable events ──────────────────────────────────────
 
-    def on_data_table_cursor_moved(self, event: DataTable.CursorMoved) -> None:
-        br = self._get_selected_branch()
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        key_str = event.row_key.value
+        br = self._branches.get(key_str)
         if br:
             viewer = self.query_one("#review-viewer", ContentViewer)
             viewer.show_diff(

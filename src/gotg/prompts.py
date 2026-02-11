@@ -86,7 +86,23 @@ COACH_TOOLS: list[dict] = [
                 "question": {
                     "type": "string",
                     "description": "What you need the PM to decide or clarify",
-                }
+                },
+                "response_type": {
+                    "type": "string",
+                    "enum": ["feedback", "decision"],
+                    "description": (
+                        "Use 'feedback' for open-ended questions. "
+                        "Use 'decision' when offering the PM a fixed set of choices."
+                    ),
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "When response_type is 'decision', provide 2-5 concise "
+                        "option labels for the PM to choose from."
+                    ),
+                },
             },
             "required": ["question"],
         },

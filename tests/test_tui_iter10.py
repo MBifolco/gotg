@@ -29,6 +29,7 @@ async def test_load_messages_scrolls_to_end():
         msgs = [{"from": "agent-1", "content": f"Line {i}"} for i in range(30)]
         ml.load_messages(msgs)
         await pilot.pause()
+        await pilot.pause()  # Extra pause for deferred scroll_end
 
         # Should be at the bottom after bulk load
         assert ml.is_vertical_scroll_end or ml.max_scroll_y == 0

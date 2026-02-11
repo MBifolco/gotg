@@ -538,7 +538,7 @@ def merge_branches(
     Returns list of MergeResult. Raises ReviewError for precondition failures.
     """
     from gotg.worktree import (
-        WorktreeError, is_branch_merged, is_merge_in_progress,
+        WorktreeError, commit_worktree, is_branch_merged, is_merge_in_progress,
         is_worktree_dirty, list_active_worktrees, list_layer_branches,
         merge_branch,
     )
@@ -572,15 +572,18 @@ def merge_branches(
         if not branches:
             raise ReviewError(f"All branches in layer {layer} already merged.")
 
-    # Check dirty worktrees unless force
-    if not force:
-        active_wts = list_active_worktrees(project_root)
-        wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
-        for br in branches:
-            if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
+    # Auto-commit dirty worktrees before merging
+    active_wts = list_active_worktrees(project_root)
+    wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
+    for br in branches:
+        if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
+            if on_progress:
+                on_progress(f"Auto-committing {br}...")
+            try:
+                commit_worktree(wt_by_branch[br], "Auto-commit before merge")
+            except WorktreeError as e:
                 raise ReviewError(
-                    f"uncommitted changes in worktree for {br}. "
-                    "Run 'gotg commit-worktrees' first, or use --force to merge anyway."
+                    f"Failed to auto-commit {br}: {e}"
                 )
 
     results: list[MergeResult] = []

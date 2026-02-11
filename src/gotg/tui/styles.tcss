@@ -246,6 +246,13 @@
     padding: 1 2;
 }
 
+/* ── Diff file sections ──────────────────────────────────── */
+
+.cv-diff-file {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
 /* ── Settings screen ─────────────────────────────────────── */
 
 .settings-section {

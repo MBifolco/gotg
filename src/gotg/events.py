@@ -41,6 +41,8 @@ class PhaseCompleteSignaled:
 @dataclass
 class CoachAskedPM:
     question: str
+    response_type: str = "feedback"   # "feedback" or "decision"
+    options: tuple[str, ...] = ()     # non-empty when response_type == "decision"
 
 
 @dataclass

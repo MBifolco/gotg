@@ -189,7 +189,13 @@ def run_grooming_conversation(
             print("---")
             print(f"Coach asks: {event.question}")
             slug = iteration["id"]
-            print(f"Reply with: gotg groom continue {slug} -m 'your answer'")
+            if event.options:
+                for i, option in enumerate(event.options, 1):
+                    print(f"  {i}. {option}")
+                print(f"  {len(event.options) + 1}. None of these (send a message)")
+                print(f"Reply with: gotg groom continue {slug} -m '<number or message>'")
+            else:
+                print(f"Reply with: gotg groom continue {slug} -m 'your answer'")
             break
         elif isinstance(event, (PauseForApprovals, PhaseCompleteSignaled)):
             pass  # cannot fire under grooming_policy

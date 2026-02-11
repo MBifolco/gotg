@@ -137,7 +137,13 @@ def run_conversation(
         elif isinstance(event, CoachAskedPM):
             print("---")
             print(f"Coach asks: {event.question}")
-            print("Reply with: gotg continue -m 'your answer'")
+            if event.options:
+                for i, option in enumerate(event.options, 1):
+                    print(f"  {i}. {option}")
+                print(f"  {len(event.options) + 1}. None of these (send a message)")
+                print("Reply with: gotg continue -m '<number or message>'")
+            else:
+                print("Reply with: gotg continue -m 'your answer'")
             break
         elif isinstance(event, SessionComplete):
             print("---")
@@ -1021,7 +1027,7 @@ def main():
     merge_parser.add_argument("branch", nargs="?", default=None, help="Branch name or 'all'")
     merge_parser.add_argument("--layer", type=int, default=None, help="Layer for 'merge all' (default: current layer)")
     merge_parser.add_argument("--abort", action="store_true", help="Abort in-progress merge")
-    merge_parser.add_argument("--force", action="store_true", help="Merge even if worktree has uncommitted changes")
+    merge_parser.add_argument("--force", action="store_true", help="(no-op, dirty worktrees are auto-committed)")
 
     subparsers.add_parser("worktrees", help="List active git worktrees")
 
