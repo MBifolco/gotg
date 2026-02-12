@@ -460,7 +460,9 @@ def test_phase_kickoff_messages_has_all_phases():
 
 def test_phase_kickoff_messages_end_with_coach_line():
     from gotg.scaffold import PHASE_KICKOFF_MESSAGES
-    for phase, msg in PHASE_KICKOFF_MESSAGES.items():
+    # Implementation has no coach — uses complete_tasks instead
+    coach_phases = {k: v for k, v in PHASE_KICKOFF_MESSAGES.items() if k != "implementation"}
+    for phase, msg in coach_phases.items():
         assert msg.rstrip().endswith("The coach will facilitate from here."), (
             f"Phase {phase} kickoff doesn't end with coach facilitation line"
         )

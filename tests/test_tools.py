@@ -214,6 +214,32 @@ def test_format_pending():
     assert "Dockerfile" in result
 
 
+# --- Missing key validation ---
+
+def test_read_missing_path_key(project, guard):
+    result = execute_file_tool("file_read", {}, guard)
+    assert result.startswith("Error: malformed tool call")
+    assert "path" in result
+
+
+def test_write_missing_path_key(project, guard):
+    result = execute_file_tool("file_write", {"content": "hello"}, guard)
+    assert result.startswith("Error: malformed tool call")
+    assert "path" in result
+
+
+def test_write_missing_content_key(project, guard):
+    result = execute_file_tool("file_write", {"path": "src/main.py"}, guard)
+    assert result.startswith("Error: malformed tool call")
+    assert "content" in result
+
+
+def test_list_missing_path_key(project, guard):
+    result = execute_file_tool("file_list", {}, guard)
+    assert result.startswith("Error: malformed tool call")
+    assert "path" in result
+
+
 # --- Approval-aware writes ---
 
 def test_write_with_approval_store_writable_succeeds(project):

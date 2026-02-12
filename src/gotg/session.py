@@ -235,8 +235,28 @@ def setup_worktrees(
 
     layer = resolve_layer(layer_override, iteration)
 
+    # For implementation phase, only create worktrees for agents with current-layer tasks
+    agents_to_setup = agents
+    if phase == "implementation":
+        tasks_path = team_dir.parent / ".team" / "iterations"
+        # Find iter_dir from the team_dir layout
+        from gotg.config import get_current_iteration
+        try:
+            _, iter_dir = get_current_iteration(team_dir)
+            tasks_file = iter_dir / "tasks.json"
+            if tasks_file.exists():
+                import json as _json
+                tasks_data = _json.loads(tasks_file.read_text())
+                layer_tasks = [t for t in tasks_data if t.get("layer") == layer]
+                assigned_agents = {t.get("assigned_to") for t in layer_tasks if t.get("assigned_to")}
+                if assigned_agents:
+                    agents_to_setup = [a for a in agents if a["name"] in assigned_agents]
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as e:
+            import sys
+            print(f"Warning: could not filter agents by task assignment: {e}", file=sys.stderr)
+
     worktree_map = {}
-    for agent in agents:
+    for agent in agents_to_setup:
         try:
             wt_path = create_worktree(project_root, agent["name"], layer)
             worktree_map[agent["name"]] = wt_path
@@ -597,27 +617,39 @@ def merge_branches(
     if is_worktree_dirty(project_root):
         raise ReviewError("uncommitted changes on main. Commit or stash before merging.")
 
-    if branches is None:
-        branches = list_layer_branches(project_root, layer)
-        if not branches:
-            raise ReviewError(f"No branches found for layer {layer}.")
-        branches = [br for br in branches if not is_branch_merged(project_root, br)]
-        if not branches:
-            raise ReviewError(f"All branches in layer {layer} already merged.")
-
-    # Auto-commit dirty worktrees before merging
+    # Auto-commit dirty worktrees before checking merge status
     active_wts = list_active_worktrees(project_root)
     wt_by_branch = {wt.get("branch"): Path(wt["path"]) for wt in active_wts}
-    for br in branches:
-        if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
-            if on_progress:
-                on_progress(f"Auto-committing {br}...")
-            try:
-                commit_worktree(wt_by_branch[br], "Auto-commit before merge")
-            except WorktreeError as e:
-                raise ReviewError(
-                    f"Failed to auto-commit {br}: {e}"
-                )
+
+    if branches is None:
+        all_layer_branches = list_layer_branches(project_root, layer)
+        if not all_layer_branches:
+            raise ReviewError(f"No branches found for layer {layer}.")
+
+        # Auto-commit before filtering — otherwise branches with only
+        # untracked files appear "merged" (same commit as main)
+        for br in all_layer_branches:
+            if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
+                if on_progress:
+                    on_progress(f"Auto-committing {br}...")
+                try:
+                    commit_worktree(wt_by_branch[br], "Auto-commit before merge")
+                except WorktreeError as e:
+                    raise ReviewError(f"Failed to auto-commit {br}: {e}")
+
+        branches = [br for br in all_layer_branches if not is_branch_merged(project_root, br)]
+        if not branches:
+            raise ReviewError(f"All branches in layer {layer} already merged.")
+    else:
+        # Explicit branch list — auto-commit those specific branches
+        for br in branches:
+            if br in wt_by_branch and is_worktree_dirty(wt_by_branch[br]):
+                if on_progress:
+                    on_progress(f"Auto-committing {br}...")
+                try:
+                    commit_worktree(wt_by_branch[br], "Auto-commit before merge")
+                except WorktreeError as e:
+                    raise ReviewError(f"Failed to auto-commit {br}: {e}")
 
     results: list[MergeResult] = []
     for br in branches:
@@ -654,9 +686,9 @@ def validate_next_layer(
         )
 
     current_phase = iteration.get("phase", "refinement")
-    if current_phase != "code-review":
+    if current_phase not in ("implementation", "code-review"):
         raise ReviewError(
-            f"next-layer requires code-review phase, currently in '{current_phase}'."
+            f"next-layer requires implementation or code-review phase, currently in '{current_phase}'."
         )
 
     current_layer = iteration.get("current_layer", 0)
@@ -716,7 +748,7 @@ def advance_next_layer(
     iter_dir: Path,
     on_progress: Callable[[str], None] | None = None,
 ) -> NextLayerResult:
-    """Advance to next layer after code-review. Raises ReviewError on failure."""
+    """Advance to next layer after implementation/code-review. Raises ReviewError on failure."""
     from gotg.checkpoint import create_checkpoint
     from gotg.config import load_coach, load_worktree_config, save_iteration_fields
     from gotg.conversation import append_message as conv_append_message

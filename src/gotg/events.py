@@ -51,6 +51,24 @@ class SessionComplete:
 
 
 @dataclass
+class ToolCallProgress:
+    """Individual tool execution during an agent turn — lightweight metadata only."""
+    agent: str
+    tool_name: str
+    path: str             # tool_input.get("path", "")
+    status: str           # "ok", "error", "pending_approval"
+    bytes: int | None     # file_write content size, None otherwise
+    error: str | None     # short error message if status == "error", None otherwise
+
+
+@dataclass
+class LayerComplete:
+    """All tasks in the current layer are marked complete."""
+    layer: int
+    completed_tasks: tuple[str, ...]
+
+
+@dataclass
 class AdvanceProgress:
     """Reports advance progress step to the UI."""
     message: str

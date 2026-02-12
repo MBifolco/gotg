@@ -74,7 +74,10 @@ def iteration_policy(
     tasks_summary = None
     if tasks_path.exists():
         tasks_data = json.loads(tasks_path.read_text())
-        tasks_summary = format_tasks_summary(tasks_data)
+        impl_layer = None
+        if iteration.get("phase") == "implementation":
+            impl_layer = iteration.get("current_layer")
+        tasks_summary = format_tasks_summary(tasks_data, layer=impl_layer)
 
     # Pre-compute kickoff
     phase = iteration.get("phase", "refinement")

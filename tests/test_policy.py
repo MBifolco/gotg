@@ -204,3 +204,44 @@ def test_grooming_policy_no_kickoff_with_history():
     history = [{"from": "system", "content": "existing message"}]
     p = grooming_policy(AGENTS, "Some topic", history=history)
     assert p.kickoff_text is None
+
+
+# --- Implementation layer filtering ---
+
+
+def test_iteration_policy_implementation_filters_tasks_by_layer(tmp_path):
+    """Implementation phase passes current_layer to format_tasks_summary."""
+    iter_dir = _make_iter_dir(tmp_path)
+    tasks = [
+        {"id": "a", "depends_on": [], "description": "Do A",
+         "done_criteria": "A done", "assigned_to": "agent-1", "status": "pending", "layer": 0},
+        {"id": "b", "depends_on": ["a"], "description": "Do B",
+         "done_criteria": "B done", "assigned_to": "agent-2", "status": "pending", "layer": 1},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    iteration = {
+        "id": "iter-1", "description": "Build a thing",
+        "phase": "implementation", "max_turns": 10, "current_layer": 0,
+    }
+    p = iteration_policy(AGENTS, iteration, iter_dir, history=[])
+    assert "**a**" in p.tasks_summary
+    assert "**b**" not in p.tasks_summary
+
+
+def test_iteration_policy_non_implementation_shows_all_tasks(tmp_path):
+    """Non-implementation phases show all tasks (no layer filtering)."""
+    iter_dir = _make_iter_dir(tmp_path)
+    tasks = [
+        {"id": "a", "depends_on": [], "description": "Do A",
+         "done_criteria": "A done", "assigned_to": "agent-1", "status": "pending", "layer": 0},
+        {"id": "b", "depends_on": ["a"], "description": "Do B",
+         "done_criteria": "B done", "assigned_to": "agent-2", "status": "pending", "layer": 1},
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    iteration = {
+        "id": "iter-1", "description": "Build a thing",
+        "phase": "pre-code-review", "max_turns": 10,
+    }
+    p = iteration_policy(AGENTS, iteration, iter_dir, history=[])
+    assert "**a**" in p.tasks_summary
+    assert "**b**" in p.tasks_summary

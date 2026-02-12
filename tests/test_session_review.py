@@ -323,10 +323,18 @@ def test_validate_next_layer_success(tmp_path):
 
 
 def test_validate_next_layer_wrong_phase(tmp_path):
-    """Raises ReviewError when not in code-review phase."""
-    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="implementation")
-    with pytest.raises(ReviewError, match="code-review"):
+    """Raises ReviewError when not in implementation or code-review phase."""
+    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="planning")
+    with pytest.raises(ReviewError, match="implementation or code-review"):
         validate_next_layer(team, iteration, iter_dir)
+
+
+def test_validate_next_layer_implementation_phase(tmp_path):
+    """Accepts implementation phase for next-layer."""
+    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="implementation")
+    current, next_l = validate_next_layer(team, iteration, iter_dir)
+    assert current == 0
+    assert next_l == 1
 
 
 def test_validate_next_layer_wrong_status(tmp_path):
@@ -406,9 +414,9 @@ def test_advance_next_layer_calls_on_progress(tmp_path):
 
 
 def test_advance_next_layer_wrong_phase(tmp_path):
-    """Raises ReviewError when not in code-review."""
-    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="implementation")
-    with pytest.raises(ReviewError, match="code-review"):
+    """Raises ReviewError when not in implementation or code-review."""
+    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="planning")
+    with pytest.raises(ReviewError, match="implementation or code-review"):
         advance_next_layer(team, iteration, iter_dir)
 
 

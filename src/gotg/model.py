@@ -1,7 +1,37 @@
 import json
 import sys
+from dataclasses import dataclass, field
 
 import httpx
+
+
+@dataclass
+class CompletionRound:
+    """Result of a single LLM round that may contain tool calls."""
+    content: str
+    tool_calls: list[dict]    # [{"name", "input", "id"}]
+    _provider: str
+    _raw: dict                # Provider-specific raw response data
+
+    def build_continuation(self, tool_results: list[dict]) -> list[dict]:
+        """Build messages to append for the next LLM round.
+
+        Args: tool_results = [{"id": str, "result": str}, ...]
+        Returns: list of message dicts (provider-formatted)
+        """
+        if self._provider == "anthropic":
+            return [
+                {"role": "assistant", "content": self._raw["content_blocks"]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": r["id"], "content": r["result"]}
+                    for r in tool_results
+                ]},
+            ]
+        else:
+            msgs = [self._raw["message"]]
+            for r in tool_results:
+                msgs.append({"role": "tool", "tool_call_id": r["id"], "content": r["result"]})
+            return msgs
 
 
 def _check_response(resp: httpx.Response) -> None:
@@ -345,5 +375,169 @@ def _openai_agentic(
         chat_messages.append(message)
         chat_messages.extend(tool_messages)
 
-    # Max rounds reached
+    # Max rounds reached — _openai_agentic
     return {"content": last_text, "operations": operations}
+
+
+# ── Raw completion (single-round, engine-driven tool loop) ──────
+
+
+def raw_completion(
+    base_url: str,
+    model: str,
+    messages: list[dict],
+    api_key: str | None = None,
+    provider: str = "ollama",
+    tools: list[dict] | None = None,
+) -> CompletionRound:
+    """Single-round completion returning CompletionRound for engine-driven tool loops.
+
+    Used by implementation executor. chat_completion stays unchanged.
+    """
+    if provider == "anthropic":
+        return _anthropic_raw(base_url, model, messages, api_key, tools)
+    return _openai_raw(base_url, model, messages, api_key, tools)
+
+
+def _anthropic_raw(
+    base_url: str,
+    model: str,
+    messages: list[dict],
+    api_key: str | None = None,
+    tools: list[dict] | None = None,
+) -> CompletionRound:
+    url = f"{base_url.rstrip('/')}/v1/messages"
+    headers = {
+        "x-api-key": api_key or "",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+    # Extract system from messages
+    system = None
+    chat_messages = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system = msg["content"]
+        elif msg.get("content"):
+            chat_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    # Higher limit than discussion phases — implementation agents write large files
+    body = {
+        "model": model,
+        "max_tokens": 16384,
+        "messages": chat_messages,
+    }
+    if system:
+        body["system"] = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    if tools:
+        body["tools"] = tools
+
+    # Prompt caching
+    if len(chat_messages) >= 2:
+        msg = chat_messages[-2]
+        if isinstance(msg["content"], str) and msg["content"]:
+            msg["content"] = [
+                {
+                    "type": "text",
+                    "text": msg["content"],
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+
+    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    _check_response(resp)
+    data = resp.json()
+
+    # Log cache usage
+    usage = data.get("usage", {})
+    cache_created = usage.get("cache_creation_input_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+    if cache_created or cache_read:
+        print(
+            f"  [cache] created={cache_created} read={cache_read}",
+            file=sys.stderr,
+        )
+
+    content_blocks = data.get("content", [])
+    stop_reason = data.get("stop_reason", "")
+    text_parts = []
+    tool_calls = []
+
+    # If stopped due to max_tokens, tool_use blocks may be truncated —
+    # discard them to avoid executing malformed tool calls
+    include_tools = stop_reason != "max_tokens"
+
+    for block in content_blocks:
+        if block["type"] == "text":
+            text_parts.append(block["text"])
+        elif block["type"] == "tool_use" and include_tools:
+            tool_calls.append({"name": block["name"], "input": block["input"], "id": block["id"]})
+
+    if stop_reason == "max_tokens" and not text_parts:
+        text_parts.append(
+            "[Output was truncated due to length. "
+            "Try breaking large file writes into smaller pieces.]"
+        )
+
+    return CompletionRound(
+        content="\n\n".join(text_parts),
+        tool_calls=tool_calls,
+        _provider="anthropic",
+        _raw={"content_blocks": content_blocks},
+    )
+
+
+def _openai_raw(
+    base_url: str,
+    model: str,
+    messages: list[dict],
+    api_key: str | None = None,
+    tools: list[dict] | None = None,
+) -> CompletionRound:
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    body = {"model": model, "messages": messages}
+    if tools:
+        body["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t["input_schema"],
+                },
+            }
+            for t in tools
+        ]
+
+    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    _check_response(resp)
+    data = resp.json()
+    message = data["choices"][0]["message"]
+
+    content = message.get("content") or ""
+    tool_calls = [
+        {
+            "name": tc["function"]["name"],
+            "input": json.loads(tc["function"]["arguments"]),
+            "id": tc["id"],
+        }
+        for tc in message.get("tool_calls") or []
+    ]
+
+    return CompletionRound(
+        content=content,
+        tool_calls=tool_calls,
+        _provider="openai",
+        _raw={"message": message},
+    )

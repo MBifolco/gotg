@@ -22,6 +22,7 @@ class SessionDeps:
     """Model function callables injected by the caller (bridge pattern)."""
     agent_completion: Callable
     coach_completion: Callable
+    single_completion: Callable | None = None  # raw_completion (implementation tool loop)
 
 
 def run_session(
@@ -96,7 +97,7 @@ def run_session(
         })
 
         # Build tools + executor
-        agent_tools, tool_executor = _build_tool_executor(agent, policy)
+        agent_tools, tool_executor = build_tool_executor(agent, policy)
 
         # Call LLM
         result = deps.agent_completion(
@@ -133,7 +134,7 @@ def run_session(
     yield SessionComplete(turn)
 
 
-def _build_tool_executor(
+def build_tool_executor(
     agent: dict,
     policy: SessionPolicy,
 ) -> tuple[list[dict], Callable]:

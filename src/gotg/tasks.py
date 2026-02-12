@@ -42,10 +42,35 @@ def compute_layers(tasks: list[dict]) -> dict[str, int]:
     return layers
 
 
-def format_tasks_summary(tasks: list[dict]) -> str:
-    """Format task list with computed layers for injection into agent prompts."""
+def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
+    """Format task list with computed layers for injection into agent prompts.
+
+    When layer is set, filter to that layer only (skip compute_layers, use stored 'layer' field).
+    When layer is None, show all tasks grouped by computed layers.
+    """
     if not tasks:
         return "No tasks defined."
+
+    if layer is not None:
+        layer_tasks = [t for t in tasks if t.get("layer") == layer]
+        if not layer_tasks:
+            return "No tasks defined."
+        parts = [f"### Layer {layer} (parallel)"]
+        for t in layer_tasks:
+            status = t.get("status", "pending")
+            assigned = t.get("assigned_to") or "unassigned"
+            dep_str = ", ".join(t["depends_on"]) if t["depends_on"] else "none"
+            entry = (
+                f"- **{t['id']}** [{status}] (assigned: {assigned})\n"
+                f"  {t['description']}\n"
+                f"  Done when: {t['done_criteria']}\n"
+                f"  Depends on: {dep_str}"
+            )
+            notes = t.get("notes")
+            if notes:
+                entry += f"\n  Notes: {notes}"
+            parts.append(entry)
+        return "\n".join(parts)
 
     layers = compute_layers(tasks)
     max_layer = max(layers.values())

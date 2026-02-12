@@ -2884,16 +2884,16 @@ def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", ta
     return team, iter_dir
 
 
-def test_next_layer_requires_code_review_phase(tmp_path, capsys):
-    """next-layer errors if not in code-review phase."""
-    team, iter_dir = _make_next_layer_team_dir(tmp_path, phase="implementation")
+def test_next_layer_requires_implementation_or_code_review_phase(tmp_path, capsys):
+    """next-layer errors if not in implementation or code-review phase."""
+    team, iter_dir = _make_next_layer_team_dir(tmp_path, phase="planning")
     with patch("sys.argv", ["gotg", "next-layer"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
             with pytest.raises(SystemExit):
                 main()
 
     err = capsys.readouterr().err
-    assert "code-review" in err
+    assert "implementation or code-review" in err
 
 
 def test_next_layer_advances_to_layer_1(tmp_path, capsys):

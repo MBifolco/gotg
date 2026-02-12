@@ -84,6 +84,8 @@ def execute_file_tool(
 
 
 def _do_file_read(tool_input: dict, fileguard: FileGuard) -> str:
+    if "path" not in tool_input:
+        return "Error: malformed tool call — missing 'path' field"
     path = fileguard.validate_read(tool_input["path"])
     if not path.exists():
         return f"Error: file not found: {tool_input['path']}"
@@ -96,6 +98,10 @@ def _do_file_read(tool_input: dict, fileguard: FileGuard) -> str:
 
 
 def _do_file_write(tool_input: dict, fileguard: FileGuard, approval_store=None, agent_name: str = "") -> str:
+    if "path" not in tool_input:
+        return "Error: malformed tool call — missing 'path' field"
+    if "content" not in tool_input:
+        return "Error: malformed tool call — missing 'content' field"
     content = tool_input["content"]
     size = len(content.encode())
     if size > fileguard.max_file_size:
@@ -130,6 +136,8 @@ def _do_file_write(tool_input: dict, fileguard: FileGuard, approval_store=None, 
 
 
 def _do_file_list(tool_input: dict, fileguard: FileGuard) -> str:
+    if "path" not in tool_input:
+        return "Error: malformed tool call — missing 'path' field"
     path = fileguard.validate_list(tool_input["path"])
     if not path.exists():
         return f"Error: directory not found: {tool_input['path']}"

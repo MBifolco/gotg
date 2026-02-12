@@ -19,14 +19,16 @@ from gotg.events import (
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
+    LayerComplete,
     PauseForApprovals,
     PhaseCompleteSignaled,
     SessionComplete,
     SessionStarted,
+    ToolCallProgress,
 )
 from gotg.session import persist_event
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
-from gotg.tui.messages import EngineEvent, SessionError
+from gotg.tui.messages import EngineEvent, SessionError, ToolProgress
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList
@@ -314,24 +316,44 @@ class ChatScreen(Screen):
                     max_turns=groom_meta.get("max_turns", 30),
                 )
 
+            from gotg.model import raw_completion
             deps = SessionDeps(
                 agent_completion=agentic_completion,
                 coach_completion=chat_completion,
+                single_completion=raw_completion,
             )
 
-            for event in run_session(
-                agents=ctx.agents, iteration=iteration,
-                model_config=ctx.model_config, deps=deps,
-                history=history, policy=policy,
-            ):
+            # Route: implementation phase uses dedicated executor
+            if self._session_kind == "iteration" and iteration.get("phase") == "implementation":
+                import json as _json
+                from gotg.implementation import run_implementation
+                tasks_path = iter_dir / "tasks.json"
+                tasks_data = _json.loads(tasks_path.read_text())
+                current_layer = iteration.get("current_layer", 0)
+                event_gen = run_implementation(
+                    agents=ctx.agents, tasks=tasks_data, current_layer=current_layer,
+                    iteration=iteration, iter_dir=iter_dir, model_config=ctx.model_config,
+                    deps=deps, history=history, policy=policy,
+                )
+            else:
+                event_gen = run_session(
+                    agents=ctx.agents, iteration=iteration,
+                    model_config=ctx.model_config, deps=deps,
+                    history=history, policy=policy,
+                )
+
+            for event in event_gen:
                 if self._cancel_requested:
                     break
                 # Persist BEFORE posting to UI — if app crashes between the two,
                 # message is saved but not displayed (recoverable on reload).
                 persist_event(event, self._log_path, self._debug_path)
-                self.post_message(EngineEvent(event))
+                if isinstance(event, ToolCallProgress):
+                    self.post_message(ToolProgress(event))
+                else:
+                    self.post_message(EngineEvent(event))
                 if isinstance(event, (PauseForApprovals, PhaseCompleteSignaled,
-                                      CoachAskedPM, SessionComplete)):
+                                      CoachAskedPM, SessionComplete, LayerComplete)):
                     break
 
         except SessionSetupError as e:
@@ -400,6 +422,14 @@ class ChatScreen(Screen):
                     "Phase complete. Press P to advance, C to continue discussing."
                 )
 
+        elif isinstance(event, LayerComplete):
+            self._pause_reason = PauseReason.PHASE_COMPLETE
+            self.session_state = SessionState.PAUSED
+            self.query_one("#action-bar", ActionBar).show(
+                f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks). "
+                "Press D to review diffs and merge."
+            )
+
         elif isinstance(event, SessionComplete):
             self.session_state = SessionState.COMPLETE
             self.query_one("#action-bar", ActionBar).show(
@@ -434,6 +464,19 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     f"Advance failed: {event.error}"
                 )
+
+    def on_tool_progress(self, message: ToolProgress) -> None:
+        """Handle ToolCallProgress events — update action bar with current operation."""
+        event = message.event
+        if event.status == "error":
+            text = f"[{event.agent}] {event.tool_name} {event.path} FAIL"
+        elif event.tool_name == "complete_tasks":
+            text = f"[{event.agent}] complete_tasks"
+        elif event.tool_name == "file_write" and event.bytes:
+            text = f"[{event.agent}] {event.tool_name} {event.path} ({event.bytes}b)"
+        else:
+            text = f"[{event.agent}] {event.tool_name} {event.path}"
+        self.query_one("#action-bar", ActionBar).show(text)
 
     def on_session_error(self, message: SessionError) -> None:
         """Handle worker thread errors."""
@@ -600,7 +643,7 @@ class ChatScreen(Screen):
             return
         if self._session_kind != "iteration":
             return
-        if self.metadata.get("phase") != "code-review":
+        if self.metadata.get("phase") not in ("implementation", "code-review"):
             return
         from gotg.context import TeamContext
         ctx = TeamContext.from_team_dir(self.app.team_dir)
@@ -637,19 +680,30 @@ class ChatScreen(Screen):
                 bar.show("All approvals resolved. Press C to continue.")
 
         elif self._pause_reason == PauseReason.PHASE_COMPLETE:
-            # Check if phase changed (next-layer from ReviewScreen)
+            # Re-read iteration state from disk (may have changed in ReviewScreen)
             from gotg.context import TeamContext
             ctx = TeamContext.from_team_dir(self.app.team_dir)
             iteration, _ = ctx.iteration_store.get_current()
             new_phase = iteration.get("phase")
-            if new_phase != self.metadata.get("phase"):
+            new_layer = iteration.get("current_layer")
+            new_status = iteration.get("status")
+            old_phase = self.metadata.get("phase")
+            old_layer = self.metadata.get("current_layer")
+
+            if new_status == "done":
+                self.metadata["status"] = "done"
+                self.session_state = SessionState.COMPLETE
+                self.query_one("#action-bar", ActionBar).show(
+                    "Iteration complete. Press Esc to return home."
+                )
+            elif new_phase != old_phase or new_layer != old_layer:
                 self.metadata["phase"] = new_phase
-                self.metadata["current_layer"] = iteration.get("current_layer")
+                self.metadata["current_layer"] = new_layer
                 self.query_one("#info-tile", InfoTile).update_phase(new_phase)
-                layer = iteration.get("current_layer", 0)
+                layer = new_layer if new_layer is not None else 0
                 self.session_state = SessionState.VIEWING
                 self.query_one("#action-bar", ActionBar).show(
-                    f"Advanced to layer {layer} (implementation). Press R to run."
+                    f"Advanced to layer {layer} ({new_phase}). Press R to run."
                 )
                 # Append only the new messages (boundary + transition)
                 messages = read_log(self._log_path) if self._log_path.exists() else []

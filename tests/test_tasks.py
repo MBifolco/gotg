@@ -140,3 +140,45 @@ def test_format_tasks_summary_omits_notes_when_absent():
     ]
     result = format_tasks_summary(tasks)
     assert "Notes:" not in result
+
+
+# --- Layer-filtered summary ---
+
+def test_format_tasks_summary_layer_filter():
+    """layer=N filters to tasks with stored layer field == N."""
+    tasks = [
+        {"id": "a", "depends_on": [], "description": "Do A",
+         "done_criteria": "A done", "assigned_to": "agent-1", "status": "pending", "layer": 0},
+        {"id": "b", "depends_on": ["a"], "description": "Do B",
+         "done_criteria": "B done", "assigned_to": "agent-2", "status": "pending", "layer": 1},
+    ]
+    result = format_tasks_summary(tasks, layer=0)
+    assert "Layer 0" in result
+    assert "**a**" in result
+    assert "**b**" not in result
+    assert "Layer 1" not in result
+
+
+def test_format_tasks_summary_layer_no_match():
+    """layer=N with no matching tasks returns 'No tasks defined.'"""
+    tasks = [
+        {"id": "a", "depends_on": [], "description": "Do A",
+         "done_criteria": "A done", "assigned_to": "agent-1", "status": "pending", "layer": 0},
+    ]
+    result = format_tasks_summary(tasks, layer=5)
+    assert result == "No tasks defined."
+
+
+def test_format_tasks_summary_layer_none_shows_all():
+    """layer=None (default) shows all tasks grouped by computed layers."""
+    tasks = [
+        {"id": "a", "depends_on": [], "description": "Do A",
+         "done_criteria": "A done", "assigned_to": "agent-1", "status": "pending"},
+        {"id": "b", "depends_on": ["a"], "description": "Do B",
+         "done_criteria": "B done", "assigned_to": "agent-2", "status": "pending"},
+    ]
+    result = format_tasks_summary(tasks, layer=None)
+    assert "Layer 0" in result
+    assert "Layer 1" in result
+    assert "**a**" in result
+    assert "**b**" in result

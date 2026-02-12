@@ -59,6 +59,7 @@ class ApprovalScreen(Screen):
         self.query_one("#approval-action-bar", ActionBar).show(
             "A=approve  D=deny  Y=approve all  Esc=back"
         )
+        table.focus()
 
     def _load_data(self) -> None:
         """Reload approval data from disk and refresh table."""
@@ -106,8 +107,9 @@ class ApprovalScreen(Screen):
             return None
         return self._requests.get(key_str)
 
-    def on_data_table_cursor_moved(self, event: DataTable.CursorMoved) -> None:
-        req = self._get_selected_request()
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        key_str = event.row_key.value
+        req = self._requests.get(key_str)
         if req:
             self.query_one("#content-viewer", ContentViewer).show_content(
                 req["path"], req["content"]

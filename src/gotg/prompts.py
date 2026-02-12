@@ -115,4 +115,24 @@ COACH_TOOLS: list[dict] = [
 GROOMING_SYSTEM_SUPPLEMENT: str = _DEFAULTS["grooming"]["system"]
 GROOMING_COACH_PROMPT: str = _DEFAULTS["grooming"]["coach"]
 GROOMING_KICKOFF_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff"]
+COMPLETE_TASKS_TOOL: dict = {
+    "name": "complete_tasks",
+    "description": _DEFAULTS["tools"]["complete_tasks"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "IDs of tasks you completed in this layer",
+            },
+            "summary": {
+                "type": "string",
+                "description": "Brief summary of what you built/changed",
+            },
+        },
+        "required": ["task_ids", "summary"],
+    },
+}
+
 GROOMING_COACH_TOOLS: list[dict] = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]

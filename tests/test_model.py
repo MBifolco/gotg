@@ -728,3 +728,86 @@ def test_agentic_openai_executes_tools(mock_post):
     )
     assert result["content"] == "Done."
     assert len(result["operations"]) == 1
+
+
+# --- CompletionRound ---
+
+from gotg.model import CompletionRound
+
+
+def test_completion_round_build_continuation_anthropic():
+    """Anthropic continuation builds assistant + user tool_result messages."""
+    rnd = CompletionRound(
+        content="thinking",
+        tool_calls=[{"name": "file_read", "input": {"path": "x"}, "id": "tu_1"}],
+        _provider="anthropic",
+        _raw={"content_blocks": [
+            {"type": "text", "text": "thinking"},
+            {"type": "tool_use", "id": "tu_1", "name": "file_read", "input": {"path": "x"}},
+        ]},
+    )
+    msgs = rnd.build_continuation([{"id": "tu_1", "result": "file content"}])
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "assistant"
+    assert msgs[0]["content"] == rnd._raw["content_blocks"]
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"][0]["type"] == "tool_result"
+    assert msgs[1]["content"][0]["tool_use_id"] == "tu_1"
+    assert msgs[1]["content"][0]["content"] == "file content"
+
+
+def test_completion_round_build_continuation_openai():
+    """OpenAI continuation builds assistant message + tool messages."""
+    raw_message = {
+        "content": "thinking",
+        "tool_calls": [
+            {"id": "call_1", "function": {"name": "file_read", "arguments": '{"path": "x"}'}}
+        ],
+    }
+    rnd = CompletionRound(
+        content="thinking",
+        tool_calls=[{"name": "file_read", "input": {"path": "x"}, "id": "call_1"}],
+        _provider="openai",
+        _raw={"message": raw_message},
+    )
+    msgs = rnd.build_continuation([{"id": "call_1", "result": "file content"}])
+    assert len(msgs) == 2
+    assert msgs[0] is raw_message  # same object reference
+    assert msgs[1]["role"] == "tool"
+    assert msgs[1]["tool_call_id"] == "call_1"
+    assert msgs[1]["content"] == "file content"
+
+
+@patch("gotg.model.httpx.post")
+def test_raw_completion_openai_returns_completion_round(mock_post):
+    """raw_completion with OpenAI provider returns CompletionRound."""
+    from gotg.model import raw_completion
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": "hello",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "file_read", "arguments": '{"path": "x"}'},
+                }],
+            }
+        }]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+
+    rnd = raw_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "hi"}],
+        provider="openai",
+        tools=SAMPLE_TOOLS,
+    )
+    assert isinstance(rnd, CompletionRound)
+    assert rnd.content == "hello"
+    assert len(rnd.tool_calls) == 1
+    assert rnd.tool_calls[0]["name"] == "file_read"
+    # Round-trip: build_continuation should work
+    msgs = rnd.build_continuation([{"id": "call_1", "result": "ok"}])
+    assert len(msgs) == 2
