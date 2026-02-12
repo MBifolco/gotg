@@ -69,6 +69,15 @@ class LayerComplete:
 
 
 @dataclass
+class TaskBlocked:
+    """An agent reported one or more blocked tasks in the current layer."""
+    agent: str
+    layer: int
+    task_ids: tuple[str, ...]
+    reason: str
+
+
+@dataclass
 class AdvanceProgress:
     """Reports advance progress step to the UI."""
     message: str

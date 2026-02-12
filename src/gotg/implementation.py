@@ -15,10 +15,14 @@ from gotg.events import (
     PauseForApprovals,
     SessionComplete,
     SessionStarted,
+    TaskBlocked,
     ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
-from gotg.prompts import COMPLETE_TASKS_TOOL
+from gotg.prompts import COMPLETE_TASKS_TOOL, REPORT_BLOCKED_TOOL
+
+_STATE_FILE = "implementation_state.json"
+_READ_ONLY_TOOLS = {"file_read", "file_list"}
 
 
 def _classify_result(result_str: str) -> str:
@@ -53,8 +57,13 @@ def _agent_tasks(tasks: list[dict], agent_name: str) -> list[dict]:
 
 
 def _pending_tasks(tasks: list[dict]) -> list[dict]:
-    """Filter tasks that are not yet done."""
-    return [t for t in tasks if t.get("status") != "done"]
+    """Filter tasks that are still actionable in this phase."""
+    return [t for t in tasks if t.get("status") not in {"done", "blocked"}]
+
+
+def _all_done(tasks: list[dict]) -> bool:
+    """True when every task is explicitly marked done."""
+    return all(t.get("status") == "done" for t in tasks)
 
 
 def _agents_with_pending_work(
@@ -91,6 +100,57 @@ def _format_agent_tasks(tasks: list[dict], agent_name: str, layer: int) -> str:
     return "\n".join(parts)
 
 
+def _state_path(iter_dir: Path) -> Path:
+    return iter_dir / _STATE_FILE
+
+
+def _load_state(iter_dir: Path, layer: int) -> dict | None:
+    """Load resumable implementation state for the current layer."""
+    path = _state_path(iter_dir)
+    if not path.exists():
+        return None
+    try:
+        state = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
+    if state.get("layer") != layer:
+        return None
+    if not isinstance(state.get("agent_name"), str):
+        return None
+    if not isinstance(state.get("llm_messages"), list):
+        return None
+    return state
+
+
+def _save_state(
+    iter_dir: Path,
+    layer: int,
+    agent_name: str,
+    llm_messages: list[dict],
+    round_num: int,
+    read_only_streak: int,
+    no_tool_streak: int,
+    saw_tool_activity: bool,
+) -> None:
+    """Persist resumable state so `gotg continue` can resume current agent loop."""
+    payload = {
+        "layer": layer,
+        "agent_name": agent_name,
+        "llm_messages": llm_messages,
+        "round_num": round_num,
+        "read_only_streak": read_only_streak,
+        "no_tool_streak": no_tool_streak,
+        "saw_tool_activity": saw_tool_activity,
+    }
+    _state_path(iter_dir).write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def _clear_state(iter_dir: Path) -> None:
+    path = _state_path(iter_dir)
+    if path.exists():
+        path.unlink()
+
+
 def _handle_complete_tasks(
     tool_input: dict,
     agent_name: str,
@@ -110,22 +170,22 @@ def _handle_complete_tasks(
     agent_lt = _agent_tasks(lt, agent_name)
     agent_lt_ids = {t["id"] for t in agent_lt}
 
-    # Strict validation: all IDs must be valid
     for tid in task_ids:
         if tid not in lt_ids:
             return f"Error: task '{tid}' is not in layer {layer}"
         if tid not in agent_lt_ids:
             return f"Error: task '{tid}' is not assigned to you"
 
-    # Update tasks in-place and persist
     completed = []
     for t in tasks:
         if t["id"] in task_ids:
             if t.get("status") == "done":
-                continue  # Already done, skip
+                continue
             t["status"] = "done"
             t["completed_by"] = agent_name
             t["completion_summary"] = summary
+            t.pop("blocked_by", None)
+            t.pop("blocked_reason", None)
             completed.append(t["id"])
 
     _save_tasks(iter_dir, tasks)
@@ -133,6 +193,65 @@ def _handle_complete_tasks(
     if completed:
         return f"Completed tasks: {', '.join(completed)}"
     return "Tasks already marked as done."
+
+
+def _handle_report_blocked(
+    tool_input: dict,
+    agent_name: str,
+    tasks: list[dict],
+    layer: int,
+    iter_dir: Path,
+) -> tuple[str, tuple[str, ...] | None]:
+    """Validate and persist blocked tasks."""
+    task_ids = tool_input.get("task_ids", [])
+    reason = (tool_input.get("reason") or "").strip()
+
+    if not task_ids:
+        return "Error: task_ids is empty", None
+    if not reason:
+        return "Error: reason is required", None
+
+    lt = _layer_tasks(tasks, layer)
+    lt_ids = {t["id"] for t in lt}
+    agent_lt = _agent_tasks(lt, agent_name)
+    agent_lt_ids = {t["id"] for t in agent_lt}
+
+    for tid in task_ids:
+        if tid not in lt_ids:
+            return f"Error: task '{tid}' is not in layer {layer}", None
+        if tid not in agent_lt_ids:
+            return f"Error: task '{tid}' is not assigned to you", None
+
+    blocked = []
+    for t in tasks:
+        if t["id"] in task_ids:
+            if t.get("status") == "done":
+                return f"Error: task '{t['id']}' is already done", None
+            t["status"] = "blocked"
+            t["blocked_by"] = agent_name
+            t["blocked_reason"] = reason
+            blocked.append(t["id"])
+
+    _save_tasks(iter_dir, tasks)
+    if not blocked:
+        return "Tasks already marked as blocked.", tuple()
+    return f"Blocked tasks: {', '.join(blocked)}", tuple(blocked)
+
+
+def _completion_nudge(agent_name: str, pending_task_ids: list[str]) -> str:
+    ids = ", ".join(pending_task_ids)
+    return (
+        f"{agent_name}: you still have pending tasks ({ids}). "
+        "Take concrete action now: use file_write and then call complete_tasks. "
+        "If truly blocked, call report_blocked. Do not end this round without one of those tools."
+    )
+
+
+def _loop_nudge() -> str:
+    return (
+        "You are looping on read/list calls without making progress. "
+        "Stop browsing. Either write code now and call complete_tasks, or call report_blocked."
+    )
 
 
 def run_implementation(
@@ -148,7 +267,7 @@ def run_implementation(
     max_tool_rounds: int | None = None,
 ) -> Iterator[
     SessionStarted | AppendMessage | AppendDebug |
-    ToolCallProgress | PauseForApprovals |
+    ToolCallProgress | TaskBlocked | PauseForApprovals |
     LayerComplete | SessionComplete
 ]:
     """Run implementation phase for a single layer.
@@ -157,14 +276,10 @@ def run_implementation(
     Uses raw_completion for engine-driven tool loops.
     Yields events for the caller to persist and display.
     """
-    # Resolve max tool rounds: explicit param > policy.max_turns > default 25
     if max_tool_rounds is None:
         max_tool_rounds = policy.max_turns if policy.max_turns else 25
 
-    # Determine which agents have pending work
     active_agents = _agents_with_pending_work(agents, tasks, current_layer)
-
-    # Build participant list for prompt construction
     all_participants = [
         {"name": a["name"], "role": a.get("role", "Software Engineer")}
         for a in agents
@@ -188,16 +303,18 @@ def run_implementation(
         max_turns=len(active_agents),
     )
 
+    layer_tasks = _layer_tasks(tasks, current_layer)
     if not active_agents:
-        # All tasks already done — immediate LayerComplete
-        lt = _layer_tasks(tasks, current_layer)
-        yield LayerComplete(
-            layer=current_layer,
-            completed_tasks=tuple(t["id"] for t in lt if t.get("status") == "done"),
-        )
+        if _all_done(layer_tasks):
+            _clear_state(iter_dir)
+            yield LayerComplete(
+                layer=current_layer,
+                completed_tasks=tuple(t["id"] for t in layer_tasks),
+            )
+        else:
+            yield SessionComplete(total_turns=0)
         return
 
-    # Inject kickoff if provided
     if policy.kickoff_text:
         kickoff_msg = {
             "from": "system",
@@ -207,28 +324,33 @@ def run_implementation(
         yield AppendMessage(kickoff_msg)
         history.append(kickoff_msg)
 
-    # Build tools: file tools + complete_tasks (no pass_turn in implementation)
-    impl_tools = list(policy.agent_tools) + [COMPLETE_TASKS_TOOL]
-    # Remove pass_turn from implementation tools
+    impl_tools = list(policy.agent_tools) + [COMPLETE_TASKS_TOOL, REPORT_BLOCKED_TOOL]
     impl_tools = [t for t in impl_tools if t["name"] != "pass_turn"]
 
-    agent_idx = 0
+    resumed = _load_state(iter_dir, current_layer)
+    if resumed and resumed["agent_name"] not in {a["name"] for a in active_agents}:
+        _clear_state(iter_dir)
+        resumed = None
+
+    dispatched_agents = 0
+    resume_gate = resumed["agent_name"] if resumed else None
+
     for agent in active_agents:
         agent_name = agent["name"]
 
-        # Re-read tasks from disk (may have been updated by previous agent)
-        tasks = _load_tasks(iter_dir)
-
-        # Skip if this agent's tasks are already done
-        lt = _layer_tasks(tasks, current_layer)
-        agent_lt = _agent_tasks(lt, agent_name)
-        if not _pending_tasks(agent_lt):
+        if resume_gate and agent_name != resume_gate:
             continue
 
-        # Build per-agent task summary
-        agent_tasks_summary = _format_agent_tasks(tasks, agent_name, current_layer)
+        tasks = _load_tasks(iter_dir)
+        lt = _layer_tasks(tasks, current_layer)
+        agent_lt = _agent_tasks(lt, agent_name)
+        agent_pending = _pending_tasks(agent_lt)
+        if not agent_pending:
+            if resume_gate == agent_name:
+                resume_gate = None
+            continue
 
-        # Build prompt
+        agent_tasks_summary = _format_agent_tasks(tasks, agent_name, current_layer)
         prompt = build_prompt(
             agent, iteration, history, all_participants,
             groomed_summary=policy.groomed_summary,
@@ -244,14 +366,26 @@ def run_implementation(
             "messages": prompt,
         })
 
-        # Build tool executor (file tools + write limits)
         _, base_tool_executor = build_tool_executor(agent, policy)
 
-        # Engine-driven tool loop using raw_completion
-        llm_messages = list(prompt)
-        agent_completed = False
+        if resume_gate == agent_name and resumed is not None:
+            llm_messages = list(resumed["llm_messages"])
+            start_round = int(resumed.get("round_num", 0))
+            read_only_streak = int(resumed.get("read_only_streak", 0))
+            no_tool_streak = int(resumed.get("no_tool_streak", 0))
+            saw_tool_activity = bool(resumed.get("saw_tool_activity", False))
+            resume_gate = None
+            resumed = None
+        else:
+            llm_messages = list(prompt)
+            start_round = 0
+            read_only_streak = 0
+            no_tool_streak = 0
+            saw_tool_activity = False
 
-        for round_num in range(max_tool_rounds):
+        dispatched_agents += 1
+
+        for round_num in range(start_round, max_tool_rounds):
             rnd = deps.single_completion(
                 base_url=model_config["base_url"],
                 model=model_config["model"],
@@ -261,8 +395,31 @@ def run_implementation(
                 tools=impl_tools,
             )
 
-            # No tool calls — agent is done talking
             if not rnd.tool_calls:
+                tasks = _load_tasks(iter_dir)
+                lt = _layer_tasks(tasks, current_layer)
+                agent_lt = _agent_tasks(lt, agent_name)
+                pending = _pending_tasks(agent_lt)
+
+                if pending:
+                    # Avoid burning rounds on text-only responses. We only allow
+                    # one nudge-retry after the agent has taken real tool actions.
+                    if saw_tool_activity and no_tool_streak == 0:
+                        pending_ids = [t["id"] for t in pending]
+                        no_tool_streak = 1
+                        llm_messages.append({
+                            "role": "system",
+                            "content": _completion_nudge(agent_name, pending_ids),
+                        })
+                        _save_state(
+                            iter_dir, current_layer, agent_name, llm_messages,
+                            round_num + 1, read_only_streak, no_tool_streak,
+                            saw_tool_activity,
+                        )
+                        continue
+                    _clear_state(iter_dir)
+                    break
+
                 if rnd.content.strip():
                     msg = {
                         "from": agent_name,
@@ -271,109 +428,124 @@ def run_implementation(
                     }
                     yield AppendMessage(msg)
                     history.append(msg)
+                _clear_state(iter_dir)
                 break
 
-            # Execute each tool call
             tool_results = []
+            round_was_read_only = True
+
             for tc in rnd.tool_calls:
-                if tc["name"] == "complete_tasks":
+                tc_name = tc["name"]
+                tc_input = tc["input"]
+                saw_tool_activity = True
+
+                blocked_ids: tuple[str, ...] | None = None
+                if tc_name == "complete_tasks":
                     result = _handle_complete_tasks(
-                        tc["input"], agent_name, tasks, current_layer, iter_dir,
+                        tc_input, agent_name, tasks, current_layer, iter_dir,
                     )
-                    # Reload tasks after completion
                     tasks = _load_tasks(iter_dir)
+                    round_was_read_only = False
+                elif tc_name == "report_blocked":
+                    result, blocked_ids = _handle_report_blocked(
+                        tc_input, agent_name, tasks, current_layer, iter_dir,
+                    )
+                    tasks = _load_tasks(iter_dir)
+                    round_was_read_only = False
                 else:
-                    result = base_tool_executor(tc["name"], tc["input"])
+                    result = base_tool_executor(tc_name, tc_input)
+                    if tc_name not in _READ_ONLY_TOOLS:
+                        round_was_read_only = False
 
                 tool_results.append({"id": tc["id"], "result": result})
 
-                # Yield ToolCallProgress
                 status = _classify_result(result)
                 content_size = None
-                if tc["name"] == "file_write":
-                    content_size = len(tc["input"].get("content", "").encode())
+                if tc_name == "file_write":
+                    content_size = len(tc_input.get("content", "").encode())
                 error_msg = result if status == "error" else None
 
                 yield ToolCallProgress(
                     agent=agent_name,
-                    tool_name=tc["name"],
-                    path=tc["input"].get("path", ""),
+                    tool_name=tc_name,
+                    path=tc_input.get("path", ""),
                     status=status,
                     bytes=content_size,
                     error=error_msg,
                 )
 
-                # Log tool operations
-                if tc["name"] != "complete_tasks":
+                if tc_name in {"complete_tasks", "report_blocked"}:
                     op_msg = {
                         "from": "system",
                         "iteration": iteration["id"],
-                        "content": _format_tool_op(tc["name"], tc["input"], result),
+                        "content": f"[{tc_name}] {result}",
                     }
-                    yield AppendMessage(op_msg)
-                    history.append(op_msg)
                 else:
-                    # Log completion
                     op_msg = {
                         "from": "system",
                         "iteration": iteration["id"],
-                        "content": f"[complete_tasks] {result}",
+                        "content": _format_tool_op(tc_name, tc_input, result),
                     }
-                    yield AppendMessage(op_msg)
-                    history.append(op_msg)
+                yield AppendMessage(op_msg)
+                history.append(op_msg)
 
-            # Check for pending approvals
-            if policy.approval_store:
-                pending = policy.approval_store.get_pending()
-                if pending:
-                    # Record partial agent message if any
-                    if rnd.content.strip():
-                        msg = {
-                            "from": agent_name,
-                            "iteration": iteration["id"],
-                            "content": rnd.content,
-                        }
-                        yield AppendMessage(msg)
-                        history.append(msg)
-                    yield PauseForApprovals(len(pending))
-                    return
+                if tc_name == "report_blocked" and status == "ok" and blocked_ids:
+                    yield TaskBlocked(
+                        agent=agent_name,
+                        layer=current_layer,
+                        task_ids=blocked_ids,
+                        reason=tc_input.get("reason", ""),
+                    )
 
-            # Build continuation for next round
             continuation = rnd.build_continuation(tool_results)
             llm_messages.extend(continuation)
 
-            # Check if all this agent's tasks are now done
+            if policy.approval_store:
+                pending_approvals = policy.approval_store.get_pending()
+                if pending_approvals:
+                    _save_state(
+                        iter_dir, current_layer, agent_name, llm_messages,
+                        round_num + 1, read_only_streak, no_tool_streak,
+                        saw_tool_activity,
+                    )
+                    yield PauseForApprovals(len(pending_approvals))
+                    return
+
+            tasks = _load_tasks(iter_dir)
             lt = _layer_tasks(tasks, current_layer)
             agent_lt = _agent_tasks(lt, agent_name)
-            if not _pending_tasks(agent_lt):
-                agent_completed = True
-                # Record agent's summary message if present
-                if rnd.content.strip():
-                    msg = {
-                        "from": agent_name,
-                        "iteration": iteration["id"],
-                        "content": rnd.content,
-                    }
-                    yield AppendMessage(msg)
-                    history.append(msg)
+            pending = _pending_tasks(agent_lt)
+
+            if not pending:
+                _clear_state(iter_dir)
                 break
 
-        agent_idx += 1
+            if round_was_read_only:
+                read_only_streak += 1
+                if read_only_streak >= 2:
+                    llm_messages.append({"role": "system", "content": _loop_nudge()})
+            else:
+                read_only_streak = 0
+            no_tool_streak = 0
 
-    # Check if all layer tasks are done
+            _save_state(
+                iter_dir, current_layer, agent_name, llm_messages,
+                round_num + 1, read_only_streak, no_tool_streak, saw_tool_activity,
+            )
+        else:
+            _clear_state(iter_dir)
+
     tasks = _load_tasks(iter_dir)
     lt = _layer_tasks(tasks, current_layer)
-    pending = _pending_tasks(lt)
-
-    if not pending:
-        # Auto-commit worktrees before signaling layer complete
+    if _all_done(lt):
+        _clear_state(iter_dir)
         _auto_commit_worktrees(policy, current_layer)
         yield LayerComplete(
             layer=current_layer,
             completed_tasks=tuple(t["id"] for t in lt if t.get("status") == "done"),
         )
     else:
-        yield SessionComplete(total_turns=agent_idx)
+        yield SessionComplete(total_turns=dispatched_agents)
 
 
 def _auto_commit_worktrees(policy: SessionPolicy, layer: int) -> None:
@@ -381,12 +553,12 @@ def _auto_commit_worktrees(policy: SessionPolicy, layer: int) -> None:
     if not policy.worktree_map:
         return
     from gotg.worktree import WorktreeError, commit_worktree, is_worktree_dirty
-    for agent_name, wt_path in policy.worktree_map.items():
+    for _, wt_path in policy.worktree_map.items():
         try:
             if is_worktree_dirty(wt_path):
                 commit_worktree(wt_path, f"Implementation complete (layer {layer})")
         except WorktreeError:
-            pass  # Best-effort; merge will catch uncommitted files
+            pass
 
 
 def _format_tool_op(name: str, tool_input: dict, result: str) -> str:

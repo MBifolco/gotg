@@ -135,4 +135,24 @@ COMPLETE_TASKS_TOOL: dict = {
     },
 }
 
+REPORT_BLOCKED_TOOL: dict = {
+    "name": "report_blocked",
+    "description": _DEFAULTS["tools"]["report_blocked"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "task_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "IDs of tasks you are blocked on in this layer",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Concise blocker reason",
+            },
+        },
+        "required": ["task_ids", "reason"],
+    },
+}
+
 GROOMING_COACH_TOOLS: list[dict] = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]

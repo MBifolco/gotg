@@ -24,6 +24,7 @@ from gotg.events import (
     PhaseCompleteSignaled,
     SessionComplete,
     SessionStarted,
+    TaskBlocked,
     ToolCallProgress,
 )
 from gotg.session import persist_event
@@ -430,6 +431,12 @@ class ChatScreen(Screen):
                 "Press D to review diffs and merge."
             )
 
+        elif isinstance(event, TaskBlocked):
+            blocked = ", ".join(event.task_ids)
+            self.query_one("#action-bar", ActionBar).show(
+                f"Blocked: {event.agent} -> {blocked}"
+            )
+
         elif isinstance(event, SessionComplete):
             self.session_state = SessionState.COMPLETE
             self.query_one("#action-bar", ActionBar).show(
@@ -472,6 +479,8 @@ class ChatScreen(Screen):
             text = f"[{event.agent}] {event.tool_name} {event.path} FAIL"
         elif event.tool_name == "complete_tasks":
             text = f"[{event.agent}] complete_tasks"
+        elif event.tool_name == "report_blocked":
+            text = f"[{event.agent}] report_blocked"
         elif event.tool_name == "file_write" and event.bytes:
             text = f"[{event.agent}] {event.tool_name} {event.path} ({event.bytes}b)"
         else:

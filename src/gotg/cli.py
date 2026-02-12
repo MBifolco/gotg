@@ -16,7 +16,7 @@ from gotg.engine import SessionDeps, run_session
 from gotg.events import (
     AppendDebug, AppendMessage, CoachAskedPM,
     LayerComplete, PauseForApprovals, PhaseCompleteSignaled,
-    SessionComplete, SessionStarted, ToolCallProgress,
+    SessionComplete, SessionStarted, TaskBlocked, ToolCallProgress,
 )
 from gotg.model import chat_completion, agentic_completion, raw_completion
 from gotg.groom import (
@@ -188,6 +188,8 @@ def _print_tool_progress(event: ToolCallProgress) -> None:
         print(f"  [{event.agent}] {event.tool_name} {event.path} ({event.bytes}b)", file=sys.stderr)
     elif event.tool_name == "complete_tasks":
         print(f"  [{event.agent}] complete_tasks", file=sys.stderr)
+    elif event.tool_name == "report_blocked":
+        print(f"  [{event.agent}] report_blocked", file=sys.stderr)
     else:
         print(f"  [{event.agent}] {event.tool_name} {event.path}", file=sys.stderr)
 
@@ -218,6 +220,11 @@ def _run_implementation_phase(
                 print()
         elif isinstance(event, ToolCallProgress):
             _print_tool_progress(event)
+        elif isinstance(event, TaskBlocked):
+            print("---")
+            blocked = ", ".join(event.task_ids)
+            print(f"Blocked by {event.agent} (layer {event.layer}): {blocked}")
+            print(f"Reason: {event.reason}")
         elif isinstance(event, PauseForApprovals):
             print("---")
             print(f"Paused: {event.pending_count} pending approval(s).")

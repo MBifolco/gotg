@@ -12,6 +12,7 @@ from gotg.events import (
     PauseForApprovals,
     SessionComplete,
     SessionStarted,
+    TaskBlocked,
     ToolCallProgress,
 )
 from gotg.implementation import (
@@ -19,6 +20,7 @@ from gotg.implementation import (
     _agents_with_pending_work,
     _format_agent_tasks,
     _handle_complete_tasks,
+    _handle_report_blocked,
 )
 from gotg.model import CompletionRound
 from gotg.engine import SessionDeps
@@ -228,6 +230,22 @@ def test_handle_complete_tasks_empty_ids(tmp_path):
         "agent-1", tasks, 0, iter_dir,
     )
     assert result.startswith("Error:")
+
+
+def test_handle_report_blocked_success(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a"], "reason": "Need parser contract"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert "Blocked tasks:" in result
+    assert blocked_ids == ("task-a",)
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    blocked = next(t for t in saved if t["id"] == "task-a")
+    assert blocked["status"] == "blocked"
+    assert blocked["blocked_by"] == "agent-1"
+    assert "parser contract" in blocked["blocked_reason"]
 
 
 # --- Integration tests for run_implementation ---
@@ -626,3 +644,72 @@ def test_auto_commit_worktrees_on_layer_complete(tmp_path):
     assert mock_commit.call_count == 2
     commit_paths = {c.args[0] for c in mock_commit.call_args_list}
     assert commit_paths == {wt_path_1, wt_path_2}
+
+
+def test_report_blocked_emits_task_blocked_event(tmp_path):
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    def mock_single(**kw):
+        return _tool_round("Blocked.", [
+            {"name": "report_blocked", "input": {
+                "task_ids": ["task-a"], "reason": "Missing dependency output",
+            }, "id": "tc1"},
+        ])
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+
+    events = _collect(run_implementation(
+        AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
+        deps, [], _make_policy(),
+    ))
+
+    blocked = _events_of_type(events, TaskBlocked)
+    assert len(blocked) == 1
+    assert blocked[0].agent == "agent-1"
+    assert blocked[0].task_ids == ("task-a",)
+    assert "Missing dependency output" in blocked[0].reason
+    assert isinstance(events[-1], SessionComplete)
+
+
+def test_text_only_after_tool_gets_single_nudge_retry(tmp_path):
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    call_count = [0]
+
+    def mock_single(**kw):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return _tool_round("Looking.", [
+                {"name": "file_read", "input": {"path": "src/main.py"}, "id": "tc1"},
+            ])
+        return _text_round("Still thinking.")
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+
+    events = _collect(run_implementation(
+        AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
+        deps, [], _make_policy(), max_tool_rounds=12,
+    ))
+
+    assert call_count[0] == 3  # initial tool round + one retry + stop round
+    assert isinstance(events[-1], SessionComplete)
