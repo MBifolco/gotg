@@ -337,6 +337,31 @@ Pre-code-review conversation:
 {conversation}
 === TRANSCRIPT END ==='''
 
+[extraction.merge_conflict]
+prompt = '''
+You are resolving a merge conflict in {file_path}.
+
+Below are the versions of this file from a three-way merge. The target branch is main (OURS) and the source branch is {branch} (THEIRS).
+
+{base_section}
+
+=== OURS (main) START ===
+{ours_content}
+=== OURS (main) END ===
+
+=== THEIRS ({branch}) START ===
+{theirs_content}
+=== THEIRS ({branch}) END ===
+
+Context about what each side was working on:
+{task_context}
+
+Produce the correctly merged file. Both sides' changes should be preserved where they do not conflict. Where they conflict, use the task context to determine the correct integration. The result must be valid, working code.
+
+Output ONLY a valid JSON object with no markdown code fences and no text before or after. The object must have exactly two fields:
+- "content": the complete merged file content as a single string
+- "explanation": a 1-2 sentence explanation of how you resolved the conflict'''
+
 # ── Tool descriptions ────────────────────────────────────────────
 
 [tools.pass_turn]

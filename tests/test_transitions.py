@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from gotg.scaffold import COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT
 from gotg.transitions import (
     strip_code_fences,
@@ -7,6 +9,7 @@ from gotg.transitions import (
     extract_refinement_summary,
     extract_tasks,
     extract_task_notes,
+    resolve_merge_conflict,
     build_transition_messages,
 )
 
@@ -203,3 +206,67 @@ def test_build_transition_messages_refinement_coach():
         "iter-1", "refinement", "planning", coach_ran=True,
     )
     assert transition["content"] == "--- Phase advanced: refinement → planning. Scope summary written to refinement_summary.md ---"
+
+
+# ── resolve_merge_conflict ───────────────────────────────────
+
+
+def test_resolve_merge_conflict_parses_json():
+    """Returns (content, explanation) when LLM returns valid JSON."""
+    llm_response = json.dumps({
+        "content": "merged code here",
+        "explanation": "Combined both changes",
+    })
+
+    def mock_chat(**kwargs):
+        return llm_response
+
+    content, explanation = resolve_merge_conflict(
+        "src/main.py", "agent-1/layer-0",
+        base_content="original", ours_content="ours", theirs_content="theirs",
+        task_context="Task context", model_config=MODEL_CONFIG, chat_call=mock_chat,
+    )
+    assert content == "merged code here"
+    assert explanation == "Combined both changes"
+
+
+def test_resolve_merge_conflict_strips_fences():
+    """Strips markdown code fences from LLM response."""
+    llm_response = '```json\n{"content": "clean", "explanation": "merged"}\n```'
+
+    def mock_chat(**kwargs):
+        return llm_response
+
+    content, _ = resolve_merge_conflict(
+        "f.py", "b", None, "ours", "theirs", "ctx",
+        MODEL_CONFIG, mock_chat,
+    )
+    assert content == "clean"
+
+
+def test_resolve_merge_conflict_raises_on_bad_json():
+    """Raises ValueError on invalid JSON from LLM."""
+    def mock_chat(**kwargs):
+        return "I cannot resolve this conflict."
+
+    with pytest.raises(ValueError, match="Could not parse AI resolution"):
+        resolve_merge_conflict(
+            "f.py", "b", "base", "ours", "theirs", "ctx",
+            MODEL_CONFIG, mock_chat,
+        )
+
+
+def test_resolve_merge_conflict_base_none_no_crash():
+    """Works when base_content is None (add/add conflict)."""
+    llm_response = json.dumps({"content": "merged", "explanation": "ok"})
+
+    def mock_chat(**kwargs):
+        # Verify the prompt contains the no-ancestor message
+        msg = kwargs.get("messages", [{}])[0].get("content", "")
+        assert "No common ancestor" in msg
+        return llm_response
+
+    content, _ = resolve_merge_conflict(
+        "f.py", "b", None, "ours", "theirs", "ctx",
+        MODEL_CONFIG, mock_chat,
+    )

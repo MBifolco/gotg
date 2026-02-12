@@ -20,10 +20,11 @@ class DecisionModal(ModalScreen[str | None]):
     }
     DecisionModal > Vertical {
         width: 64;
-        max-height: 30;
+        max-height: 80%;
         padding: 1 2;
         border: thick $accent;
         background: $surface;
+        overflow-y: auto;
     }
     DecisionModal > Vertical > .decision-question {
         width: 100%;

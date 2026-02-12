@@ -36,6 +36,7 @@ COACH_REFINEMENT_PROMPT: str = _DEFAULTS["extraction"]["refinement_summary"]["pr
 COACH_GROOMING_PROMPT = COACH_REFINEMENT_PROMPT  # backward-compat alias
 COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"]
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
+MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
 
 PHASE_KICKOFF_MESSAGES: dict[str, str] = {
     phase: data["kickoff"]

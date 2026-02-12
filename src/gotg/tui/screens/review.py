@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.markup import escape
@@ -221,11 +222,12 @@ class ReviewScreen(Screen):
 
         if failed:
             conflict = failed[0]
-            conflicts_str = ", ".join(conflict.conflicts[:3])
-            bar.show(
-                f"CONFLICT on {conflict.branch}: {conflicts_str}. "
-                "Resolve in terminal, then press R to refresh."
-            )
+            if conflict.conflicts:
+                self._push_conflict_screen(conflict)
+            else:
+                bar.show(
+                    f"Merge of {conflict.branch} failed. Press R to refresh."
+                )
         elif succeeded:
             names = ", ".join(r.branch for r in succeeded)
             bar.show(f"Merged: {names}. Refreshing...")
@@ -250,6 +252,40 @@ class ReviewScreen(Screen):
                 "Press Esc to go back."
             )
             self.app.pop_screen()
+
+    # ── Conflict sub-workflow ────────────────────────────────
+
+    def _push_conflict_screen(self, merge_result: MergeResult) -> None:
+        task_context = self._build_task_context()
+        from gotg.tui.screens.conflict import ConflictScreen
+        self.app.push_screen(
+            ConflictScreen(
+                self._project_root,
+                merge_result.branch,
+                merge_result.conflicts,
+                self._team_dir,
+                task_context,
+            ),
+            callback=self._on_conflict_resolved,
+        )
+
+    def _build_task_context(self) -> str:
+        tasks_path = self._iter_dir / "tasks.json"
+        if not tasks_path.exists():
+            return "No task context available."
+        try:
+            tasks = json.loads(tasks_path.read_text())
+            layer = self._review.layer if self._review else 0
+            layer_tasks = [t for t in tasks if t.get("layer") == layer]
+            if not layer_tasks:
+                layer_tasks = tasks
+            from gotg.tasks import format_tasks_summary
+            return format_tasks_summary(layer_tasks)
+        except Exception:
+            return "Could not load task context."
+
+    def _on_conflict_resolved(self, result: MergeResult | None) -> None:
+        self._load_review()
 
     # ── Actions ───────────────────────────────────────────────
 

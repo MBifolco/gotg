@@ -250,8 +250,8 @@ async def test_merge_all_branches(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_merge_conflict_shows_error(tmp_path):
-    """Merge conflict shows error in ActionBar."""
+async def test_merge_conflict_pushes_conflict_screen(tmp_path):
+    """Merge conflict pushes ConflictScreen."""
     team_dir, it_dir, iteration = _make_team_dir(tmp_path)
     review_result = _make_review_result()
 
@@ -273,15 +273,29 @@ async def test_merge_conflict_shows_error(tmp_path):
         table.focus()
         await pilot.pause()
 
-        with patch("gotg.tui.screens.review.merge_branches", return_value=[conflict_result]):
+        from gotg.tui.screens.conflict import ConflictScreen
+        from gotg.session import ConflictInfo, ConflictFileInfo
+
+        mock_info = ConflictInfo(
+            branch="agent-1/layer-0",
+            files=[ConflictFileInfo(
+                path="src/conflict.py",
+                base_content=None,
+                ours_content="ours",
+                theirs_content="theirs",
+                working_content="conflict markers",
+            )],
+        )
+
+        with patch("gotg.tui.screens.review.merge_branches", return_value=[conflict_result]), \
+             patch("gotg.tui.screens.conflict.load_conflict_info", return_value=mock_info):
             await pilot.press("m")
             await pilot.pause()
             await pilot.pause()
             await pilot.pause()
 
-        bar = app.screen.query_one("#review-action-bar", ActionBar)
-        content = str(bar._Static__content)
-        assert "CONFLICT" in content
+        # ConflictScreen should be the active screen
+        assert isinstance(app.screen, ConflictScreen)
 
 
 # ── Next layer ────────────────────────────────────────────────

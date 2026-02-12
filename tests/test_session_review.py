@@ -1,4 +1,4 @@
-"""Unit tests for session.py review/merge/next-layer bridge functions."""
+"""Unit tests for session.py review/merge/next-layer/conflict bridge functions."""
 
 import json
 import subprocess
@@ -8,13 +8,21 @@ from unittest.mock import patch
 import pytest
 
 from gotg.session import (
+    AiResolutionResult,
     BranchReview,
+    ConflictFileInfo,
+    ConflictInfo,
     MergeResult,
     NextLayerResult,
+    ResolutionStrategy,
     ReviewError,
     ReviewResult,
+    ai_resolve_conflict,
+    finalize_merge,
+    load_conflict_info,
     load_review_branches,
     merge_branches,
+    resolve_conflict_file,
     validate_next_layer,
     advance_next_layer,
 )
@@ -402,3 +410,207 @@ def test_advance_next_layer_wrong_phase(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path, phase="implementation")
     with pytest.raises(ReviewError, match="code-review"):
         advance_next_layer(team, iteration, iter_dir)
+
+
+# ── Conflict resolution helpers ───────────────────────────────
+
+
+def _create_merge_conflict(tmp_path):
+    """Create a merge conflict and return (project_root, branch_name, conflict_paths).
+
+    Leaves the repo in conflict state (MERGE_HEAD exists).
+    """
+    # Create branch with changes
+    subprocess.run(
+        ["git", "checkout", "-b", "agent-1/layer-0"],
+        cwd=tmp_path, capture_output=True, check=True,
+    )
+    (tmp_path / "src" / "main.py").write_text("# branch version\nprint('from branch')")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "branch change"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Back to main, make conflicting change
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "src" / "main.py").write_text("# main version\nprint('from main')")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=tmp_path, capture_output=True, check=True)
+
+    # Attempt merge — will conflict
+    subprocess.run(
+        ["git", "merge", "--no-ff", "agent-1/layer-0"],
+        cwd=tmp_path, capture_output=True,
+    )
+    return tmp_path, "agent-1/layer-0", ["src/main.py"]
+
+
+# ── load_conflict_info ────────────────────────────────────────
+
+
+def test_load_conflict_info_returns_stages(tmp_path):
+    """Loads 3-way content for all conflicted files."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    info = load_conflict_info(root, branch, paths)
+    assert isinstance(info, ConflictInfo)
+    assert info.branch == branch
+    assert len(info.files) == 1
+    f = info.files[0]
+    assert f.path == "src/main.py"
+    assert "from main" in f.ours_content
+    assert "from branch" in f.theirs_content
+    assert "<<<<<<" in f.working_content  # conflict markers
+
+    # Clean up merge state
+    from gotg.worktree import abort_merge
+    abort_merge(root)
+
+
+def test_load_conflict_info_base_none_for_add_add(tmp_path):
+    """base_content is None for add/add conflicts."""
+    team, _, _ = _make_team_dir(tmp_path)
+
+    # Create add/add conflict
+    subprocess.run(
+        ["git", "checkout", "-b", "agent-1/layer-0"],
+        cwd=tmp_path, capture_output=True, check=True,
+    )
+    (tmp_path / "src" / "new.py").write_text("# branch version")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "branch add"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "checkout", "main"], cwd=tmp_path, capture_output=True, check=True)
+    (tmp_path / "src" / "new.py").write_text("# main version")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main add"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "merge", "--no-ff", "agent-1/layer-0"],
+        cwd=tmp_path, capture_output=True,
+    )
+
+    info = load_conflict_info(tmp_path, "agent-1/layer-0", ["src/new.py"])
+    assert info.files[0].base_content is None
+
+    from gotg.worktree import abort_merge
+    abort_merge(tmp_path)
+
+
+# ── resolve_conflict_file ─────────────────────────────────────
+
+
+def test_resolve_conflict_file_ours(tmp_path):
+    """Resolves with ours strategy."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    resolve_conflict_file(root, "src/main.py", ResolutionStrategy.OURS)
+    content = (root / "src" / "main.py").read_text()
+    assert "from main" in content
+
+    from gotg.worktree import abort_merge
+    abort_merge(root)
+
+
+def test_resolve_conflict_file_theirs(tmp_path):
+    """Resolves with theirs strategy."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    resolve_conflict_file(root, "src/main.py", ResolutionStrategy.THEIRS)
+    content = (root / "src" / "main.py").read_text()
+    assert "from branch" in content
+
+    from gotg.worktree import abort_merge
+    abort_merge(root)
+
+
+def test_resolve_conflict_file_ai_requires_content(tmp_path):
+    """AI strategy raises without content."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    with pytest.raises(ReviewError, match="requires content"):
+        resolve_conflict_file(root, "src/main.py", ResolutionStrategy.AI)
+
+    from gotg.worktree import abort_merge
+    abort_merge(root)
+
+
+def test_resolve_conflict_file_ai_with_content(tmp_path):
+    """AI strategy writes content and stages."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    resolve_conflict_file(root, "src/main.py", ResolutionStrategy.AI, content="# merged")
+    content = (root / "src" / "main.py").read_text()
+    assert content == "# merged"
+
+    from gotg.worktree import abort_merge
+    abort_merge(root)
+
+
+# ── ai_resolve_conflict ──────────────────────────────────────
+
+
+def test_ai_resolve_conflict_success():
+    """Returns AiResolutionResult on success."""
+    import json as _json
+
+    def mock_chat(**kwargs):
+        return _json.dumps({"content": "resolved code", "explanation": "Combined both"})
+
+    result = ai_resolve_conflict(
+        "src/main.py", "agent-1/layer-0",
+        base_content="original", ours_content="ours", theirs_content="theirs",
+        task_context="Build feature X",
+        model_config={"provider": "ollama", "base_url": "http://localhost:11434", "model": "test"},
+        chat_call=mock_chat,
+    )
+    assert isinstance(result, AiResolutionResult)
+    assert result.path == "src/main.py"
+    assert result.resolved_content == "resolved code"
+    assert result.explanation == "Combined both"
+
+
+def test_ai_resolve_conflict_raises_on_bad_response():
+    """Raises ReviewError when LLM returns unparseable response."""
+    def mock_chat(**kwargs):
+        return "I cannot resolve this conflict."
+
+    with pytest.raises(ReviewError, match="AI resolution failed"):
+        ai_resolve_conflict(
+            "src/main.py", "agent-1/layer-0",
+            None, "ours", "theirs", "ctx",
+            {"provider": "ollama", "base_url": "http://localhost:11434", "model": "test"},
+            mock_chat,
+        )
+
+
+# ── finalize_merge ────────────────────────────────────────────
+
+
+def test_finalize_merge_success(tmp_path):
+    """Returns MergeResult on successful completion."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, paths = _create_merge_conflict(tmp_path)
+
+    # Resolve the conflict first
+    from gotg.worktree import resolve_conflict_ours
+    resolve_conflict_ours(root, "src/main.py")
+
+    result = finalize_merge(root, branch)
+    assert isinstance(result, MergeResult)
+    assert result.success is True
+    assert result.commit is not None
+    assert result.branch == branch
+
+
+def test_finalize_merge_raises_with_unresolved(tmp_path):
+    """Raises ReviewError when conflicts remain."""
+    team, _, _ = _make_team_dir(tmp_path)
+    root, branch, _ = _create_merge_conflict(tmp_path)
+
+    with pytest.raises(ReviewError, match="Failed to complete merge"):
+        finalize_merge(root, branch)
+
+    from gotg.worktree import abort_merge
+    abort_merge(root)

@@ -230,7 +230,7 @@ async def test_settings_loads_model_fields(tmp_path):
         await pilot.pause()
 
         assert app.screen.query_one("#set-provider", Select).value == "ollama"
-        assert app.screen.query_one("#set-model-name", Input).value == "qwen2.5-coder:7b"
+        assert app.screen.query_one("#set-model-name", Select).value == "qwen2.5-coder:7b"
         assert app.screen.query_one("#set-base-url", Input).value == "http://localhost:11434"
 
 
@@ -303,7 +303,7 @@ async def test_settings_save_model(tmp_path):
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.settings import SettingsScreen
-    from textual.widgets import Input
+    from textual.widgets import Input, Select
 
     app = GotgApp(team_dir)
     async with app.run_test() as pilot:
@@ -312,12 +312,12 @@ async def test_settings_save_model(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        app.screen.query_one("#set-model-name", Input).value = "llama3.2"
+        app.screen.query_one("#set-model-name", Select).value = "llama3.2:8b"
         await pilot.press("ctrl+s")
         await pilot.pause()
 
     saved = json.loads((team_dir / "team.json").read_text())
-    assert saved["model"]["model"] == "llama3.2"
+    assert saved["model"]["model"] == "llama3.2:8b"
 
 
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_settings_save_all_sections(tmp_path):
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.settings import SettingsScreen
-    from textual.widgets import Input, Switch
+    from textual.widgets import Input, Select, Switch
 
     app = GotgApp(team_dir)
     async with app.run_test() as pilot:
@@ -335,7 +335,11 @@ async def test_settings_save_all_sections(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        app.screen.query_one("#set-model-name", Input).value = "gpt-4o"
+        # Change provider to openai first so gpt-4o is in the list
+        app.screen.query_one("#set-provider", Select).value = "openai"
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.query_one("#set-model-name", Select).value = "gpt-4o"
         app.screen.query_one("#set-coach-name", Input).value = "my-coach"
         app.screen.query_one("#set-writable-paths", Input).value = "lib/**, bin/**"
         app.screen.query_one("#set-worktrees", Switch).value = True
@@ -351,11 +355,11 @@ async def test_settings_save_all_sections(tmp_path):
 
 @pytest.mark.asyncio
 async def test_settings_validation_empty_model(tmp_path):
-    """Ctrl+S with empty model name does not save."""
+    """Ctrl+S with blank model name does not save."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.settings import SettingsScreen
-    from textual.widgets import Input
+    from textual.widgets import Select
 
     app = GotgApp(team_dir)
     async with app.run_test() as pilot:
@@ -364,7 +368,7 @@ async def test_settings_validation_empty_model(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        app.screen.query_one("#set-model-name", Input).value = ""
+        app.screen.query_one("#set-model-name", Select).value = Select.BLANK
         await pilot.press("ctrl+s")
         await pilot.pause()
 
@@ -446,12 +450,12 @@ async def test_provider_change_fills_base_url(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_provider_change_keeps_model_name(tmp_path):
-    """Changing provider does not overwrite model name."""
+async def test_provider_change_updates_model_options(tmp_path):
+    """Changing provider updates the model dropdown options."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
-    from gotg.tui.screens.settings import SettingsScreen
-    from textual.widgets import Input, Select
+    from gotg.tui.screens.settings import SettingsScreen, PROVIDER_MODELS
+    from textual.widgets import Select
 
     app = GotgApp(team_dir)
     async with app.run_test() as pilot:
@@ -460,14 +464,52 @@ async def test_provider_change_keeps_model_name(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        # Set a custom model name, then change provider
-        app.screen.query_one("#set-model-name", Input).value = "my-custom-model"
+        # Initially ollama — model should be one of ollama models
+        model_val = app.screen.query_one("#set-model-name", Select).value
+        assert model_val == "qwen2.5-coder:7b"
+
+        # Change to anthropic
         app.screen.query_one("#set-provider", Select).value = "anthropic"
         await pilot.pause()
         await pilot.pause()
 
-        model_name = app.screen.query_one("#set-model-name", Input).value
-        assert model_name == "my-custom-model"
+        # Model should be set to first anthropic model
+        model_val = app.screen.query_one("#set-model-name", Select).value
+        anthropic_first = PROVIDER_MODELS["anthropic"][0][1]
+        assert model_val == anthropic_first
+
+        # Change to openai
+        app.screen.query_one("#set-provider", Select).value = "openai"
+        await pilot.pause()
+        await pilot.pause()
+
+        model_val = app.screen.query_one("#set-model-name", Select).value
+        openai_first = PROVIDER_MODELS["openai"][0][1]
+        assert model_val == openai_first
+
+
+@pytest.mark.asyncio
+async def test_custom_model_preserved_on_load(tmp_path):
+    """A custom model name not in presets is still shown in the Select."""
+    team_dir = _make_team_dir(tmp_path)
+    # Write a custom model name
+    config = json.loads((team_dir / "team.json").read_text())
+    config["model"]["model"] = "my-custom-finetuned-model"
+    (team_dir / "team.json").write_text(json.dumps(config, indent=2) + "\n")
+
+    from gotg.tui.app import GotgApp
+    from gotg.tui.screens.settings import SettingsScreen
+    from textual.widgets import Select
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SettingsScreen())
+        await pilot.pause()
+        await pilot.pause()
+
+        model_val = app.screen.query_one("#set-model-name", Select).value
+        assert model_val == "my-custom-finetuned-model"
 
 
 # ── Coach toggle ─────────────────────────────────────────────

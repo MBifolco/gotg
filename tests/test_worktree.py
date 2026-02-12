@@ -23,6 +23,12 @@ from gotg.worktree import (
     is_merge_in_progress,
     merge_branch,
     abort_merge,
+    list_conflict_files,
+    get_conflict_stages,
+    resolve_conflict_ours,
+    resolve_conflict_theirs,
+    resolve_conflict_content,
+    complete_merge,
 )
 
 
@@ -603,3 +609,139 @@ def test_ensure_gitignore_entries_warns_tracked_files_under_dir(tmp_path):
     team_warnings = [w for w in warnings if ".team" in w]
     assert len(team_warnings) == 1
     assert "tracked by git" in team_warnings[0]
+
+
+# ── Conflict resolution ──────────────────────────────────────
+
+
+def _create_conflict(git_project):
+    """Create a merge conflict: both main and a branch modify src/main.py.
+
+    Returns (project_root, branch_name).
+    After calling this, the repo is in a conflict state (MERGE_HEAD exists).
+    """
+    root = git_project
+    # Create branch and modify file
+    subprocess.run(
+        ["git", "checkout", "-b", "agent-1/layer-0"],
+        cwd=root, capture_output=True, check=True,
+    )
+    (root / "src" / "main.py").write_text("# branch version\nprint('from branch')")
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "branch change"], cwd=root, capture_output=True, check=True)
+
+    # Back to main, make conflicting change
+    subprocess.run(["git", "checkout", "main"], cwd=root, capture_output=True, check=True)
+    (root / "src" / "main.py").write_text("# main version\nprint('from main')")
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main change"], cwd=root, capture_output=True, check=True)
+
+    # Attempt merge — will conflict
+    subprocess.run(
+        ["git", "merge", "--no-ff", "agent-1/layer-0"],
+        cwd=root, capture_output=True, text=True,
+    )
+    return root, "agent-1/layer-0"
+
+
+def _create_add_add_conflict(git_project):
+    """Create an add/add conflict: both sides add a new file.
+
+    Returns (project_root, branch_name).
+    """
+    root = git_project
+    subprocess.run(
+        ["git", "checkout", "-b", "agent-1/layer-0"],
+        cwd=root, capture_output=True, check=True,
+    )
+    (root / "src" / "new.py").write_text("# branch version")
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "branch add"], cwd=root, capture_output=True, check=True)
+
+    subprocess.run(["git", "checkout", "main"], cwd=root, capture_output=True, check=True)
+    (root / "src" / "new.py").write_text("# main version")
+    subprocess.run(["git", "add", "-A"], cwd=root, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "main add"], cwd=root, capture_output=True, check=True)
+
+    subprocess.run(
+        ["git", "merge", "--no-ff", "agent-1/layer-0"],
+        cwd=root, capture_output=True, text=True,
+    )
+    return root, "agent-1/layer-0"
+
+
+def test_list_conflict_files(git_project):
+    """list_conflict_files returns unmerged paths."""
+    root, _ = _create_conflict(git_project)
+    conflicts = list_conflict_files(root)
+    assert "src/main.py" in conflicts
+
+
+def test_get_conflict_stages_returns_three_versions(git_project):
+    """get_conflict_stages returns base, ours, theirs, and working content."""
+    root, _ = _create_conflict(git_project)
+    stages = get_conflict_stages(root, "src/main.py")
+    assert stages["ours"] == "# main version\nprint('from main')"
+    assert stages["theirs"] == "# branch version\nprint('from branch')"
+    assert stages["base"] is not None  # original init content
+    assert "<<<<<<" in stages["working"]  # has conflict markers
+
+
+def test_get_conflict_stages_add_add_base_is_none(git_project):
+    """add/add conflict has None base."""
+    root, _ = _create_add_add_conflict(git_project)
+    stages = get_conflict_stages(root, "src/new.py")
+    assert stages["base"] is None
+    assert "main version" in stages["ours"]
+    assert "branch version" in stages["theirs"]
+
+
+def test_resolve_conflict_ours(git_project):
+    """resolve_conflict_ours writes ours content and stages file."""
+    root, _ = _create_conflict(git_project)
+    resolve_conflict_ours(root, "src/main.py")
+    content = (root / "src" / "main.py").read_text()
+    assert "from main" in content
+    # File should no longer appear in conflict list
+    assert "src/main.py" not in list_conflict_files(root)
+
+
+def test_resolve_conflict_theirs(git_project):
+    """resolve_conflict_theirs writes theirs content and stages file."""
+    root, _ = _create_conflict(git_project)
+    resolve_conflict_theirs(root, "src/main.py")
+    content = (root / "src" / "main.py").read_text()
+    assert "from branch" in content
+    assert "src/main.py" not in list_conflict_files(root)
+
+
+def test_resolve_conflict_content(git_project):
+    """resolve_conflict_content writes arbitrary content and stages."""
+    root, _ = _create_conflict(git_project)
+    resolve_conflict_content(root, "src/main.py", "# manually resolved\nprint('merged')")
+    content = (root / "src" / "main.py").read_text()
+    assert content == "# manually resolved\nprint('merged')"
+    assert "src/main.py" not in list_conflict_files(root)
+
+
+def test_complete_merge_succeeds(git_project):
+    """complete_merge commits after all conflicts resolved."""
+    root, _ = _create_conflict(git_project)
+    resolve_conflict_ours(root, "src/main.py")
+    commit_hash = complete_merge(root)
+    assert len(commit_hash) >= 7
+    assert not is_merge_in_progress(root)
+
+
+def test_complete_merge_fails_with_unresolved(git_project):
+    """complete_merge raises when unresolved files remain."""
+    root, _ = _create_conflict(git_project)
+    with pytest.raises(WorktreeError, match="Unresolved conflicts remain"):
+        complete_merge(root)
+
+
+def test_list_conflict_files_empty_after_all_resolved(git_project):
+    """list_conflict_files returns empty after resolution."""
+    root, _ = _create_conflict(git_project)
+    resolve_conflict_theirs(root, "src/main.py")
+    assert list_conflict_files(root) == []

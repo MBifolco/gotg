@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Callable
 
@@ -81,6 +82,38 @@ class AdvanceResult:
     transition_msg: dict
     checkpoint_number: int | None
     warnings: list[str] = field(default_factory=list)
+
+
+class ResolutionStrategy(Enum):
+    """How a conflict file was resolved."""
+    OURS = "ours"
+    THEIRS = "theirs"
+    AI = "ai"
+
+
+@dataclass
+class ConflictFileInfo:
+    """3-way merge content for a single conflicted file."""
+    path: str
+    base_content: str | None  # stage 1 — None for add/add conflicts
+    ours_content: str         # stage 2 (main)
+    theirs_content: str       # stage 3 (branch)
+    working_content: str      # file on disk with conflict markers
+
+
+@dataclass
+class ConflictInfo:
+    """All conflicted files for a merge-in-progress."""
+    branch: str
+    files: list[ConflictFileInfo]
+
+
+@dataclass
+class AiResolutionResult:
+    """Successful AI-assisted conflict resolution."""
+    path: str
+    resolved_content: str
+    explanation: str
 
 
 def persist_event(event: object, log_path: Path, debug_path: Path) -> None:
@@ -781,3 +814,99 @@ def advance_next_layer(
         task_count=len(next_layer_tasks),
         removed_worktrees=removed_worktrees,
     )
+
+
+# ── Conflict resolution bridge functions ─────────────────────
+
+
+def load_conflict_info(
+    project_root: Path,
+    branch: str,
+    conflict_paths: list[str],
+) -> ConflictInfo:
+    """Load 3-way content for all conflicted files. Raises ReviewError."""
+    from gotg.worktree import WorktreeError, get_conflict_stages
+
+    files: list[ConflictFileInfo] = []
+    for path in conflict_paths:
+        try:
+            stages = get_conflict_stages(project_root, path)
+        except WorktreeError as e:
+            raise ReviewError(f"Could not read conflict stages for {path}: {e}") from e
+        files.append(ConflictFileInfo(
+            path=path,
+            base_content=stages["base"],
+            ours_content=stages["ours"],
+            theirs_content=stages["theirs"],
+            working_content=stages["working"],
+        ))
+    return ConflictInfo(branch=branch, files=files)
+
+
+def resolve_conflict_file(
+    project_root: Path,
+    file_path: str,
+    strategy: ResolutionStrategy,
+    content: str | None = None,
+) -> None:
+    """Resolve a single file using the given strategy. Raises ReviewError."""
+    from gotg.worktree import (
+        WorktreeError, resolve_conflict_content,
+        resolve_conflict_ours, resolve_conflict_theirs,
+    )
+
+    try:
+        if strategy == ResolutionStrategy.OURS:
+            resolve_conflict_ours(project_root, file_path)
+        elif strategy == ResolutionStrategy.THEIRS:
+            resolve_conflict_theirs(project_root, file_path)
+        elif strategy == ResolutionStrategy.AI:
+            if content is None:
+                raise ReviewError("AI resolution requires content.")
+            resolve_conflict_content(project_root, file_path, content)
+    except WorktreeError as e:
+        raise ReviewError(f"Failed to resolve {file_path}: {e}") from e
+
+
+def ai_resolve_conflict(
+    file_path: str,
+    branch: str,
+    base_content: str | None,
+    ours_content: str,
+    theirs_content: str,
+    task_context: str,
+    model_config: dict,
+    chat_call: Callable,
+) -> AiResolutionResult:
+    """LLM-assisted conflict resolution. Returns AiResolutionResult, raises ReviewError."""
+    from gotg.transitions import resolve_merge_conflict
+
+    try:
+        resolved_content, explanation = resolve_merge_conflict(
+            file_path, branch,
+            base_content, ours_content, theirs_content,
+            task_context, model_config, chat_call,
+        )
+    except ValueError as e:
+        raise ReviewError(f"AI resolution failed for {file_path}: {e}") from e
+
+    return AiResolutionResult(
+        path=file_path,
+        resolved_content=resolved_content,
+        explanation=explanation,
+    )
+
+
+def finalize_merge(
+    project_root: Path,
+    branch: str,
+) -> MergeResult:
+    """Complete a merge after all conflicts are resolved. Raises ReviewError."""
+    from gotg.worktree import WorktreeError, complete_merge
+
+    try:
+        commit_hash = complete_merge(project_root)
+    except WorktreeError as e:
+        raise ReviewError(f"Failed to complete merge of {branch}: {e}") from e
+
+    return MergeResult(branch=branch, success=True, commit=commit_hash)

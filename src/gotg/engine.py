@@ -289,7 +289,7 @@ def _do_coach_turn(
             inp = ask_pm_calls[0]["input"]
             question = inp["question"]
             response_type = inp.get("response_type", "feedback")
-            options = tuple(inp.get("options", []))
+            options = tuple(inp.get("options") or [])
             yield CoachAskedPM(question, response_type=response_type, options=options)
             return True
 

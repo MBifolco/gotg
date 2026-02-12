@@ -6,6 +6,7 @@ from typing import Callable
 
 from gotg.prompts import (
     COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
+    MERGE_CONFLICT_PROMPT,
 )
 from gotg.tasks import compute_layers
 
@@ -129,6 +130,60 @@ def extract_task_notes(
         return notes_map, None, None
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         return None, notes_text, f"Could not parse task notes: {e}"
+
+
+# --- Merge conflict resolution ---
+
+
+def resolve_merge_conflict(
+    file_path: str,
+    branch: str,
+    base_content: str | None,
+    ours_content: str,
+    theirs_content: str,
+    task_context: str,
+    model_config: dict,
+    chat_call: Callable,
+) -> tuple[str, str]:
+    """One-shot LLM call to resolve a merge conflict.
+
+    Returns (resolved_content, explanation) on success.
+    Raises ValueError on LLM or parse failure.
+    """
+    if base_content is not None:
+        base_section = (
+            f"=== BASE (common ancestor) START ===\n"
+            f"{base_content}\n"
+            f"=== BASE (common ancestor) END ==="
+        )
+    else:
+        base_section = "(No common ancestor — both branches added this file independently.)"
+
+    prompt = MERGE_CONFLICT_PROMPT.format(
+        file_path=file_path,
+        branch=branch,
+        base_section=base_section,
+        ours_content=ours_content,
+        theirs_content=theirs_content,
+        task_context=task_context,
+    )
+
+    raw = chat_call(
+        base_url=model_config["base_url"],
+        model=model_config["model"],
+        messages=[{"role": "user", "content": prompt}],
+        api_key=model_config.get("api_key"),
+        provider=model_config.get("provider", "ollama"),
+    )
+    raw = strip_code_fences(raw)
+
+    try:
+        data = json.loads(raw)
+        content = data["content"]
+        explanation = data.get("explanation", "")
+        return content, explanation
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        raise ValueError(f"Could not parse AI resolution: {e}") from e
 
 
 # --- Worktree auto-commit ---

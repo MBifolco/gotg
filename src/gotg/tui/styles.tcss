@@ -218,6 +218,26 @@
     height: 1fr;
 }
 
+/* ── Conflict screen ────────────────────────────────────── */
+
+#conflict-layout {
+    height: 1fr;
+}
+
+#conflict-left {
+    width: 2fr;
+    height: 100%;
+}
+
+#conflict-right {
+    width: 3fr;
+    height: 100%;
+}
+
+#conflict-table {
+    height: 1fr;
+}
+
 /* ── Task assignment screen ──────────────────────────────── */
 
 #task-layout {

@@ -34,6 +34,28 @@ PROVIDER_PRESETS = {
     "openai": {"base_url": "https://api.openai.com", "api_key": "$OPENAI_API_KEY"},
 }
 
+PROVIDER_MODELS: dict[str, list[tuple[str, str]]] = {
+    "ollama": [
+        ("qwen2.5-coder:7b", "qwen2.5-coder:7b"),
+        ("qwen2.5-coder:14b", "qwen2.5-coder:14b"),
+        ("qwen2.5-coder:32b", "qwen2.5-coder:32b"),
+        ("llama3.2:8b", "llama3.2:8b"),
+        ("deepseek-coder-v2:16b", "deepseek-coder-v2:16b"),
+        ("codellama:13b", "codellama:13b"),
+    ],
+    "anthropic": [
+        ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-20250929"),
+        ("claude-opus-4-6", "claude-opus-4-6"),
+        ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+    ],
+    "openai": [
+        ("gpt-4o", "gpt-4o"),
+        ("gpt-4o-mini", "gpt-4o-mini"),
+        ("o1", "o1"),
+        ("o3-mini", "o3-mini"),
+    ],
+}
+
 
 # ── SettingsScreen ───────────────────────────────────────────
 
@@ -68,7 +90,11 @@ class SettingsScreen(Screen):
                 id="set-provider",
             )
             yield Label("Model name", classes="field-label")
-            yield Input(id="set-model-name", placeholder="qwen2.5-coder:7b")
+            yield Select(
+                PROVIDER_MODELS.get("ollama", []),
+                allow_blank=True,
+                id="set-model-name",
+            )
             yield Label("Base URL", classes="field-label")
             yield Input(id="set-base-url", placeholder="http://localhost:11434")
             yield Label("API key reference", classes="field-label")
@@ -139,7 +165,7 @@ class SettingsScreen(Screen):
         provider = model.get("provider", "ollama")
         self._loaded_provider = provider
         self.query_one("#set-provider", Select).value = provider
-        self.query_one("#set-model-name", Input).value = model.get("model", "")
+        self._update_model_options(provider, model.get("model", ""))
         self.query_one("#set-base-url", Input).value = model.get("base_url", "")
         self.query_one("#set-api-key", Input).value = model.get("api_key", "")
 
@@ -188,6 +214,20 @@ class SettingsScreen(Screen):
         self.query_one("#set-coach-name", Input).disabled = not enabled
         self.query_one("#set-coach-role", Input).disabled = not enabled
 
+    def _update_model_options(self, provider: str, current_model: str = "") -> None:
+        """Update the model Select options for the given provider."""
+        model_select = self.query_one("#set-model-name", Select)
+        options = list(PROVIDER_MODELS.get(provider, []))
+        # If current model isn't in the list, add it so it's selectable
+        known_values = {v for _, v in options}
+        if current_model and current_model not in known_values:
+            options.insert(0, (current_model, current_model))
+        model_select.set_options(options)
+        if current_model:
+            model_select.value = current_model
+        elif options:
+            model_select.value = options[0][1]
+
     # ── Provider preset ──────────────────────────────────────
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -204,6 +244,7 @@ class SettingsScreen(Screen):
             self.query_one("#set-base-url", Input).value = preset["base_url"]
         if "api_key" in preset:
             self.query_one("#set-api-key", Input).value = preset["api_key"]
+        self._update_model_options(provider)
 
     # ── Coach toggle ─────────────────────────────────────────
 
@@ -225,7 +266,8 @@ class SettingsScreen(Screen):
 
     def action_save(self) -> None:
         """Validate and save all settings to team.json."""
-        model_name = self.query_one("#set-model-name", Input).value.strip()
+        model_select = self.query_one("#set-model-name", Select)
+        model_name = str(model_select.value).strip() if model_select.value is not Select.BLANK else ""
         if not model_name:
             self.notify("Model name is required.", severity="warning")
             return

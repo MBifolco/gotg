@@ -389,6 +389,93 @@ def abort_merge(project_root: Path) -> None:
     _git(project_root, "merge", "--abort")
 
 
+# ── Conflict resolution ──────────────────────────────────────
+
+
+def list_conflict_files(project_root: Path) -> list[str]:
+    """Return list of unmerged file paths (re-reads live state)."""
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+    return [f for f in result.stdout.strip().splitlines() if f]
+
+
+def get_conflict_stages(project_root: Path, file_path: str) -> dict:
+    """Retrieve 3-way merge stage contents for a conflicted file.
+
+    Returns {"base": str|None, "ours": str, "theirs": str, "working": str}.
+    Stage 1 (base) may not exist for add/add conflicts — returns None.
+    """
+
+    def _show_stage(stage: int) -> str | None:
+        result = subprocess.run(
+            ["git", "show", f":{stage}:{file_path}"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
+    base = _show_stage(1)
+    ours = _show_stage(2)
+    theirs = _show_stage(3)
+    if ours is None:
+        raise WorktreeError(f"Stage 2 (ours) not found for {file_path}")
+    if theirs is None:
+        raise WorktreeError(f"Stage 3 (theirs) not found for {file_path}")
+
+    working = (project_root / file_path).read_text()
+    return {"base": base, "ours": ours, "theirs": theirs, "working": working}
+
+
+def resolve_conflict_ours(project_root: Path, file_path: str) -> None:
+    """Resolve a file using 'ours' (stage 2) content and stage it."""
+    _git(project_root, "checkout", "--ours", file_path)
+    _git(project_root, "add", file_path)
+
+
+def resolve_conflict_theirs(project_root: Path, file_path: str) -> None:
+    """Resolve a file using 'theirs' (stage 3) content and stage it."""
+    _git(project_root, "checkout", "--theirs", file_path)
+    _git(project_root, "add", file_path)
+
+
+def resolve_conflict_content(project_root: Path, file_path: str, content: str) -> None:
+    """Resolve a file with arbitrary content (e.g. AI-resolved) and stage it."""
+    (project_root / file_path).write_text(content)
+    _git(project_root, "add", file_path)
+
+
+def complete_merge(project_root: Path, message: str | None = None) -> str:
+    """Commit the resolved merge. Returns short commit hash.
+
+    All conflict files must be resolved and staged first.
+    Uses the default merge message (MERGE_MSG) if no message provided.
+    Raises WorktreeError if unresolved files remain.
+    """
+    unresolved = list_conflict_files(project_root)
+    if unresolved:
+        raise WorktreeError(
+            f"Unresolved conflicts remain: {', '.join(unresolved)}"
+        )
+    if message:
+        _git(project_root, "commit", "-m", message)
+    else:
+        _git(project_root, "commit", "--no-edit")
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 MAX_DIFF_CHARS = 50_000
 
 
