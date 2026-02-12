@@ -2253,6 +2253,129 @@ After iteration 10, the TUI is a complete interface. A user can `gotg init`, lau
 
 ---
 
+## 50. The Implementation Executor Problem
+
+### What the test run revealed
+
+The calculator test run (section 46) validated refinement through code-review — agents produced well-specified interfaces, good task decomposition, and thoughtful layer ordering. But implementation exposed a fundamental mismatch between the discussion-phase engine and what implementation actually needs.
+
+The engine runs round-robin: agent-1 speaks, agent-2 speaks, agent-3 speaks, coach summarizes, repeat. This works for discussion phases where value comes from agents reacting to each other. Implementation is fundamentally different — agent-1 writes `input_handler.py`, agent-2 writes `division.py`, and they don't need to hear each other. They don't need turns. They need their task context, their worktree, and permission to write files.
+
+Seven problems surfaced:
+
+**Agents implemented all layers at once.** The engine never advanced layers. The implementation kickoff correctly announced "layer 0" with agent-1 and agent-2 assigned, but `advance_next_layer()` was never called between layers. The coach announced layer transitions conversationally ("Layer 1 Implementation Starting Now") — just text, not actual layer advancement. All 6 layers executed in a single uninterrupted session. Every file write from every agent across all layers went into layer-0 worktree branches. Code review found agent-1's layer-0 branch containing parser code (layer 2) and integration code (layer 5).
+
+**File access failures across worktrees.** Direct consequence of no layer advancement. Each agent has an isolated worktree. When agent-3 started "layer 1" (lexer), it tried to read agent-1's `src/input_handler.py` — file not found, because it exists in agent-1's worktree, not agent-3's. This repeated throughout implementation: agent-1 couldn't read `src/lexer.py` for the parser, agent-2 couldn't read `src/ast_nodes.py` for the evaluator. Agents coped by writing code blind — implementing against agreed interfaces from pre-code-review without seeing dependency code. It worked because the interfaces were well-specified, but it's fragile.
+
+**Code review couldn't cross worktree boundaries.** Each agent could only read files in its own worktree. Agent-1 reviewed its own `input_handler.py` and `parser.py`. Agent-2 reviewed its own `division.py` and `evaluator.py`. Nobody could read others' code from disk — they could only review what other agents pasted into conversation messages.
+
+**Round-robin wasted turns during implementation.** Agent-3 sat through layer 0 saying "I'm on standby" (wasting a turn and an API call). The coach narrated "Layer 0 complete, starting Layer 1" (another API call doing the engine's job). Layer 0 had two tasks for two agents — it needed two agent turns, not a full rotation of three agents plus coach.
+
+**Terminal became unresponsive at implementation start.** Implementation is the first phase with tool calls. Refinement, planning, and pre-code-review are pure conversation — one LLM call per turn, yield message, next turn. An implementation turn involves a tool call loop: LLM call → tool_use → execute → feed result back → LLM call → another tool_use → repeat until text response. Agent-1's first implementation turn was 7 sequential LLM API calls plus file I/O. If the engine only yields events between agent turns (not between tool calls within a turn), the UI gets nothing for 30-60 seconds.
+
+**The coach managed layers instead of the engine.** The coach did a good job simulating layer management — announcing which agents should work, telling others to stand by, tracking completions. But this is the engine's job. The system should pause after each layer's agents complete, signal a layer-complete event, and wait for the PM to advance. The conversation just kept going and the coach filled the vacuum.
+
+**A file_write bug.** One `file_write` call failed with a KeyError on `content` — likely a malformed tool call from the LLM. The agent retried and succeeded. Edge case in tool input parsing that needs handling.
+
+### The design: layer-scoped dispatch
+
+Implementation needs a different executor. Discussion phases use round-robin because value comes from agents reacting to each other. Implementation has no conversation — agents write code independently, and the value comes from completing tasks correctly against specified interfaces.
+
+The implementation executor works per-layer:
+
+```
+For each layer in tasks.json:
+  1. Identify assigned agents for current layer
+  2. Dispatch ONLY those agents (skip unassigned entirely)
+  3. Each agent gets a focused session with task context
+  4. When all assigned agents report completion:
+     - Pause execution
+     - Signal PM: layer complete, ready to merge
+  5. PM reviews/merges worktrees (or auto-merge if no conflicts)
+  6. Advance to next layer
+  7. New worktrees branch from updated main
+  8. Repeat until all layers done
+  9. Enter code-review with full codebase visible
+```
+
+The critical insight: agents don't need to "obey" layer boundaries via prompts — they never get the opportunity to misbehave. An agent assigned to layer 3 simply doesn't get called until layers 0-2 are merged. No prompt instruction needed. Structural enforcement.
+
+Within a layer, agents work independently. Layer 0's tasks (input validation and integer division) have no dependencies on each other. Layer 1's task (lexer) depends on layer 0, not on other layer 1 tasks. If two agents are both assigned to the same layer, their tasks should be independent by definition — otherwise they'd be in different layers. Worktree isolation within a layer is correct.
+
+The problem exists only at layer boundaries: layer 1 agents need to see layer 0's merged output. The merge step between layers makes prior work visible.
+
+### Worktree strategy: keep them for all layers
+
+Multi-agent layers need worktrees for directory isolation and conflict detection. Single-agent layers technically don't — nobody else is writing — but worktrees still provide a review boundary. The PM sees a reviewable diff before merging to main. Adding a separate "branch only" mode for single-agent layers produces the same result with added code path complexity. Same mechanism everywhere, simpler system.
+
+### Code review timing: merge gate, not review gate
+
+Per-layer code review where agents debate whether each other's code is correct before proceeding would be overkill for most projects — agent-2 and agent-3 debating agent-1's `input_handler.py` before the lexer can start adds turns and cost with minimal benefit. The real review happens at the end, when the full system exists and agents can assess how everything fits together.
+
+The proposed flow: auto-merge at each layer boundary (or PM quick-approve if conflicts), comprehensive code-review phase at the end with all code visible. Per-layer checkpoint is a merge gate, not a review gate. The test run agents independently reached this same conclusion — they built everything, reviewed at the end, and said "Option A: merge all now."
+
+An optional review-per-layer mode could exist for high-risk projects where the PM wants to validate each layer before proceeding. But auto-merge-per-layer with comprehensive final review is the default.
+
+### Tool call event yielding
+
+Whatever executor model runs, each tool call result needs to yield an event immediately so the UI can show progress. `[file_write] src/parser.py (4412 bytes)` appearing in the chat stream tells the PM something is happening. The current issue — events only yielded between agent turns, not between individual tool calls — makes the system appear frozen during any turn with multiple file operations.
+
+### Why not async now
+
+The implementation executor dispatches agents per-layer. If a layer has two agents, they could run in parallel via threads — `ThreadPoolExecutor`, thread-safe event queue, each agent runs its normal sync tool loop. The engine stays sync. The tests stay sync. `model.py` stays `requests`.
+
+But parallel dispatch within layers is a speed optimization, not a correctness fix. Layer 0 with two agents takes 60 seconds sequentially instead of 120 seconds in parallel. Nice, but not what's broken.
+
+What's broken is: no layer enforcement, no merge between layers, wasted turns from unassigned agents, no tool-call-level event yielding. All of these are fixed by the sequential implementation executor. Parallel dispatch is a follow-up that becomes trivial once the executor already thinks in terms of "dispatch these N agents for this layer" — you're just changing *how* the dispatch happens, not *what* gets dispatched.
+
+The full async migration (convert `run_session` to async generator, switch `model.py` from `requests` to `httpx.AsyncClient`, add `pytest-asyncio` to 950+ tests, change every `for event in run_session()` to `async for event in run_session()`) remains deferred. Threads are sufficient for parallel agents when that time comes.
+
+### Structural completion: the `complete_tasks` tool
+
+Discussion phases use `signal_phase_complete` (coach tool call) for completion. Implementation needs the same pattern at the task level. Without it, the executor has no structural signal that an agent is done — it would rely on the coach narrating "agent-1 finished" (the exact text-based detection that failed in the test run) or on counting turns (fragile).
+
+The `complete_tasks` tool lets agents declare completion explicitly:
+
+```python
+# Agent tool call
+complete_tasks(task_ids=["input-validation-preprocessing"])
+```
+
+The executor tracks completion state per task. When all current-layer tasks are marked complete, it emits `LayerComplete` and stops. This is principle #21 (out-of-band signaling) applied to implementation — the same insight that moved phase completion from in-band string detection to `signal_phase_complete` tool calls.
+
+Each agent's implementation prompt includes only their assigned tasks for the current layer. When they've written the code and are satisfied, they call `complete_tasks`. No coach involvement needed. No text parsing. The executor knows structurally when the layer is done.
+
+### Tool input validation hardening
+
+The test run's `file_write` KeyError (missing `content` field in tool call) points to a gap in `tools.py`. Tool input validation should check for required fields, correct types, and return clear error messages that the LLM can act on — not crash with a Python exception. The LLM retried and succeeded, but the retry was accidental (it just happened to try again). Proper validation would return a tool error result that the model can parse and correct: `{"error": "file_write requires 'content' field, got: path"}`.
+
+### Implementation plan
+
+New files: `src/gotg/execution/implementation.py` (implementation-specific executor). Modified: `engine.py` (route implementation phase to new executor), `session.py` (layer completion detection, merge orchestration), `events.py` (new events: `LayerComplete`, `ToolCallProgress`), `tools.py` (input validation hardening, `complete_tasks` tool).
+
+The executor function:
+
+```python
+def run_implementation_phase(
+    team_dir, iteration, iter_dir, tasks, current_layer,
+    model_config, chat_call, on_event
+) -> ImplementationResult:
+    # Load only current_layer tasks
+    # Dispatch only assigned agents with task-scoped prompts
+    # Agents call complete_tasks(task_ids) when done
+    # Executor tracks completion state per task
+    # When all layer tasks complete: emit LayerComplete, stop
+    # Yield tool call progress as first-class events
+```
+
+Estimated: ~25 tests (layer dispatch, completion detection via `complete_tasks`, merge orchestration, tool event yielding, single vs multi-agent layers, tool input validation edge cases).
+
+> Principle #36: **Enforce structure structurally, not conversationally** — if agents shouldn't cross layer boundaries, don't tell them not to; don't call them until it's their turn. Prompt-based constraints are suggestions; execution-model constraints are guarantees.
+
+> Principle #37: **Different work modes need different execution models** — discussion phases benefit from round-robin conversation where agents react to each other; implementation phases benefit from task-scoped dispatch where agents work independently. One engine shape doesn't fit both.
+
+---
+
 ## Current State (Post-File-Safety-Design)
 
 ### What Exists
@@ -2329,8 +2452,9 @@ After iteration 10, the TUI is a complete interface. A user can `gotg init`, lau
 - ✅ **Refactor R3: Decompose cmd_advance** — complete, transitions.py with standalone extraction functions, cmd_advance under 80 lines
 - ✅ **Refactor R4: Prompt externalization (TOML)** — complete, prompts.toml, prompts.py, Python 3.11+ requirement
 - ✅ **Refactor R5: Session policies** — complete, SessionPolicy dataclass, iteration_policy() and grooming_policy() factories
-- 🔄 **Refactor R6: Grooming-to-refinement rename** — in progress, mechanical rename with backward-compat parsing
-- ⬜ **Grooming feature** — planned, gotg groom "topic" for freeform pre-iteration exploration, grooming_policy() factory, .team/grooming/<slug>/ directory structure
+- ✅ **Refactor R6: Grooming-to-refinement rename** — complete, mechanical rename with backward-compat parsing
+- ⬜ **Implementation executor redesign** — planned, layer-scoped dispatch replacing round-robin for implementation phase, structural layer enforcement, `complete_tasks` tool for agent completion signaling, tool-call-level event yielding, tool input validation hardening, merge gates between layers (blocks second test run)
+- ✅ **Grooming feature** — complete, gotg groom "topic" for freeform pre-iteration exploration, grooming_policy() factory, .team/grooming/<slug>/ directory structure
 - ⬜ **TUI Iteration 1: Read-only viewer** — planned, gotg ui launches Textual app, HomeScreen with iteration/grooming lists, ChatScreen with conversation history, InfoTile sidebar
 - ⬜ **TUI Iteration 2: Live conversation streaming** — planned, run_session in worker thread, messages stream in real-time, ChatScreen state machine, persist_event + session setup helpers extracted to session.py
 - ⬜ **TUI Iteration 3: Approval management** — planned, ApprovalScreen with split-view (DataTable + syntax-highlighted ContentViewer), apply_and_inject extracted to session.py
@@ -2342,7 +2466,7 @@ After iteration 10, the TUI is a complete interface. A user can `gotg init`, lau
 - ⬜ **TUI Iteration 9: Markdown rendering** — planned, Chatbox widget replacing MessageWidget, Rich Markdown content, role-based border styling
 - ⬜ **TUI Iteration 10: Chat polish + checkpoints** — planned, smart auto-scroll, loading indicator, checkpoint management (K/L bindings), TextArea input
 
-First full test run complete (calculator, $9). Iterations 1-17 complete. Architectural refactor (R1-R6) restructured codebase for TUI, grooming feature, and parallel agents. Grooming feature designed and ready for implementation. TUI roadmap: 10 iterations from read-only viewer to complete self-sufficient interface.
+First full test run complete (calculator, $9). Iterations 1-17 complete. Architectural refactor (R1-R6) complete. Grooming feature complete. Implementation executor redesign identified as critical — fixes layer enforcement, worktree isolation, and UI responsiveness; blocks second test run. TUI roadmap: 10 iterations from read-only viewer to complete self-sufficient interface.
 
 ### Key Findings
 - The protocol produces genuine team dynamics when the model is capable enough
@@ -2397,29 +2521,36 @@ First full test run complete (calculator, $9). Iterations 1-17 complete. Archite
 - **Sync generators in worker threads avoid premature async migration** — Textual's run_worker(thread=True) + post_message() lets a sync engine drive an async UI framework; the async tax (pytest-asyncio on 650+ tests, httpx.AsyncClient, AsyncIterator) is deferred until parallel agents actually need it
 - **The bridge layer pattern (session.py) emerges incrementally** — each TUI iteration extracts exactly the domain functions it needs from cli.py; by iteration 5, session.py contains all shared logic and the CLI is thin wrappers; planning the full extraction upfront would have been speculative
 - **Read-only viewers validate UI framework choices without risk** — building the TUI's first iteration as a pure conversation viewer meant learning Textual's widget model, CSS system, and screen navigation on a problem that couldn't break the conversation engine
+- **Round-robin conversation is wrong for implementation** — discussion phases benefit from agents reacting to each other; implementation phases are independent task execution where round-robin forces unassigned agents to waste turns saying "I'm on standby" and the coach to narrate layer transitions the engine should enforce
+- **Structural enforcement beats prompt-based constraints** — agents told via prompts to "only work on layer 0" implemented all 6 layers in one session; agents that simply aren't called until their layer starts can't misbehave; the execution model is the constraint, not the prompt
+- **Layer boundaries must be merge gates** — without merging between layers, dependent agents can't see prior layer output; worktree isolation (correct within a layer) becomes a liability across layers; the merge step makes prior work visible
+- **Tool call loops block UI responsiveness** — discussion phases are one LLM call per turn; implementation turns involve 5-10 sequential LLM calls (tool_use loops); if events only yield between turns, the UI freezes for 30-60 seconds during file operations
+- **Threads solve parallel agents without async migration** — ThreadPoolExecutor with thread-safe event queue gives parallel dispatch while keeping the sync engine, sync tests, and sync model.py; the full async tax (pytest-asyncio on 950+ tests, AsyncIterator, httpx) is deferred until threads prove insufficient
+- **Task completion needs the same out-of-band pattern as phase completion** — `signal_phase_complete` eliminated false positives for phase transitions; `complete_tasks(task_ids)` does the same for implementation layers; without structural completion signaling, the executor relies on coach narration or turn counting, both of which failed in the test run
+- **Tool input validation failures should be recoverable, not crashes** — LLMs occasionally produce malformed tool calls (missing fields, wrong types); returning a clear error message the model can parse and retry is better than a Python KeyError that happens to work because the model retries anyway
 
 ### Development Strategy
-- **R6 finishing** — grooming-to-refinement rename, final refactor iteration
-- **Grooming feature next** — ~1 iteration, grooming_policy() already stubbed, .team/grooming/<slug>/ directory structure, gotg groom "topic" command
+- **Implementation executor next** — layer-scoped dispatch for implementation phase, structural layer enforcement via `complete_tasks` tool, tool-call-level event yielding, tool input validation hardening, merge gates between layers; blocks second test run
+- **Second test run** — after executor redesign, validates layer enforcement + cost optimizations from iterations 15-17
+- **TUI roadmap: 10 iterations** — read-only viewer (1) → live streaming (2) → approvals (3) → phase advance (4) → review/merge (5) → refactor + app shell (6) → iteration lifecycle (7) → settings (8) → markdown rendering (9) → chat polish + checkpoints (10)
 - **TUI roadmap: 10 iterations** — read-only viewer (1) → live streaming (2) → approvals (3) → phase advance (4) → review/merge (5) → refactor + app shell (6) → iteration lifecycle (7) → settings (8) → markdown rendering (9) → chat polish + checkpoints (10)
 - TUI iterations 1-5 build the core workflow (run, approve, advance, review, merge); iterations 6-10 make the TUI self-sufficient (create/edit/settings/polish)
 - Each TUI iteration extracts shared domain logic from cli.py into session.py — incremental bridge layer construction
-- No async until parallel agents need it — worker threads + post_message, engine stays sync generator
+- No async until parallel agents need it — worker threads + post_message, engine stays sync generator; parallel agent dispatch within layers uses ThreadPoolExecutor when needed, not async migration
 - After TUI iteration 10: full workflow from gotg ui, CLI becomes power-user/scripting tool
-- Second full test run to validate cost optimizations can happen anytime — independent of TUI work
 - Checkpoint/restore enables rapid experimentation — save state before prompt changes, restore if results are worse
 - Use gotg to build gotg — dogfooding drives the priority stack
 - Conversation history with commit ids provides systematic (if manual) evaluation infrastructure
 - Agent verbosity in planning phase is a known optimization lever — not worth pulling yet
 
 ### Deferred (Intentionally)
-- **Grooming feature** — pre-iteration exploration conversations in `.team/grooming/<slug>/`, no phase system, no convergence pressure (ready after R6 — grooming_policy() already stubbed)
-- `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after grooming feature + TUI iteration 7 lifecycle)
+- `gotg groom-to-iteration` — coach summarizes grooming conversation into iteration scope (after TUI iteration 7 lifecycle)
+- Parallel agent dispatch within implementation layers — ThreadPoolExecutor with thread-safe event queue, same sync engine; follow-up after sequential executor is stable (see section 50)
+- Full async migration — convert Iterator[Event] to AsyncIterator[Event], httpx.AsyncClient, pytest-asyncio on 950+ tests; deferred until parallel agents prove threads insufficient
 - Bash tool for agents (add with Docker sandbox when evidence shows file tools are insufficient)
 - File delete tool (start without it — agents can overwrite but not destroy; add with PM approval gate if needed)
 - Automated conflict resolution at merge (PM resolves manually or feeds back to agents)
 - Agent self-assignment to tasks (requires personality differentiation — human assigns for now)
-- Parallel agent execution — async engine, fan-out/fan-in turns, concurrent model calls (requires async migration of engine + model.py)
 - Agent personality differentiation (needed for self-selected task assignment — human assigns for now)
 - Automated evaluation (after manual rubric is trusted)
 - Context window management beyond phase boundaries (sliding window within long phases, message summarization for very long implementation runs)
@@ -2462,3 +2593,5 @@ First full test run complete (calculator, $9). Iterations 1-17 complete. Archite
 33. **Refactor when the next feature requires a second copy of existing code** — the right time to decompose is when you'd otherwise duplicate; earlier is speculative, later means you're already maintaining two copies
 34. **Build the read-only view first** — validating layout and widget structure without engine interaction means you learn the UI framework's idioms before risking the core system; the first TUI iteration should be a viewer, not a controller
 35. **Extract the bridge layer incrementally** — each TUI iteration extracts the domain functions it needs from the CLI into a shared module; by the end, the CLI is thin wrappers and the domain logic is reusable
+36. **Enforce structure structurally, not conversationally** — if agents shouldn't cross layer boundaries, don't tell them not to; don't call them until it's their turn; prompt-based constraints are suggestions, execution-model constraints are guarantees
+37. **Different work modes need different execution models** — discussion phases benefit from round-robin conversation where agents react to each other; implementation phases benefit from task-scoped dispatch where agents work independently; one engine shape doesn't fit both
