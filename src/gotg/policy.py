@@ -42,6 +42,8 @@ class SessionPolicy:
     # Prompt supplements (grooming mode)
     system_supplement: str | None     # Extra text injected early in agent system prompt
     coach_system_prompt: str | None   # Overrides phase-based coach facilitation prompt
+    # Streaming
+    streaming: bool = False           # opt-in via team.json, default off for safe rollout
 
 
 def iteration_policy(
@@ -55,6 +57,7 @@ def iteration_policy(
     worktree_map: dict | None = None,
     diffs_summary: str | None = None,
     max_turns_override: int | None = None,
+    streaming: bool = False,
 ) -> SessionPolicy:
     """Build policy for an iteration conversation.
 
@@ -112,6 +115,7 @@ def iteration_policy(
         worktree_map=worktree_map,
         system_supplement=None,
         coach_system_prompt=None,
+        streaming=streaming,
     )
 
 

@@ -78,6 +78,22 @@ class TaskBlocked:
 
 
 @dataclass
+class TextDelta:
+    """Incremental text from LLM response — display immediately."""
+    agent: str
+    turn_id: str       # unique per agent-turn, e.g. "impl-agent-0-r3"
+    text: str
+
+
+@dataclass
+class AgentTurnComplete:
+    """Agent's full turn complete — all tool rounds done."""
+    agent: str
+    turn_id: str       # matches the TextDelta.turn_id for this turn
+    content: str       # Full accumulated text of final response
+
+
+@dataclass
 class AdvanceProgress:
     """Reports advance progress step to the UI."""
     message: str

@@ -27,3 +27,13 @@ class ToolProgress(Message):
     def __init__(self, event: object) -> None:
         super().__init__()
         self.event = event
+
+
+class TextDeltaMsg(Message):
+    """Batched text delta from streaming LLM response."""
+
+    def __init__(self, agent: str, turn_id: str, text: str) -> None:
+        super().__init__()
+        self.agent = agent
+        self.turn_id = turn_id
+        self.text = text

@@ -9,6 +9,7 @@ from typing import Iterator
 from gotg.agent import build_prompt
 from gotg.engine import SessionDeps, build_tool_executor
 from gotg.events import (
+    AgentTurnComplete,
     AppendDebug,
     AppendMessage,
     LayerComplete,
@@ -16,6 +17,7 @@ from gotg.events import (
     SessionComplete,
     SessionStarted,
     TaskBlocked,
+    TextDelta,
     ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
@@ -268,7 +270,7 @@ def run_implementation(
 ) -> Iterator[
     SessionStarted | AppendMessage | AppendDebug |
     ToolCallProgress | TaskBlocked | PauseForApprovals |
-    LayerComplete | SessionComplete
+    LayerComplete | SessionComplete | TextDelta | AgentTurnComplete
 ]:
     """Run implementation phase for a single layer.
 
@@ -386,14 +388,29 @@ def run_implementation(
         dispatched_agents += 1
 
         for round_num in range(start_round, max_tool_rounds):
-            rnd = deps.single_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
-                messages=llm_messages,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
-                tools=impl_tools,
-            )
+            turn_id = f"impl-{agent_name}-r{round_num}"
+
+            if policy.streaming and deps.stream_completion:
+                stream = deps.stream_completion(
+                    base_url=model_config["base_url"],
+                    model=model_config["model"],
+                    messages=llm_messages,
+                    api_key=model_config.get("api_key"),
+                    provider=model_config.get("provider", "ollama"),
+                    tools=impl_tools,
+                )
+                for chunk in stream:
+                    yield TextDelta(agent=agent_name, turn_id=turn_id, text=chunk)
+                rnd = stream.round
+            else:
+                rnd = deps.single_completion(
+                    base_url=model_config["base_url"],
+                    model=model_config["model"],
+                    messages=llm_messages,
+                    api_key=model_config.get("api_key"),
+                    provider=model_config.get("provider", "ollama"),
+                    tools=impl_tools,
+                )
 
             if not rnd.tool_calls:
                 tasks = _load_tasks(iter_dir)
@@ -421,6 +438,12 @@ def run_implementation(
                     break
 
                 if rnd.content.strip():
+                    if policy.streaming and deps.stream_completion:
+                        yield AgentTurnComplete(
+                            agent=agent_name,
+                            turn_id=turn_id,
+                            content=rnd.content,
+                        )
                     msg = {
                         "from": agent_name,
                         "iteration": iteration["id"],

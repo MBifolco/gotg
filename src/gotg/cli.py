@@ -14,11 +14,11 @@ from gotg.context import TeamContext
 from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
 from gotg.engine import SessionDeps, run_session
 from gotg.events import (
-    AppendDebug, AppendMessage, CoachAskedPM,
+    AgentTurnComplete, AppendDebug, AppendMessage, CoachAskedPM,
     LayerComplete, PauseForApprovals, PhaseCompleteSignaled,
-    SessionComplete, SessionStarted, TaskBlocked, ToolCallProgress,
+    SessionComplete, SessionStarted, TaskBlocked, TextDelta, ToolCallProgress,
 )
-from gotg.model import chat_completion, agentic_completion, raw_completion
+from gotg.model import chat_completion, agentic_completion, raw_completion, raw_completion_stream
 from gotg.groom import (
     generate_slug, validate_slug, existing_slugs,
     write_grooming_metadata, load_grooming_metadata,
@@ -93,6 +93,7 @@ def run_conversation(
     approval_store=None,
     worktree_map: dict | None = None,
     diffs_summary: str | None = None,
+    streaming: bool = False,
 ) -> None:
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
@@ -103,6 +104,7 @@ def run_conversation(
         agent_completion=agentic_completion,
         coach_completion=chat_completion,
         single_completion=raw_completion,
+        stream_completion=raw_completion_stream,
     )
 
     # Build policy from iteration state (factory exercised in production)
@@ -112,6 +114,7 @@ def run_conversation(
         history=history, coach=coach, fileguard=fileguard,
         approval_store=approval_store, worktree_map=worktree_map,
         diffs_summary=diffs_summary, max_turns_override=max_turns_override,
+        streaming=streaming,
     )
 
     # Route to implementation executor or discussion engine
@@ -206,6 +209,9 @@ def _run_implementation_phase(
     tasks_data = json.loads(tasks_path.read_text())
     current_layer = iteration.get("current_layer", 0)
 
+    # Track streaming state to suppress double-printing
+    _suppress_next_append = False
+
     for event in run_implementation(
         agents=agents, tasks=tasks_data, current_layer=current_layer,
         iteration=iteration, iter_dir=iter_dir, model_config=model_config,
@@ -213,11 +219,21 @@ def _run_implementation_phase(
     ):
         if isinstance(event, SessionStarted):
             _print_session_header(event)
+        elif isinstance(event, TextDelta):
+            sys.stdout.write(event.text)
+            sys.stdout.flush()
+        elif isinstance(event, AgentTurnComplete):
+            sys.stdout.write("\n\n")
+            sys.stdout.flush()
+            _suppress_next_append = True
         elif isinstance(event, (AppendMessage, AppendDebug)):
             persist_event(event, log_path, debug_path)
             if isinstance(event, AppendMessage):
-                print(render_message(event.msg))
-                print()
+                if _suppress_next_append:
+                    _suppress_next_append = False
+                else:
+                    print(render_message(event.msg))
+                    print()
         elif isinstance(event, ToolCallProgress):
             _print_tool_progress(event)
         elif isinstance(event, TaskBlocked):
@@ -282,7 +298,10 @@ def cmd_run(args):
         layer = resolve_layer(layer_override, iteration)
         print(f"Code review: diffs loaded for layer {layer}")
 
-    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=args.max_turns, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
+    from gotg.config import load_streaming_config
+    streaming = load_streaming_config(team_dir)
+
+    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=args.max_turns, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary, streaming=streaming)
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 
@@ -437,7 +456,10 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=target_total, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary)
+    from gotg.config import load_streaming_config
+    streaming = load_streaming_config(team_dir)
+
+    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=target_total, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary, streaming=streaming)
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 

@@ -178,6 +178,12 @@ def switch_current_iteration(team_dir: Path, iteration_id: str) -> None:
     iter_path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def load_streaming_config(team_dir: Path) -> bool:
+    """Read streaming flag from team.json. Returns False if not configured."""
+    team_config = json.loads((team_dir / "team.json").read_text())
+    return bool(team_config.get("streaming", False))
+
+
 def load_file_access(team_dir: Path) -> dict | None:
     """Read file_access config from team.json. Returns None if not configured."""
     team_config = json.loads((team_dir / "team.json").read_text())

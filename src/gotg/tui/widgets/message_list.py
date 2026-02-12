@@ -47,6 +47,34 @@ class Chatbox(Vertical):
         yield Markdown(self._content, classes="chatbox-md")
 
 
+class StreamingChatbox(Vertical):
+    """In-progress streaming message — Static during streaming, Markdown after finalize."""
+
+    DEFAULT_CSS = """
+    StreamingChatbox {
+        height: auto;
+    }
+    """
+
+    def __init__(self, agent: str, css_class: str = "chatbox-default") -> None:
+        super().__init__(classes=css_class)
+        self.border_title = agent
+        self._buffer: list[str] = []
+        self._static = Static("", classes="chatbox-stream")
+
+    def compose(self):
+        yield self._static
+
+    def append_text(self, text: str) -> None:
+        self._buffer.append(text)
+        self._static.update(escape("".join(self._buffer)))
+
+    def finalize(self, full_content: str) -> None:
+        """Replace streaming Static with Markdown. full_content is persisted text only."""
+        self._static.remove()
+        self.mount(Markdown(full_content, classes="chatbox-md"))
+
+
 # Backward compatibility alias for existing tests.
 MessageWidget = Chatbox
 
@@ -140,3 +168,17 @@ class MessageList(VerticalScroll):
         self._loading_visible = False
         for w in self.query(".ml-loading"):
             w.remove()
+
+    def begin_streaming(self, agent: str, css_class: str) -> StreamingChatbox:
+        """Create and mount a StreamingChatbox, return it for incremental updates."""
+        for e in self.query(".msg-empty"):
+            e.remove()
+        widget = StreamingChatbox(agent, css_class=css_class)
+        self._mount_before_spinner(widget)
+        self._maybe_scroll()
+        return widget
+
+    def finalize_streaming(self, widget: StreamingChatbox, content: str) -> None:
+        """Swap streaming Static with Markdown rendering."""
+        widget.finalize(content)
+        self._maybe_scroll()

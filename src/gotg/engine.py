@@ -23,6 +23,7 @@ class SessionDeps:
     agent_completion: Callable
     coach_completion: Callable
     single_completion: Callable | None = None  # raw_completion (implementation tool loop)
+    stream_completion: Callable | None = None  # raw_completion_stream (streaming)
 
 
 def run_session(

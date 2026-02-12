@@ -16,6 +16,7 @@ from gotg.events import (
     AdvanceComplete,
     AdvanceError,
     AdvanceProgress,
+    AgentTurnComplete,
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
@@ -25,11 +26,12 @@ from gotg.events import (
     SessionComplete,
     SessionStarted,
     TaskBlocked,
+    TextDelta,
     ToolCallProgress,
 )
 from gotg.session import persist_event
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
-from gotg.tui.messages import EngineEvent, SessionError, ToolProgress
+from gotg.tui.messages import EngineEvent, SessionError, TextDeltaMsg, ToolProgress
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList
@@ -84,6 +86,10 @@ class ChatScreen(Screen):
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
         self._debug_path = data_dir / "debug.jsonl"
+        # Streaming state
+        self._streaming_widget = None       # StreamingChatbox | None
+        self._streaming_turn_id: str | None = None
+        self._suppress_next_append = False
 
     def compose(self):
         yield Header()
@@ -237,7 +243,12 @@ class ChatScreen(Screen):
         try:
             from gotg.context import TeamContext
             from gotg.engine import SessionDeps, run_session
-            from gotg.model import agentic_completion, chat_completion
+            from gotg.model import (
+                agentic_completion,
+                chat_completion,
+                raw_completion,
+                raw_completion_stream,
+            )
             from gotg.session import (
                 SessionSetupError,
                 build_file_infra,
@@ -248,6 +259,7 @@ class ChatScreen(Screen):
             )
 
             ctx = TeamContext.from_team_dir(self.app.team_dir)
+            streaming_enabled = False
 
             if self._session_kind == "iteration":
                 iteration, iter_dir = ctx.iteration_store.get_current()
@@ -285,6 +297,8 @@ class ChatScreen(Screen):
                     1 for msg in history if is_agent_turn(msg, coach_name)
                 )
                 max_turns = current_agent_turns + iteration.get("max_turns", 30)
+                from gotg.config import load_streaming_config
+                streaming_enabled = load_streaming_config(ctx.team_dir)
 
                 from gotg.policy import iteration_policy
                 policy = iteration_policy(
@@ -292,6 +306,7 @@ class ChatScreen(Screen):
                     history=history, coach=ctx.coach, fileguard=fileguard,
                     approval_store=approval_store, worktree_map=worktree_map,
                     diffs_summary=diffs_summary, max_turns_override=max_turns,
+                    streaming=streaming_enabled,
                 )
             else:
                 # Grooming session
@@ -317,11 +332,11 @@ class ChatScreen(Screen):
                     max_turns=groom_meta.get("max_turns", 30),
                 )
 
-            from gotg.model import raw_completion
             deps = SessionDeps(
                 agent_completion=agentic_completion,
                 coach_completion=chat_completion,
                 single_completion=raw_completion,
+                stream_completion=raw_completion_stream if streaming_enabled else None,
             )
 
             # Route: implementation phase uses dedicated executor
@@ -343,9 +358,43 @@ class ChatScreen(Screen):
                     history=history, policy=policy,
                 )
 
+            import time
+            _stream_buffer: list[str] = []
+            _stream_turn_id: str | None = None
+            _stream_agent: str = ""
+            _last_flush = time.monotonic()
+
+            def _flush_stream_buffer():
+                nonlocal _stream_buffer, _last_flush
+                if _stream_buffer:
+                    self.post_message(TextDeltaMsg(
+                        _stream_agent, _stream_turn_id or "", "".join(_stream_buffer),
+                    ))
+                    _stream_buffer = []
+                    _last_flush = time.monotonic()
+
             for event in event_gen:
                 if self._cancel_requested:
+                    _flush_stream_buffer()
                     break
+
+                if isinstance(event, TextDelta):
+                    _stream_buffer.append(event.text)
+                    _stream_turn_id = event.turn_id
+                    _stream_agent = event.agent
+                    now = time.monotonic()
+                    if now - _last_flush >= 0.05:
+                        _flush_stream_buffer()
+                    continue
+
+                if isinstance(event, AgentTurnComplete):
+                    _flush_stream_buffer()
+                    self.post_message(EngineEvent(event))
+                    continue
+
+                # Flush any pending stream data before non-delta events
+                _flush_stream_buffer()
+
                 # Persist BEFORE posting to UI — if app crashes between the two,
                 # message is saved but not displayed (recoverable on reload).
                 persist_event(event, self._log_path, self._debug_path)
@@ -373,9 +422,22 @@ class ChatScreen(Screen):
             info.update_session_status("Running", event.turn)
             self._turn_count = event.turn
 
+        elif isinstance(event, AgentTurnComplete):
+            # Finalize the streaming widget with the persisted content
+            if self._streaming_widget is not None:
+                msg_list = self.query_one("#message-list", MessageList)
+                msg_list.finalize_streaming(self._streaming_widget, event.content)
+            self._streaming_widget = None
+            self._streaming_turn_id = None
+            self._suppress_next_append = True
+
         elif isinstance(event, AppendMessage):
             msg_list = self.query_one("#message-list", MessageList)
-            msg_list.append_message(event.msg)
+            # Skip rendering if already shown via streaming widget
+            if self._suppress_next_append:
+                self._suppress_next_append = False
+            else:
+                msg_list.append_message(event.msg)
             coach_name = resolve_coach_name(self.metadata.get("coach"))
             if is_agent_turn(event.msg, coach_name):
                 self._turn_count += 1
@@ -471,6 +533,24 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     f"Advance failed: {event.error}"
                 )
+
+    def on_text_delta_msg(self, message: TextDeltaMsg) -> None:
+        """Handle batched text deltas from streaming responses."""
+        from gotg.tui.widgets.message_list import StreamingChatbox, _css_class_for
+
+        msg_list = self.query_one("#message-list", MessageList)
+
+        if self._streaming_turn_id != message.turn_id:
+            # New turn — create a new streaming widget
+            css_class = _css_class_for(message.agent, msg_list._agent_index)
+            self._streaming_widget = msg_list.begin_streaming(
+                message.agent, css_class,
+            )
+            self._streaming_turn_id = message.turn_id
+
+        if self._streaming_widget is not None:
+            self._streaming_widget.append_text(message.text)
+            msg_list._maybe_scroll()
 
     def on_tool_progress(self, message: ToolProgress) -> None:
         """Handle ToolCallProgress events — update action bar with current operation."""
