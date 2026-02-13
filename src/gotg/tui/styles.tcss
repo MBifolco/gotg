@@ -127,6 +127,22 @@
     padding: 0 1;
 }
 
+.participant-tile.tile-active .pt-status {
+    text-style: bold;
+}
+
+.participant-tile.tile-pulse-0 {
+    border: round $warning;
+}
+
+.participant-tile.tile-pulse-1 {
+    border: round $success;
+}
+
+.participant-tile.tile-pulse-2 {
+    border: round $primary;
+}
+
 .pt-role {
     color: $text-muted;
 }

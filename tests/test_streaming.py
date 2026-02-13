@@ -989,31 +989,31 @@ class TestMessageListStreaming:
         assert hasattr(ml, "begin_streaming")
         assert hasattr(ml, "finalize_streaming")
 
-    def test_append_stream_delta_uses_pre_update_scroll_state_true(self):
+    def test_append_stream_delta_scrolls_when_streaming_auto_scroll(self):
         from gotg.tui.widgets.message_list import MessageList
 
         ml = MessageList()
         widget = MagicMock()
-        ml._is_near_bottom = MagicMock(return_value=True)
-        ml._maybe_scroll = MagicMock()
+        ml._streaming_auto_scroll = True
+        ml.scroll_end = MagicMock()
 
         ml.append_stream_delta(widget, "hello")
 
         widget.append_text.assert_called_once_with("hello")
-        ml._maybe_scroll.assert_called_once_with(True)
+        ml.scroll_end.assert_called_once_with(animate=False)
 
-    def test_append_stream_delta_uses_pre_update_scroll_state_false(self):
+    def test_append_stream_delta_skips_scroll_when_not_streaming(self):
         from gotg.tui.widgets.message_list import MessageList
 
         ml = MessageList()
         widget = MagicMock()
-        ml._is_near_bottom = MagicMock(return_value=False)
-        ml._maybe_scroll = MagicMock()
+        ml._streaming_auto_scroll = False
+        ml.scroll_end = MagicMock()
 
         ml.append_stream_delta(widget, "hello")
 
         widget.append_text.assert_called_once_with("hello")
-        ml._maybe_scroll.assert_called_once_with(False)
+        ml.scroll_end.assert_not_called()
 
     def test_maybe_scroll_calls_immediate_and_deferred_scroll(self):
         from gotg.tui.widgets.message_list import MessageList
@@ -1037,16 +1037,53 @@ class TestMessageListStreaming:
 
         assert ml._should_follow_output() is True
 
-    def test_deferred_scroll_end_clears_pending_follow_flag(self):
+    def test_should_follow_output_uses_streaming_auto_scroll(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml._is_near_bottom = MagicMock(return_value=False)
+        ml._follow_until_refresh = False
+        ml._streaming_auto_scroll = True
+
+        assert ml._should_follow_output() is True
+
+    def test_finalize_streaming_clears_auto_scroll_flag(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml._streaming_auto_scroll = True
+        widget = MagicMock()
+        ml.scroll_end = MagicMock()
+        ml.call_after_refresh = MagicMock()
+
+        ml.finalize_streaming(widget, "final content")
+
+        assert ml._streaming_auto_scroll is False
+        widget.finalize.assert_called_once_with("final content")
+
+    def test_deferred_scroll_end_starts_settle_timer(self):
         from gotg.tui.widgets.message_list import MessageList
 
         ml = MessageList()
         ml.scroll_end = MagicMock()
+        ml.set_timer = MagicMock()
         ml._follow_until_refresh = True
 
         ml._deferred_scroll_end()
 
         ml.scroll_end.assert_called_once_with(animate=False)
+        # Flag stays alive — settle timer will clear it after content stops changing
+        assert ml._follow_until_refresh is True
+        ml.set_timer.assert_called_once()
+
+    def test_settle_complete_clears_follow_flag(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml._follow_until_refresh = True
+
+        ml._settle_complete()
+
         assert ml._follow_until_refresh is False
 
     def test_hide_loading_preserves_scroll_follow_when_near_bottom(self):

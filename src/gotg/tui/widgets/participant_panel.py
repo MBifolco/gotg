@@ -25,11 +25,15 @@ def _tool_line(tool_name: str, path: str, status: str, size: int | None) -> str:
 class ParticipantTile(Vertical):
     """Single participant tile with live status and tool history."""
 
+    _ACTIVE_COLORS = ("$warning", "$success", "$primary")
+
     def __init__(self, name: str, role: str = "", max_items: int = 8) -> None:
         super().__init__(classes="participant-tile")
         self.border_title = name
         self._role = role
         self._lines: deque[str] = deque(maxlen=max_items)
+        self._pulse_timer = None
+        self._pulse_index = 0
 
     def compose(self):
         yield Static("", id="pt-role", classes="pt-role")
@@ -44,6 +48,27 @@ class ParticipantTile(Vertical):
     def set_status(self, status: str) -> None:
         """Update participant status line."""
         self.query_one("#pt-status", Static).update(f"Status: {escape(status)}")
+
+    def start_pulse(self) -> None:
+        """Start cycling the tile border color to indicate activity."""
+        self.add_class("tile-active")
+        if self._pulse_timer is None:
+            self._pulse_index = 0
+            self._pulse_timer = self.set_interval(0.6, self._pulse_tick)
+
+    def stop_pulse(self) -> None:
+        """Stop the activity pulse and reset border."""
+        if self._pulse_timer is not None:
+            self._pulse_timer.stop()
+            self._pulse_timer = None
+        self.remove_class("tile-active", "tile-pulse-0", "tile-pulse-1", "tile-pulse-2")
+
+    def _pulse_tick(self) -> None:
+        """Cycle through pulse classes."""
+        for i in range(3):
+            self.remove_class(f"tile-pulse-{i}")
+        self.add_class(f"tile-pulse-{self._pulse_index}")
+        self._pulse_index = (self._pulse_index + 1) % 3
 
     def add_tool_event(
         self,
@@ -105,10 +130,14 @@ class ParticipantPanel(VerticalScroll):
         return self._mount_tile(name, "")
 
     def mark_typing(self, name: str) -> None:
-        self.ensure_participant(name).set_status("typing")
+        tile = self.ensure_participant(name)
+        tile.set_status("typing")
+        tile.start_pulse()
 
     def mark_idle(self, name: str) -> None:
-        self.ensure_participant(name).set_status("idle")
+        tile = self.ensure_participant(name)
+        tile.set_status("idle")
+        tile.stop_pulse()
 
     def add_tool_progress(self, event) -> None:
         """Record a tool progress event in the acting participant's tile only."""

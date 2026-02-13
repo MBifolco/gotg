@@ -108,10 +108,6 @@ class ChatScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        # Show loading indicator immediately while messages parse
-        msg_list = self.query_one("#message-list", MessageList)
-        msg_list.show_loading()
-
         # Defer heavy I/O + widget mounting so the screen paints first
         self.call_after_refresh(self._load_initial_messages)
 
@@ -182,6 +178,28 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     "Phase complete. Press P to advance, C to continue discussing."
                 )
+            self._pin_after_action_bar()
+            return
+
+        # Detect ask_pm (coach paused for PM input)
+        ask_pm_data = last_content_msg.get("ask_pm")
+        if ask_pm_data:
+            self._pause_reason = PauseReason.COACH_QUESTION
+            self.session_state = SessionState.PAUSED
+            msg_list = self.query_one("#message-list", MessageList)
+            msg_list.append_coach_prompt(ask_pm_data["question"])
+            options = ask_pm_data.get("options") or []
+            if options:
+                from gotg.tui.modals.decision import DecisionModal
+                self.app.push_screen(
+                    DecisionModal(ask_pm_data["question"], options),
+                    callback=self._on_decision_result,
+                )
+            else:
+                self.query_one("#action-bar", ActionBar).show(
+                    "Type reply and press Enter."
+                )
+            self._pin_after_action_bar()
             return
 
         # Detect task assignment needed (pre-code-review/implementation with unassigned tasks)
@@ -196,18 +214,12 @@ class ChatScreen(Screen):
             return  # Children not composed yet; on_mount handles initial state
         input_widget = self.query_one("#chat-input", Input)
         info = self.query_one("#info-tile", InfoTile)
-        msg_list = self.query_one("#message-list", MessageList)
-
-        if state in (SessionState.RUNNING, SessionState.ADVANCING):
-            msg_list.show_loading()
-        else:
-            msg_list.hide_loading()
 
         if state == SessionState.VIEWING:
             input_widget.placeholder = "Press R to run, C to continue..."
             input_widget.disabled = False
             info.update_session_status("")
-            msg_list.focus()
+            self.query_one("#message-list", MessageList).focus()
         elif state == SessionState.RUNNING:
             input_widget.placeholder = "Session running..."
             input_widget.disabled = True
@@ -248,7 +260,6 @@ class ChatScreen(Screen):
             append_message(self._log_path, msg)
             msg_list = self.query_one("#message-list", MessageList)
             msg_list.append_message(msg)
-            msg_list.show_loading()
 
         self.run_worker(self._run_engine, thread=True)
 
@@ -465,8 +476,6 @@ class ChatScreen(Screen):
                 self._turn_count += 1
             info = self.query_one("#info-tile", InfoTile)
             info.update_session_status("Running", self._turn_count)
-            if self.session_state == SessionState.RUNNING:
-                msg_list.show_loading()
 
         elif isinstance(event, AppendDebug):
             pass  # Already persisted in worker
@@ -478,6 +487,7 @@ class ChatScreen(Screen):
                 f"Paused: {event.pending_count} pending approval(s). "
                 "Press A to review approvals, C to continue."
             )
+            self._pin_after_action_bar()
 
         elif isinstance(event, CoachAskedPM):
             self._pause_reason = PauseReason.COACH_QUESTION
@@ -494,6 +504,7 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     "Type reply and press Enter."
                 )
+            self._pin_after_action_bar()
 
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
@@ -506,6 +517,7 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     "Phase complete. Press P to advance, C to continue discussing."
                 )
+            self._pin_after_action_bar()
 
         elif isinstance(event, LayerComplete):
             self._pause_reason = PauseReason.PHASE_COMPLETE
@@ -514,12 +526,14 @@ class ChatScreen(Screen):
                 f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks). "
                 "Press D to review diffs and merge."
             )
+            self._pin_after_action_bar()
 
         elif isinstance(event, TaskBlocked):
             blocked = ", ".join(event.task_ids)
             self.query_one("#action-bar", ActionBar).show(
                 f"Blocked: {event.agent} -> {blocked}"
             )
+            self._pin_after_action_bar()
 
         elif isinstance(event, SessionComplete):
             self.session_state = SessionState.COMPLETE
@@ -527,6 +541,7 @@ class ChatScreen(Screen):
                 f"Session complete ({event.total_turns} turns). "
                 "Press C to continue with more turns."
             )
+            self._pin_after_action_bar()
 
         elif isinstance(event, AdvanceProgress):
             self.query_one("#action-bar", ActionBar).show(event.message)
@@ -555,6 +570,11 @@ class ChatScreen(Screen):
                 self.query_one("#action-bar", ActionBar).show(
                     f"Advance failed: {event.error}"
                 )
+
+    def _pin_after_action_bar(self) -> None:
+        """Re-pin scroll after ActionBar appears and steals viewport height."""
+        msg_list = self.query_one("#message-list", MessageList)
+        msg_list.pin_to_bottom()
 
     def on_text_delta_msg(self, message: TextDeltaMsg) -> None:
         """Handle batched text deltas from streaming responses."""

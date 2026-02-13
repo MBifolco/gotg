@@ -442,11 +442,21 @@ def _do_coach_turn(
             content=coach_text,
         )
 
+    # Check for ask_pm tool calls before building coach message
+    ask_pm_calls = [tc for tc in coach_tool_calls if tc["name"] == "ask_pm"] if policy.stop_on_ask_pm else []
+    ask_pm_input = ask_pm_calls[0]["input"] if ask_pm_calls else None
+
     coach_msg = {
         "from": coach["name"],
         "iteration": iteration["id"],
         "content": coach_text,
     }
+    if ask_pm_input:
+        coach_msg["ask_pm"] = {
+            "question": ask_pm_input["question"],
+            "response_type": ask_pm_input.get("response_type", "feedback"),
+            "options": list(ask_pm_input.get("options") or []),
+        }
     yield AppendMessage(coach_msg)
     history.append(coach_msg)
 
@@ -456,14 +466,11 @@ def _do_coach_turn(
         return True
 
     # Coach requests PM input
-    if policy.stop_on_ask_pm:
-        ask_pm_calls = [tc for tc in coach_tool_calls if tc["name"] == "ask_pm"]
-        if ask_pm_calls:
-            inp = ask_pm_calls[0]["input"]
-            question = inp["question"]
-            response_type = inp.get("response_type", "feedback")
-            options = tuple(inp.get("options") or [])
-            yield CoachAskedPM(question, response_type=response_type, options=options)
-            return True
+    if ask_pm_input:
+        question = ask_pm_input["question"]
+        response_type = ask_pm_input.get("response_type", "feedback")
+        options = tuple(ask_pm_input.get("options") or [])
+        yield CoachAskedPM(question, response_type=response_type, options=options)
+        return True
 
     return False
