@@ -82,10 +82,10 @@ def build_prompt(
     if worktree_map and agent_config["name"] in worktree_map:
         system_parts.append(
             "WORKTREE: You are working in your own isolated git worktree. "
-            "Files you write are only visible in your worktree — your "
-            "teammates cannot read your files and you cannot read theirs. "
-            "If you need to see a teammate's code, ask them to share it "
-            "in the conversation."
+            "Files you write go to your worktree only. You can read committed "
+            "code from the main branch as a fallback when files don't exist in "
+            "your worktree. You cannot read uncommitted files from other agents' "
+            "worktrees."
         )
 
     if groomed_summary:

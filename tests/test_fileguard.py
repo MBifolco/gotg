@@ -427,6 +427,74 @@ def test_validate_write_approved_blocks_protected(project):
 
 # --- with_root ---
 
+# --- fallback_root (cross-worktree reads) ---
+
+def test_read_fallback_to_main(project, tmp_path):
+    """file_read finds file in fallback_root when missing from worktree."""
+    (project / "src" / "lib.py").write_text("main code")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "src").mkdir()
+    guard = FileGuard(worktree, {"writable_paths": ["src/**"]}, fallback_root=project)
+    result = guard.validate_read("src/lib.py")
+    assert result == (project / "src" / "lib.py").resolve()
+
+
+def test_read_prefers_worktree_over_fallback(project, tmp_path):
+    """When file exists in both worktree and fallback, worktree wins."""
+    (project / "src" / "lib.py").write_text("main code")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "src").mkdir()
+    (worktree / "src" / "lib.py").write_text("worktree code")
+    guard = FileGuard(worktree, {"writable_paths": ["src/**"]}, fallback_root=project)
+    result = guard.validate_read("src/lib.py")
+    assert result == (worktree / "src" / "lib.py").resolve()
+
+
+def test_read_fallback_blocks_env(project, tmp_path):
+    """.env in fallback is still denied."""
+    (project / ".env").write_text("SECRET=x")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    guard = FileGuard(worktree, {"writable_paths": ["src/**"]}, fallback_root=project)
+    with pytest.raises(SecurityError, match="Protected path"):
+        guard.validate_read(".env")
+
+
+def test_read_no_fallback_when_not_configured(tmp_path):
+    """Without fallback_root, missing files just return the worktree path."""
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / "src").mkdir()
+    guard = FileGuard(worktree, {"writable_paths": ["src/**"]})
+    result = guard.validate_read("src/lib.py")
+    # Returns the (non-existent) worktree path — no fallback
+    assert result == (worktree / "src" / "lib.py").resolve()
+    assert not result.exists()
+
+
+def test_list_fallback_to_main(project, tmp_path):
+    """Directory listing falls back to fallback_root."""
+    (project / "lib").mkdir()
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    guard = FileGuard(worktree, {"writable_paths": ["src/**"]}, fallback_root=project)
+    result = guard.validate_list("lib")
+    assert result == (project / "lib").resolve()
+
+
+def test_with_root_sets_fallback(project, tmp_path):
+    """with_root() sets fallback_root to the original project_root."""
+    guard = _guard(project)
+    new_root = tmp_path / "worktree"
+    new_root.mkdir()
+    new_guard = guard.with_root(new_root)
+    assert new_guard.fallback_root == project.resolve()
+
+
+# --- with_root ---
+
 def test_with_root_creates_new_guard(project, tmp_path):
     guard = _guard(project, enable_approvals=True, protected_paths=["vendor/**"])
     new_root = tmp_path / "worktree"

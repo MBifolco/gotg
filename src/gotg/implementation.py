@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Iterator
 
@@ -34,6 +35,35 @@ def _classify_result(result_str: str) -> str:
     if result_str.startswith("Pending approval"):
         return "pending_approval"
     return "ok"
+
+
+def _normalize_approach_text(text: str) -> str:
+    """Canonicalize approach text for tolerant matching."""
+    if not text:
+        return ""
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    return " ".join(tokens)
+
+
+def _approach_matches(expected: str, attested: str) -> bool:
+    """Return True when attested approach is materially aligned with expected text."""
+    exp = _normalize_approach_text(expected)
+    got = _normalize_approach_text(attested)
+    if not exp:
+        return True
+    if not got:
+        return False
+    if got == exp:
+        return True
+    if got in exp or exp in got:
+        return True
+
+    exp_tokens = set(exp.split())
+    got_tokens = set(got.split())
+    if not exp_tokens:
+        return True
+    coverage = len(exp_tokens & got_tokens) / len(exp_tokens)
+    return coverage >= 0.6
 
 
 def _load_tasks(iter_dir: Path) -> list[dict]:
@@ -93,8 +123,11 @@ def _format_agent_tasks(tasks: list[dict], agent_name: str, layer: int) -> str:
         entry = (
             f"- **{t['id']}** [{status}]\n"
             f"  {t['description']}\n"
-            f"  Done when: {t['done_criteria']}"
         )
+        approach = t.get("approach")
+        if approach:
+            entry += f"  APPROACH: {approach}\n"
+        entry += f"  Done when: {t['done_criteria']}"
         notes = t.get("notes")
         if notes:
             entry += f"\n  Notes: {notes}"
@@ -163,35 +196,98 @@ def _handle_complete_tasks(
     """Validate and persist task completion. Returns result string."""
     task_ids = tool_input.get("task_ids", [])
     summary = tool_input.get("summary", "")
+    approach_attestation = tool_input.get("approach_attestation")
 
     if not task_ids:
         return "Error: task_ids is empty"
+    if not isinstance(approach_attestation, list) or not approach_attestation:
+        return "Error: approach_attestation is required and must be a non-empty array"
 
     lt = _layer_tasks(tasks, layer)
+    lt_by_id = {t["id"]: t for t in lt}
     lt_ids = {t["id"] for t in lt}
     agent_lt = _agent_tasks(lt, agent_name)
     agent_lt_ids = {t["id"] for t in agent_lt}
+
+    # Build and validate attestations.
+    attest_by_task: dict[str, dict] = {}
+    for entry in approach_attestation:
+        if not isinstance(entry, dict):
+            return "Error: each approach_attestation entry must be an object"
+        tid = entry.get("task_id")
+        if not isinstance(tid, str) or not tid:
+            return "Error: each approach_attestation entry must include a non-empty task_id"
+        if tid in attest_by_task:
+            return f"Error: duplicate approach_attestation for task '{tid}'"
+        followed = entry.get("followed_approach")
+        if not isinstance(followed, bool):
+            return (
+                f"Error: approach_attestation for task '{tid}' must include "
+                "boolean followed_approach"
+            )
+        agreed = entry.get("agreed_approach")
+        if not isinstance(agreed, str):
+            return (
+                f"Error: approach_attestation for task '{tid}' must include "
+                "string agreed_approach"
+            )
+        notes = (entry.get("notes") or "").strip()
+        if not notes:
+            return (
+                f"Error: approach_attestation for task '{tid}' must include "
+                "non-empty notes"
+            )
+        attest_by_task[tid] = {
+            "followed_approach": followed,
+            "agreed_approach": " ".join(agreed.split()),
+            "notes": notes,
+        }
+
+    mismatched: list[str] = []
 
     for tid in task_ids:
         if tid not in lt_ids:
             return f"Error: task '{tid}' is not in layer {layer}"
         if tid not in agent_lt_ids:
             return f"Error: task '{tid}' is not assigned to you"
+        if tid not in attest_by_task:
+            return (
+                f"Error: missing approach_attestation for task '{tid}'. "
+                "Provide one attestation entry per completed task."
+            )
+        att = attest_by_task[tid]
+        if not att["followed_approach"]:
+            return (
+                f"Error: task '{tid}' marked followed_approach=false. "
+                "Use report_blocked if you could not follow the agreed approach."
+            )
+        expected_approach_raw = (lt_by_id[tid].get("approach") or "").strip()
+        if expected_approach_raw and not _approach_matches(expected_approach_raw, att["agreed_approach"]):
+            mismatched.append(tid)
 
     completed = []
     for t in tasks:
         if t["id"] in task_ids:
             if t.get("status") == "done":
                 continue
+            att = attest_by_task[t["id"]]
             t["status"] = "done"
             t["completed_by"] = agent_name
             t["completion_summary"] = summary
+            t["approach_followed"] = True
+            t["approach_attestation"] = att["notes"]
+            t["approach_match"] = t["id"] not in mismatched
             t.pop("blocked_by", None)
             t.pop("blocked_reason", None)
             completed.append(t["id"])
 
     _save_tasks(iter_dir, tasks)
 
+    if completed and mismatched:
+        return (
+            f"Completed tasks: {', '.join(completed)} "
+            f"(warning: attestation text differed from task APPROACH for: {', '.join(mismatched)})"
+        )
     if completed:
         return f"Completed tasks: {', '.join(completed)}"
     return "Tasks already marked as done."
@@ -454,7 +550,23 @@ def run_implementation(
                 _clear_state(iter_dir)
                 break
 
+            if rnd.content.strip():
+                if policy.streaming and deps.stream_completion:
+                    yield AgentTurnComplete(
+                        agent=agent_name,
+                        turn_id=turn_id,
+                        content=rnd.content,
+                    )
+                msg = {
+                    "from": agent_name,
+                    "iteration": iteration["id"],
+                    "content": rnd.content,
+                }
+                yield AppendMessage(msg)
+                history.append(msg)
+
             tool_results = []
+            round_ops: list[dict] = []
             round_was_read_only = True
 
             for tc in rnd.tool_calls:
@@ -481,6 +593,11 @@ def run_implementation(
                         round_was_read_only = False
 
                 tool_results.append({"id": tc["id"], "result": result})
+                round_ops.append({
+                    "name": tc_name,
+                    "input": tc_input,
+                    "result": result,
+                })
 
                 status = _classify_result(result)
                 content_size = None
@@ -519,6 +636,13 @@ def run_implementation(
                         task_ids=blocked_ids,
                         reason=tc_input.get("reason", ""),
                     )
+
+            if round_ops:
+                yield AppendDebug({
+                    "turn": turn_id,
+                    "agent": agent_name,
+                    "tool_operations": round_ops,
+                })
 
             continuation = rnd.build_continuation(tool_results)
             llm_messages.extend(continuation)

@@ -76,3 +76,17 @@ def test_tool_descriptions_from_toml():
     for tool in AGENT_TOOLS + COACH_TOOLS:
         assert isinstance(tool["description"], str)
         assert len(tool["description"]) > 0
+
+
+def test_task_extraction_prompt_mentions_approach():
+    assert "approach" in COACH_PLANNING_PROMPT.lower()
+
+
+def test_pre_code_review_coach_mentions_approach():
+    prompt = COACH_FACILITATION_PROMPTS["pre-code-review"]
+    assert "approach" in prompt.lower()
+
+
+def test_implementation_coach_mentions_approach():
+    prompt = COACH_FACILITATION_PROMPTS["implementation"]
+    assert "approach" in prompt.lower()

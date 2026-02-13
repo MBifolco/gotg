@@ -132,6 +132,24 @@ def _tool_round(text, tool_calls):
     )
 
 
+def _complete_input(task_ids, summary, approach_map=None):
+    """Build complete_tasks input payload with required approach attestation."""
+    approach_map = approach_map or {}
+    att = []
+    for tid in task_ids:
+        att.append({
+            "task_id": tid,
+            "followed_approach": True,
+            "agreed_approach": approach_map.get(tid, ""),
+            "notes": f"Implemented {tid} following the agreed approach.",
+        })
+    return {
+        "task_ids": task_ids,
+        "summary": summary,
+        "approach_attestation": att,
+    }
+
+
 def _collect(gen):
     return list(gen)
 
@@ -172,11 +190,24 @@ def test_format_agent_tasks():
     assert "layer 0" in result
 
 
+def test_format_agent_tasks_shows_approach():
+    tasks = _make_tasks()
+    tasks[0]["approach"] = "Use eval() after character-set validation."
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "APPROACH: Use eval() after character-set validation." in result
+
+
+def test_format_agent_tasks_omits_approach_when_absent():
+    tasks = _make_tasks()
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "APPROACH:" not in result
+
+
 def test_handle_complete_tasks_success(tmp_path):
     tasks = _make_tasks()
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
-        {"task_ids": ["task-a"], "summary": "Did A"},
+        _complete_input(["task-a"], "Did A"),
         "agent-1", tasks, 0, iter_dir,
     )
     assert "Completed" in result
@@ -187,13 +218,16 @@ def test_handle_complete_tasks_success(tmp_path):
     assert done_task["status"] == "done"
     assert done_task["completed_by"] == "agent-1"
     assert done_task["completion_summary"] == "Did A"
+    assert done_task["approach_followed"] is True
+    assert "approach" in done_task["approach_attestation"]
+    assert done_task["approach_match"] is True
 
 
 def test_handle_complete_tasks_wrong_agent(tmp_path):
     tasks = _make_tasks()
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
-        {"task_ids": ["task-a"], "summary": "Did A"},
+        _complete_input(["task-a"], "Did A"),
         "agent-2", tasks, 0, iter_dir,
     )
     assert result.startswith("Error:")
@@ -204,7 +238,7 @@ def test_handle_complete_tasks_wrong_layer(tmp_path):
     tasks = _make_tasks(layer=0)
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
-        {"task_ids": ["task-a"], "summary": "Did A"},
+        _complete_input(["task-a"], "Did A"),
         "agent-1", tasks, 1, iter_dir,
     )
     assert result.startswith("Error:")
@@ -216,7 +250,7 @@ def test_handle_complete_tasks_already_done(tmp_path):
     tasks[0]["status"] = "done"
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
-        {"task_ids": ["task-a"], "summary": "Did A"},
+        _complete_input(["task-a"], "Did A"),
         "agent-1", tasks, 0, iter_dir,
     )
     assert "already" in result.lower()
@@ -226,10 +260,64 @@ def test_handle_complete_tasks_empty_ids(tmp_path):
     tasks = _make_tasks()
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
-        {"task_ids": [], "summary": "Did nothing"},
+        _complete_input([], "Did nothing"),
         "agent-1", tasks, 0, iter_dir,
     )
     assert result.startswith("Error:")
+
+
+def test_handle_complete_tasks_missing_attestation(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result = _handle_complete_tasks(
+        {"task_ids": ["task-a"], "summary": "Did A"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "approach_attestation" in result
+
+
+def test_handle_complete_tasks_followed_false_rejected(tmp_path):
+    tasks = _make_tasks()
+    tasks[0]["approach"] = "Use eval() after validation."
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    payload = _complete_input(
+        ["task-a"], "Did A", {"task-a": "Use eval() after validation."},
+    )
+    payload["approach_attestation"][0]["followed_approach"] = False
+    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
+    assert result.startswith("Error:")
+    assert "followed_approach=false" in result
+
+
+def test_handle_complete_tasks_approach_mismatch_warns_but_completes(tmp_path):
+    tasks = _make_tasks()
+    tasks[0]["approach"] = "Use eval() after validation."
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    payload = _complete_input(["task-a"], "Did A", {"task-a": "Use custom parser."})
+    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
+    assert result.startswith("Completed tasks:")
+    assert "warning:" in result
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    done_task = next(t for t in saved if t["id"] == "task-a")
+    assert done_task["status"] == "done"
+    assert done_task["approach_match"] is False
+
+
+def test_handle_complete_tasks_approach_format_variation_allowed(tmp_path):
+    tasks = _make_tasks()
+    tasks[0]["approach"] = (
+        "Use ast.parse() + ast.NodeVisitor from Python's standard library "
+        "to safely evaluate expressions."
+    )
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    payload = _complete_input(
+        ["task-a"],
+        "Did A",
+        {"task-a": "Use AST parse and NodeVisitor from Python standard library to safely evaluate expressions"},
+    )
+    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
+    assert result.startswith("Completed tasks:")
 
 
 def test_handle_report_blocked_success(tmp_path):
@@ -342,6 +430,50 @@ def test_tool_progress_emitted(tmp_path):
     assert progress[0].agent == "agent-1"
 
 
+def test_tool_round_text_persisted_and_debugged(tmp_path):
+    """Agent text from a tool-call round is persisted, and tool ops hit debug log."""
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    def mock_single(**kw):
+        return _tool_round("Implementing now.", [
+            {
+                "name": "complete_tasks",
+                "input": _complete_input(["task-a"], "Did A"),
+                "id": "tc1",
+            },
+        ])
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+
+    events = _collect(run_implementation(
+        AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
+        deps, [], _make_policy(),
+    ))
+
+    agent_msgs = [
+        e.msg for e in _events_of_type(events, AppendMessage)
+        if e.msg.get("from") == "agent-1"
+    ]
+    assert any("Implementing now." in m.get("content", "") for m in agent_msgs)
+
+    dbg = _events_of_type(events, AppendDebug)
+    assert any(
+        d.entry.get("tool_operations")
+        and d.entry["tool_operations"][0].get("name") == "complete_tasks"
+        for d in dbg
+    )
+
+
 def test_complete_tasks_persists_and_emits_layer_complete(tmp_path):
     """complete_tasks updates tasks.json and triggers LayerComplete."""
     tasks = _make_tasks()
@@ -357,18 +489,22 @@ def test_complete_tasks_persists_and_emits_layer_complete(tmp_path):
             agent_calls["agent-1"] += 1
             if agent_calls["agent-1"] == 1:
                 return _tool_round("Completing tasks.", [
-                    {"name": "complete_tasks", "input": {
-                        "task_ids": ["task-a"], "summary": "Implemented A",
-                    }, "id": "tc1"},
+                    {
+                        "name": "complete_tasks",
+                        "input": _complete_input(["task-a"], "Implemented A"),
+                        "id": "tc1",
+                    },
                 ])
             return _text_round("Task A done.")
         else:
             agent_calls["agent-2"] += 1
             if agent_calls["agent-2"] == 1:
                 return _tool_round("Completing tasks.", [
-                    {"name": "complete_tasks", "input": {
-                        "task_ids": ["task-b"], "summary": "Implemented B",
-                    }, "id": "tc2"},
+                    {
+                        "name": "complete_tasks",
+                        "input": _complete_input(["task-b"], "Implemented B"),
+                        "id": "tc2",
+                    },
                 ])
             return _text_round("Task B done.")
 
@@ -406,9 +542,11 @@ def test_complete_tasks_validation_rejects_wrong_agent(tmp_path):
         if call_count[0] == 1:
             # agent-1 tries to complete agent-2's task
             return _tool_round("Completing wrong task.", [
-                {"name": "complete_tasks", "input": {
-                    "task_ids": ["task-b"], "summary": "Stole B",
-                }, "id": "tc1"},
+                {
+                    "name": "complete_tasks",
+                    "input": _complete_input(["task-b"], "Stole B"),
+                    "id": "tc1",
+                },
             ])
         return _text_round("Ok.")
 
@@ -451,9 +589,11 @@ def test_single_agent_layer(tmp_path):
         call_count[0] += 1
         if call_count[0] == 1:
             return _tool_round("Done.", [
-                {"name": "complete_tasks", "input": {
-                    "task_ids": ["task-a"], "summary": "Did A",
-                }, "id": "tc1"},
+                {
+                    "name": "complete_tasks",
+                    "input": _complete_input(["task-a"], "Did A"),
+                    "id": "tc1",
+                },
             ])
         return _text_round("All done.")
 
@@ -533,9 +673,11 @@ def test_resume_reads_tasks_from_disk(tmp_path):
     def mock_single(**kw):
         call_log.append("called")
         return _tool_round("Done.", [
-            {"name": "complete_tasks", "input": {
-                "task_ids": ["task-b"], "summary": "Did B",
-            }, "id": "tc1"},
+            {
+                "name": "complete_tasks",
+                "input": _complete_input(["task-b"], "Did B"),
+                "id": "tc1",
+            },
         ])
 
     deps = SessionDeps(
@@ -614,9 +756,11 @@ def test_auto_commit_worktrees_on_layer_complete(tmp_path):
         call_count[agent] += 1
         if call_count[agent] == 1:
             return _tool_round("Done.", [
-                {"name": "complete_tasks", "input": {
-                    "task_ids": [task_id], "summary": f"Did {task_id}",
-                }, "id": f"tc-{agent}"},
+                {
+                    "name": "complete_tasks",
+                    "input": _complete_input([task_id], f"Did {task_id}"),
+                    "id": f"tc-{agent}",
+                },
             ])
         return _text_round("Finished.")
 

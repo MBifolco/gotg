@@ -66,6 +66,9 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
                 f"  Done when: {t['done_criteria']}\n"
                 f"  Depends on: {dep_str}"
             )
+            approach = t.get("approach")
+            if approach:
+                entry += f"\n  Approach: {approach}"
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"
@@ -89,6 +92,9 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
                 f"  Done when: {t['done_criteria']}\n"
                 f"  Depends on: {dep_str}"
             )
+            approach = t.get("approach")
+            if approach:
+                entry += f"\n  Approach: {approach}"
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"

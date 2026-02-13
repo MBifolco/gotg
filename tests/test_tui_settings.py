@@ -271,6 +271,29 @@ async def test_settings_loads_switches(tmp_path):
         assert app.screen.query_one("#set-coach-enabled", Switch).value is True
         assert app.screen.query_one("#set-approvals", Switch).value is False
         assert app.screen.query_one("#set-worktrees", Switch).value is False
+        assert app.screen.query_one("#set-streaming", Switch).value is False
+
+
+@pytest.mark.asyncio
+async def test_settings_loads_streaming_enabled(tmp_path):
+    """SettingsScreen loads streaming=true from team.json."""
+    team_dir = _make_team_dir(tmp_path)
+    config = json.loads((team_dir / "team.json").read_text())
+    config["streaming"] = True
+    (team_dir / "team.json").write_text(json.dumps(config, indent=2) + "\n")
+
+    from gotg.tui.app import GotgApp
+    from gotg.tui.screens.settings import SettingsScreen
+    from textual.widgets import Switch
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SettingsScreen())
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.screen.query_one("#set-streaming", Switch).value is True
 
 
 @pytest.mark.asyncio
@@ -343,6 +366,7 @@ async def test_settings_save_all_sections(tmp_path):
         app.screen.query_one("#set-coach-name", Input).value = "my-coach"
         app.screen.query_one("#set-writable-paths", Input).value = "lib/**, bin/**"
         app.screen.query_one("#set-worktrees", Switch).value = True
+        app.screen.query_one("#set-streaming", Switch).value = True
         await pilot.press("ctrl+s")
         await pilot.pause()
 
@@ -351,6 +375,7 @@ async def test_settings_save_all_sections(tmp_path):
     assert saved["coach"]["name"] == "my-coach"
     assert saved["file_access"]["writable_paths"] == ["lib/**", "bin/**"]
     assert saved["worktrees"]["enabled"] is True
+    assert saved["streaming"] is True
 
 
 @pytest.mark.asyncio

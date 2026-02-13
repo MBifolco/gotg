@@ -123,6 +123,25 @@ def test_format_shows_unassigned():
     assert "unassigned" in result
 
 
+def test_format_tasks_summary_includes_approach():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "approach": "Use eval() after validation."},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Approach: Use eval() after validation." in result
+
+
+def test_format_tasks_summary_omits_approach_when_absent():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending"},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Approach:" not in result
+
+
 def test_format_tasks_summary_includes_notes():
     tasks = [
         {"id": "t1", "depends_on": [], "description": "Task",

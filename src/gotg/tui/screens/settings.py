@@ -138,6 +138,12 @@ class SettingsScreen(Screen):
                 yield Label("Enabled")
                 yield Switch(id="set-worktrees", value=False)
 
+            # ── Streaming ──
+            yield Label("Streaming", classes="settings-section")
+            with Horizontal(classes="switch-row"):
+                yield Label("Enabled")
+                yield Switch(id="set-streaming", value=False)
+
             yield Label(
                 "Ctrl+S=save  Escape=back  A=add agent  E=edit agent  Del=remove",
                 classes="hint",
@@ -201,6 +207,9 @@ class SettingsScreen(Screen):
         # Worktrees
         wt = config.get("worktrees") or {}
         self.query_one("#set-worktrees", Switch).value = wt.get("enabled", False)
+
+        # Streaming
+        self.query_one("#set-streaming", Switch).value = bool(config.get("streaming", False))
 
     def _refresh_agent_table(self) -> None:
         """Rebuild agent DataTable from self._agents."""
@@ -334,12 +343,16 @@ class SettingsScreen(Screen):
             "enabled": self.query_one("#set-worktrees", Switch).value,
         }
 
+        # Streaming
+        streaming = self.query_one("#set-streaming", Switch).value
+
         # Assemble and save
         config: dict = {
             "model": model,
             "agents": self._agents,
             "file_access": file_access,
             "worktrees": worktrees,
+            "streaming": streaming,
         }
         if coach is not None:
             config["coach"] = coach

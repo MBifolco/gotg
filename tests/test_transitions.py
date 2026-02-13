@@ -108,6 +108,25 @@ def test_extract_tasks_success():
     assert "layer" in tasks[0]
 
 
+def test_extract_tasks_preserves_approach_field():
+    """approach field from LLM output survives compute_layers and is stored."""
+    tasks_json = json.dumps([
+        {"id": "t1", "description": "Do thing", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": None, "status": "pending",
+         "approach": "Use eval() after validation."},
+    ])
+
+    def mock_chat(**kwargs):
+        return tasks_json
+
+    history = [{"from": "agent-1", "content": "Plan: use eval"}]
+    tasks, raw, error = extract_tasks(history, MODEL_CONFIG, "coach", mock_chat)
+    assert tasks is not None
+    assert error is None
+    assert tasks[0]["approach"] == "Use eval() after validation."
+    assert "layer" in tasks[0]
+
+
 def test_extract_tasks_invalid_json():
     def mock_chat(**kwargs):
         return "not json at all"

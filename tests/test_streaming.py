@@ -109,6 +109,23 @@ def _tool_round(text, tool_calls):
     )
 
 
+def _complete_input(task_ids, summary, approach_map=None):
+    approach_map = approach_map or {}
+    att = []
+    for tid in task_ids:
+        att.append({
+            "task_id": tid,
+            "followed_approach": True,
+            "agreed_approach": approach_map.get(tid, ""),
+            "notes": f"Implemented {tid} following the agreed approach.",
+        })
+    return {
+        "task_ids": task_ids,
+        "summary": summary,
+        "approach_attestation": att,
+    }
+
+
 def _collect(gen):
     return list(gen)
 
@@ -297,7 +314,7 @@ class TestImplementationStreaming:
             call_count += 1
             complete_tool = [{
                 "name": "complete_tasks", "id": "tc1",
-                "input": {"task_ids": ["task-a"], "summary": "Done A"},
+                "input": _complete_input(["task-a"], "Done A"),
             }]
             rnd = _tool_round("Completing task A", complete_tool)
             return _make_streaming_result(["Completing ", "task A"], rnd)
@@ -400,7 +417,7 @@ class TestImplementationStreaming:
             if calls[0] == 1:
                 return _tool_round("doing", [{
                     "name": "complete_tasks", "id": "tc1",
-                    "input": {"task_ids": ["task-a"], "summary": "Done A"},
+                    "input": _complete_input(["task-a"], "Done A"),
                 }])
             return _text_round("Done")
 
@@ -449,7 +466,7 @@ class TestImplementationStreaming:
                     ["completing"],
                     _tool_round("completing", [{
                         "name": "complete_tasks", "id": "tc2",
-                        "input": {"task_ids": ["task-a"], "summary": "Done"},
+                        "input": _complete_input(["task-a"], "Done"),
                     }]),
                 )
             return _make_streaming_result(["final"], _text_round("final"))
@@ -1017,7 +1034,61 @@ class TestMessageListStreaming:
         ml._maybe_scroll(True)
 
         ml.scroll_end.assert_called_once_with(animate=False)
-        ml.call_after_refresh.assert_called_once_with(ml.scroll_end, animate=False)
+        ml.call_after_refresh.assert_called_once_with(ml._deferred_scroll_end)
+        assert ml._follow_until_refresh is True
+
+    def test_should_follow_output_uses_pending_follow_flag(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml._is_near_bottom = MagicMock(return_value=False)
+        ml._follow_until_refresh = True
+
+        assert ml._should_follow_output() is True
+
+    def test_deferred_scroll_end_clears_pending_follow_flag(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml.scroll_end = MagicMock()
+        ml._follow_until_refresh = True
+
+        ml._deferred_scroll_end()
+
+        ml.scroll_end.assert_called_once_with(animate=False)
+        assert ml._follow_until_refresh is False
+
+    def test_hide_loading_preserves_scroll_follow_when_near_bottom(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        spinner_a = MagicMock()
+        spinner_b = MagicMock()
+        ml.query = MagicMock(return_value=[spinner_a, spinner_b])
+        ml._is_near_bottom = MagicMock(return_value=True)
+        ml._maybe_scroll = MagicMock()
+        ml._loading_visible = True
+
+        ml.hide_loading()
+
+        spinner_a.remove.assert_called_once_with()
+        spinner_b.remove.assert_called_once_with()
+        ml._maybe_scroll.assert_called_once_with(True)
+        assert ml._loading_visible is False
+
+    def test_hide_loading_does_not_force_follow_when_user_scrolled_up(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        spinner = MagicMock()
+        ml.query = MagicMock(return_value=[spinner])
+        ml._is_near_bottom = MagicMock(return_value=False)
+        ml._maybe_scroll = MagicMock()
+
+        ml.hide_loading()
+
+        spinner.remove.assert_called_once_with()
+        ml._maybe_scroll.assert_called_once_with(False)
 
 
 class TestParticipantPanel:
