@@ -5,6 +5,7 @@ from typing import Callable, Iterator
 
 from gotg.agent import build_prompt, build_coach_prompt
 from gotg.events import (
+    AgentTurnComplete,
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
@@ -12,9 +13,11 @@ from gotg.events import (
     PhaseCompleteSignaled,
     SessionComplete,
     SessionStarted,
+    TextDelta,
+    ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
-from gotg.tools import execute_file_tool, format_tool_operation
+from gotg.tools import execute_file_tool, format_agent_tool_operation
 
 
 @dataclass
@@ -33,7 +36,7 @@ def run_session(
     deps: SessionDeps,
     history: list[dict],
     policy: SessionPolicy,
-) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | SessionComplete]:
+) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | SessionComplete | TextDelta | AgentTurnComplete | ToolCallProgress]:
     """Run a conversation session, yielding events. No print, no persistence."""
 
     # Build participant list
@@ -100,19 +103,27 @@ def run_session(
         # Build tools + executor
         agent_tools, tool_executor = build_tool_executor(agent, policy)
 
-        # Call LLM
-        result = deps.agent_completion(
-            base_url=model_config["base_url"],
-            model=model_config["model"],
-            messages=prompt,
-            api_key=model_config.get("api_key"),
-            provider=model_config.get("provider", "ollama"),
-            tools=agent_tools,
-            tool_executor=tool_executor,
-        )
-
-        # Process result → yield events + mutate history
-        yield from _process_agent_result(agent, iteration, result, history, turn)
+        if policy.streaming and deps.stream_completion:
+            # Engine-driven streaming tool loop
+            for sub_event in _do_streaming_agent_turn(
+                agent, iteration, model_config, deps, history, prompt,
+                agent_tools, tool_executor, turn,
+            ):
+                yield sub_event
+                if isinstance(sub_event, AppendMessage):
+                    history.append(sub_event.msg)
+        else:
+            # Existing non-streaming path
+            result = deps.agent_completion(
+                base_url=model_config["base_url"],
+                model=model_config["model"],
+                messages=prompt,
+                api_key=model_config.get("api_key"),
+                provider=model_config.get("provider", "ollama"),
+                tools=agent_tools,
+                tool_executor=tool_executor,
+            )
+            yield from _process_agent_result(agent, iteration, result, history, turn)
 
         turn += 1
 
@@ -185,7 +196,7 @@ def _process_agent_result(
         op_msg = {
             "from": "system",
             "iteration": iteration["id"],
-            "content": format_tool_operation(op),
+            "content": format_agent_tool_operation(agent["name"], op),
         }
         yield AppendMessage(op_msg)
         history.append(op_msg)
@@ -227,6 +238,129 @@ def _process_agent_result(
         history.append(msg)
 
 
+def _classify_tool_result(result_str: str) -> str:
+    """Derive status from tool result string prefix."""
+    if result_str.startswith("Error:"):
+        return "error"
+    if result_str.startswith("Pending approval"):
+        return "pending_approval"
+    return "ok"
+
+
+def _do_streaming_agent_turn(
+    agent: dict,
+    iteration: dict,
+    model_config: dict,
+    deps: SessionDeps,
+    history: list[dict],
+    prompt: list[dict],
+    agent_tools: list[dict],
+    tool_executor: Callable,
+    turn: int,
+    max_rounds: int = 10,
+) -> Iterator[TextDelta | AgentTurnComplete | ToolCallProgress | AppendMessage | AppendDebug]:
+    """Engine-driven streaming tool loop for discussion phases.
+
+    Mirrors agentic_completion but yields events instead of returning a dict.
+    Uses stream_completion for text streaming, executes tools inline.
+    """
+    turn_id = f"turn-{turn}-{agent['name']}"
+    operations: list[dict] = []
+    llm_messages = list(prompt)
+
+    rnd = None
+    for _round_num in range(max_rounds):
+        stream = deps.stream_completion(
+            base_url=model_config["base_url"],
+            model=model_config["model"],
+            messages=llm_messages,
+            api_key=model_config.get("api_key"),
+            provider=model_config.get("provider", "ollama"),
+            tools=agent_tools,
+            max_tokens=4096,
+        )
+        for chunk in stream:
+            yield TextDelta(agent=agent["name"], turn_id=turn_id, text=chunk)
+        rnd = stream.round
+
+        if not rnd.tool_calls:
+            break
+
+        # Execute tool calls
+        tool_results = []
+        for tc in rnd.tool_calls:
+            result = tool_executor(tc["name"], tc["input"])
+            operations.append({"name": tc["name"], "input": tc["input"], "result": result})
+            tool_results.append({"id": tc["id"], "result": result})
+
+            status = _classify_tool_result(result)
+            content_size = None
+            if tc["name"] == "file_write":
+                content_size = len(tc["input"].get("content", "").encode())
+            yield ToolCallProgress(
+                agent=agent["name"],
+                tool_name=tc["name"],
+                path=tc["input"].get("path", ""),
+                status=status,
+                bytes=content_size,
+                error=result if status == "error" else None,
+            )
+
+        # Build continuation for next round
+        continuation = rnd.build_continuation(tool_results)
+        llm_messages.extend(continuation)
+
+    # Turn complete
+    final_content = rnd.content if rnd else ""
+    pass_called = any(op["name"] == "pass_turn" for op in operations)
+
+    # Only emit AgentTurnComplete when the agent will emit a real message.
+    # On pass_turn the next AppendMessage is a system message, so emitting
+    # AgentTurnComplete would set suppression that is never consumed —
+    # silently eating the agent's next real response.
+    if not pass_called:
+        yield AgentTurnComplete(agent=agent["name"], turn_id=turn_id, content=final_content)
+
+    # Yield tool op AppendMessages (same format as _process_agent_result)
+    for op in operations:
+        if op["name"] == "pass_turn":
+            continue
+        op_msg = {
+            "from": "system",
+            "iteration": iteration["id"],
+            "content": format_agent_tool_operation(agent["name"], op),
+        }
+        yield AppendMessage(op_msg)
+
+    if operations:
+        yield AppendDebug({
+            "turn": turn,
+            "agent": agent["name"],
+            "tool_operations": operations,
+        })
+
+    # Yield agent message or pass_turn message
+    if pass_called:
+        reason = next(
+            (op["input"].get("reason", "") for op in operations if op["name"] == "pass_turn"),
+            "",
+        )
+        pass_msg = {
+            "from": "system",
+            "iteration": iteration["id"],
+            "content": f"({agent['name']} passes: {reason})",
+            "pass_turn": True,
+        }
+        yield AppendMessage(pass_msg)
+    else:
+        msg = {
+            "from": agent["name"],
+            "iteration": iteration["id"],
+            "content": final_content,
+        }
+        yield AppendMessage(msg)
+
+
 def _do_coach_turn(
     iteration: dict,
     model_config: dict,
@@ -235,7 +369,7 @@ def _do_coach_turn(
     all_participants: list[dict],
     turn: int,
     policy: SessionPolicy,
-) -> Iterator[AppendMessage | AppendDebug | PhaseCompleteSignaled | CoachAskedPM]:
+) -> Iterator[AppendMessage | AppendDebug | PhaseCompleteSignaled | CoachAskedPM | TextDelta | AgentTurnComplete]:
     """Run a coach turn. Yields events, returns True if session should stop."""
     coach = policy.coach
     coach_prompt = build_coach_prompt(
@@ -248,19 +382,46 @@ def _do_coach_turn(
         "turn": f"coach-after-{turn}",
         "agent": coach["name"],
         "messages": coach_prompt,
+        "tools": list(policy.coach_tools) if policy.coach_tools else None,
     })
 
     # Call LLM
-    coach_response = deps.coach_completion(
-        base_url=model_config["base_url"],
-        model=model_config["model"],
-        messages=coach_prompt,
-        api_key=model_config.get("api_key"),
-        provider=model_config.get("provider", "ollama"),
-        tools=policy.coach_tools,
-    )
-    coach_text = coach_response["content"]
-    coach_tool_calls = coach_response.get("tool_calls", [])
+    streamed = False
+    if policy.streaming and deps.stream_completion:
+        turn_id = f"coach-after-{turn}-{coach['name']}"
+        stream = deps.stream_completion(
+            base_url=model_config["base_url"],
+            model=model_config["model"],
+            messages=coach_prompt,
+            api_key=model_config.get("api_key"),
+            provider=model_config.get("provider", "ollama"),
+            tools=policy.coach_tools,
+            max_tokens=4096,
+        )
+        for chunk in stream:
+            streamed = True
+            yield TextDelta(agent=coach["name"], turn_id=turn_id, text=chunk)
+        rnd = stream.round
+        coach_text = rnd.content
+        coach_tool_calls = rnd.tool_calls
+    else:
+        coach_response = deps.coach_completion(
+            base_url=model_config["base_url"],
+            model=model_config["model"],
+            messages=coach_prompt,
+            api_key=model_config.get("api_key"),
+            provider=model_config.get("provider", "ollama"),
+            tools=policy.coach_tools,
+        )
+        coach_text = coach_response["content"]
+        coach_tool_calls = coach_response.get("tool_calls", [])
+
+    yield AppendDebug({
+        "turn": f"coach-after-{turn}-response",
+        "agent": coach["name"],
+        "content": coach_text,
+        "tool_calls": coach_tool_calls,
+    })
 
     # Fallback for empty coach messages with signal_phase_complete
     if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
@@ -270,6 +431,15 @@ def _do_coach_turn(
     if not coach_text.strip() and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
         question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
         coach_text = f"(Requesting PM input: {question})"
+
+    # Only emit completion when text was actually streamed. This avoids suppressing
+    # fallback coach messages for tool-call-only responses with no text deltas.
+    if streamed:
+        yield AgentTurnComplete(
+            agent=coach["name"],
+            turn_id=f"coach-after-{turn}-{coach['name']}",
+            content=coach_text,
+        )
 
     coach_msg = {
         "from": coach["name"],

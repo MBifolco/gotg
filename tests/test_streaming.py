@@ -12,8 +12,10 @@ import pytest
 from gotg.engine import SessionDeps
 from gotg.events import (
     AgentTurnComplete,
+    AppendDebug,
     AppendMessage,
     LayerComplete,
+    SessionComplete,
     SessionStarted,
     TextDelta,
     ToolCallProgress,
@@ -979,6 +981,81 @@ class TestMessageListStreaming:
         assert hasattr(ml, "begin_streaming")
         assert hasattr(ml, "finalize_streaming")
 
+    def test_append_stream_delta_uses_pre_update_scroll_state_true(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        widget = MagicMock()
+        ml._is_near_bottom = MagicMock(return_value=True)
+        ml._maybe_scroll = MagicMock()
+
+        ml.append_stream_delta(widget, "hello")
+
+        widget.append_text.assert_called_once_with("hello")
+        ml._maybe_scroll.assert_called_once_with(True)
+
+    def test_append_stream_delta_uses_pre_update_scroll_state_false(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        widget = MagicMock()
+        ml._is_near_bottom = MagicMock(return_value=False)
+        ml._maybe_scroll = MagicMock()
+
+        ml.append_stream_delta(widget, "hello")
+
+        widget.append_text.assert_called_once_with("hello")
+        ml._maybe_scroll.assert_called_once_with(False)
+
+    def test_maybe_scroll_calls_immediate_and_deferred_scroll(self):
+        from gotg.tui.widgets.message_list import MessageList
+
+        ml = MessageList()
+        ml.scroll_end = MagicMock()
+        ml.call_after_refresh = MagicMock()
+
+        ml._maybe_scroll(True)
+
+        ml.scroll_end.assert_called_once_with(animate=False)
+        ml.call_after_refresh.assert_called_once_with(ml.scroll_end, animate=False)
+
+
+class TestParticipantPanel:
+    def test_tool_line_formats_status_and_size(self):
+        from gotg.tui.widgets.participant_panel import _tool_line
+
+        assert _tool_line("file_read", "src/main.py", "ok", None) == "file_read src/main.py"
+        assert _tool_line("file_write", "src/main.py", "ok", 12) == "file_write src/main.py (12b)"
+        assert _tool_line("file_write", "src/main.py", "pending_approval", 12).endswith("PENDING")
+        assert _tool_line("file_write", "src/main.py", "error", 12).endswith("FAIL")
+
+    def test_add_tool_progress_routes_to_actor_tile_only(self):
+        from gotg.tui.widgets.participant_panel import ParticipantPanel
+        from gotg.events import ToolCallProgress
+
+        panel = ParticipantPanel()
+        tile_a = MagicMock()
+        tile_b = MagicMock()
+        panel._tiles = {"agent-1": tile_a, "agent-2": tile_b}
+
+        event = ToolCallProgress(
+            agent="agent-1",
+            tool_name="file_read",
+            path="src/main.py",
+            status="ok",
+            bytes=None,
+            error=None,
+        )
+        panel.add_tool_progress(event)
+
+        tile_a.add_tool_event.assert_called_once_with(
+            tool_name="file_read",
+            path="src/main.py",
+            status="ok",
+            size=None,
+        )
+        tile_b.add_tool_event.assert_not_called()
+
 
 class TestTextDeltaMsg:
     def test_message_fields(self):
@@ -987,3 +1064,193 @@ class TestTextDeltaMsg:
         assert msg.agent == "agent-1"
         assert msg.turn_id == "impl-agent-1-r0"
         assert msg.text == "hello"
+
+
+# ── Discussion-phase streaming CLI tests ──────────────────────────
+
+
+class TestCliDiscussionStreaming:
+    def test_text_delta_printed_inline(self, tmp_path, capsys):
+        """TextDelta events are written to stdout in discussion phase."""
+        from gotg.cli import _run_discussion_phase
+        from gotg.engine import run_session
+
+        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        log_path = iter_dir / "conversation.jsonl"
+        debug_path = iter_dir / "debug.jsonl"
+        log_path.touch()
+        debug_path.touch()
+
+        events = [
+            SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
+            TextDelta("agent-1", "turn-0-agent-1", "Hello"),
+            TextDelta("agent-1", "turn-0-agent-1", " discussion"),
+            AgentTurnComplete("agent-1", "turn-0-agent-1", "Hello discussion"),
+            AppendMessage({"from": "agent-1", "iteration": "iter-1", "content": "Hello discussion"}),
+            SessionComplete(1),
+        ]
+
+        with patch("gotg.cli.run_session", return_value=iter(events)):
+            _run_discussion_phase(
+                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
+                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
+                log_path, debug_path,
+            )
+
+        captured = capsys.readouterr()
+        assert "Hello discussion" in captured.out
+
+    def test_agent_name_suppression_passes_tool_ops(self, tmp_path, capsys):
+        """Agent message suppressed but tool op system messages still print."""
+        from gotg.cli import _run_discussion_phase
+
+        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        log_path = iter_dir / "conversation.jsonl"
+        debug_path = iter_dir / "debug.jsonl"
+        log_path.touch()
+        debug_path.touch()
+
+        events = [
+            SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
+            TextDelta("agent-1", "turn-0-agent-1", "Streamed text"),
+            AgentTurnComplete("agent-1", "turn-0-agent-1", "Streamed text"),
+            # Tool op system message — should NOT be suppressed
+            AppendMessage({"from": "system", "iteration": "iter-1", "content": "[file_read] src/main.py"}),
+            # Agent message — SHOULD be suppressed (already streamed)
+            AppendMessage({"from": "agent-1", "iteration": "iter-1", "content": "Streamed text"}),
+            SessionComplete(1),
+        ]
+
+        with patch("gotg.cli.run_session", return_value=iter(events)):
+            _run_discussion_phase(
+                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
+                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
+                log_path, debug_path,
+            )
+
+        captured = capsys.readouterr()
+        # Tool op should appear
+        assert "[file_read]" in captured.out
+        # Agent content appears once (from TextDelta), not twice
+        assert captured.out.count("Streamed text") == 1
+
+    def test_non_streaming_discussion_unchanged(self, tmp_path, capsys):
+        """When no TextDelta events, all AppendMessages print normally."""
+        from gotg.cli import _run_discussion_phase
+
+        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        log_path = iter_dir / "conversation.jsonl"
+        debug_path = iter_dir / "debug.jsonl"
+        log_path.touch()
+        debug_path.touch()
+
+        events = [
+            SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
+            AppendMessage({"from": "agent-1", "iteration": "iter-1", "content": "Normal response"}),
+            SessionComplete(1),
+        ]
+
+        with patch("gotg.cli.run_session", return_value=iter(events)):
+            _run_discussion_phase(
+                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
+                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
+                log_path, debug_path,
+            )
+
+        captured = capsys.readouterr()
+        assert "Normal response" in captured.out
+
+    def test_tool_progress_printed_to_stderr(self, tmp_path, capsys):
+        """ToolCallProgress events go to stderr in discussion phase."""
+        from gotg.cli import _run_discussion_phase
+
+        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
+        iter_dir.mkdir(parents=True)
+        log_path = iter_dir / "conversation.jsonl"
+        debug_path = iter_dir / "debug.jsonl"
+        log_path.touch()
+        debug_path.touch()
+
+        events = [
+            SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
+            ToolCallProgress("agent-1", "file_read", "/tmp/x.py", "ok", None, None),
+            TextDelta("agent-1", "turn-0-agent-1", "ok"),
+            AgentTurnComplete("agent-1", "turn-0-agent-1", "ok"),
+            AppendMessage({"from": "agent-1", "iteration": "iter-1", "content": "ok"}),
+            SessionComplete(1),
+        ]
+
+        with patch("gotg.cli.run_session", return_value=iter(events)):
+            _run_discussion_phase(
+                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
+                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
+                log_path, debug_path,
+            )
+
+        captured = capsys.readouterr()
+        assert "file_read" in captured.err
+
+
+# ── Grooming streaming tests ─────────────────────────────────────
+
+
+class TestGroomingStreaming:
+    def test_grooming_policy_streaming_param(self):
+        """grooming_policy accepts and passes streaming param."""
+        from gotg.policy import grooming_policy
+        policy = grooming_policy(
+            agents=AGENTS, topic="test", history=[], streaming=True,
+        )
+        assert policy.streaming is True
+
+    def test_grooming_policy_streaming_default(self):
+        """grooming_policy defaults to streaming=False."""
+        from gotg.policy import grooming_policy
+        policy = grooming_policy(
+            agents=AGENTS, topic="test", history=[],
+        )
+        assert policy.streaming is False
+
+
+# ── Implementation phase name-based suppression tests ─────────────
+
+
+class TestImplNameBasedSuppression:
+    def test_tool_op_messages_pass_through(self, tmp_path, capsys):
+        """After AgentTurnComplete, system tool op messages still print."""
+        from gotg.cli import _run_implementation_phase
+
+        tasks = _make_tasks()
+        iter_dir = _setup_iter_dir(tmp_path, tasks)
+        log_path = iter_dir / "conversation.jsonl"
+        debug_path = iter_dir / "debug.jsonl"
+
+        events = [
+            SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
+            TextDelta("agent-1", "impl-agent-1-r0", "Streamed"),
+            AgentTurnComplete("agent-1", "impl-agent-1-r0", "Streamed"),
+            # System tool op message — should print
+            AppendMessage({"from": "system", "iteration": "iter-1", "content": "[complete_tasks] Done"}),
+            # Agent message — should be suppressed
+            AppendMessage({"from": "agent-1", "iteration": "iter-1", "content": "Streamed"}),
+            # Next system message — should print (suppression consumed)
+            AppendMessage({"from": "system", "iteration": "iter-1", "content": "Task done notification"}),
+            LayerComplete(0, ("task-a",)),
+        ]
+
+        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
+            _run_implementation_phase(
+                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
+                SessionDeps(None, None, None), [], _make_policy(),
+                log_path, debug_path,
+            )
+
+        captured = capsys.readouterr()
+        # System messages should print
+        assert "[complete_tasks]" in captured.out
+        assert "Task done notification" in captured.out
+        # Agent content from TextDelta appears once, suppression prevents double
+        assert captured.out.count("Streamed") == 1

@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from gotg.fileguard import FileGuard
-from gotg.tools import execute_file_tool, format_tool_operation
+from gotg.tools import (
+    execute_file_tool,
+    format_agent_tool_operation,
+    format_tool_operation,
+)
 
 
 @pytest.fixture
@@ -212,6 +216,12 @@ def test_format_pending():
     result = format_tool_operation(op)
     assert result.startswith("[file_write] PENDING APPROVAL:")
     assert "Dockerfile" in result
+
+
+def test_format_agent_operation():
+    op = {"name": "file_read", "input": {"path": "src/main.py"}, "result": "content"}
+    result = format_agent_tool_operation("agent-1", op)
+    assert result == "[agent-1] [file_read] src/main.py"
 
 
 # --- Missing key validation ---

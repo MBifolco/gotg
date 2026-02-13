@@ -408,14 +408,15 @@ def raw_completion(
     api_key: str | None = None,
     provider: str = "ollama",
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> CompletionRound:
     """Single-round completion returning CompletionRound for engine-driven tool loops.
 
     Used by implementation executor. chat_completion stays unchanged.
     """
     if provider == "anthropic":
-        return _anthropic_raw(base_url, model, messages, api_key, tools)
-    return _openai_raw(base_url, model, messages, api_key, tools)
+        return _anthropic_raw(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
+    return _openai_raw(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
 
 
 def _anthropic_raw(
@@ -424,6 +425,7 @@ def _anthropic_raw(
     messages: list[dict],
     api_key: str | None = None,
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> CompletionRound:
     url = f"{base_url.rstrip('/')}/v1/messages"
     headers = {
@@ -441,10 +443,9 @@ def _anthropic_raw(
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # Higher limit than discussion phases — implementation agents write large files
     body = {
         "model": model,
-        "max_tokens": 16384,
+        "max_tokens": max_tokens,
         "messages": chat_messages,
     }
     if system:
@@ -519,13 +520,14 @@ def _openai_raw(
     messages: list[dict],
     api_key: str | None = None,
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> CompletionRound:
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
     headers = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    body = {"model": model, "messages": messages}
+    body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens}
     if tools:
         body["tools"] = [
             {
@@ -572,6 +574,7 @@ def raw_completion_stream(
     api_key: str | None = None,
     provider: str = "ollama",
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> StreamingResult:
     """Single-round streaming completion returning StreamingResult.
 
@@ -580,8 +583,8 @@ def raw_completion_stream(
     """
     def _provider_stream() -> Iterator[str]:
         if provider == "anthropic":
-            return _anthropic_raw_stream(base_url, model, messages, api_key, tools)
-        return _openai_raw_stream(base_url, model, messages, api_key, tools)
+            return _anthropic_raw_stream(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
+        return _openai_raw_stream(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
 
     result = StreamingResult(_gen=iter(()))
 
@@ -608,6 +611,7 @@ def raw_completion_stream(
                 api_key=api_key,
                 provider=provider,
                 tools=tools,
+                max_tokens=max_tokens,
             )
             result.round = fallback_round
             if fallback_round.content:
@@ -624,6 +628,7 @@ def _anthropic_raw_stream(
     messages: list[dict],
     api_key: str | None = None,
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> Iterator[str]:
     """Anthropic streaming — yields text deltas, returns CompletionRound."""
     url = f"{base_url.rstrip('/')}/v1/messages"
@@ -644,7 +649,7 @@ def _anthropic_raw_stream(
 
     body = {
         "model": model,
-        "max_tokens": 16384,
+        "max_tokens": max_tokens,
         "messages": chat_messages,
         "stream": True,
     }
@@ -799,6 +804,7 @@ def _openai_raw_stream(
     messages: list[dict],
     api_key: str | None = None,
     tools: list[dict] | None = None,
+    max_tokens: int = 16384,
 ) -> Iterator[str]:
     """OpenAI/Ollama streaming — yields text deltas, returns CompletionRound."""
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
@@ -806,7 +812,7 @@ def _openai_raw_stream(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    body: dict = {"model": model, "messages": messages, "stream": True}
+    body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": True}
     if tools:
         body["tools"] = [
             {

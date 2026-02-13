@@ -113,6 +113,32 @@
     padding: 1 2;
 }
 
+#participant-panel {
+    height: 1fr;
+    margin: 1 0 0 0;
+    padding: 0;
+    border-top: solid $accent;
+}
+
+.participant-tile {
+    height: auto;
+    margin: 0 0 1 0;
+    border: round $accent;
+    padding: 0 1;
+}
+
+.pt-role {
+    color: $text-muted;
+}
+
+.pt-status {
+    text-style: bold;
+}
+
+.pt-tools {
+    color: $text-muted;
+}
+
 /* ── Info tile ──────────────────────────────────────────────── */
 
 .info-title {

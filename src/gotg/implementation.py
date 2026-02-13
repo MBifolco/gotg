@@ -501,13 +501,13 @@ def run_implementation(
                     op_msg = {
                         "from": "system",
                         "iteration": iteration["id"],
-                        "content": f"[{tc_name}] {result}",
+                        "content": f"[{agent_name}] [{tc_name}] {result}",
                     }
                 else:
                     op_msg = {
                         "from": "system",
                         "iteration": iteration["id"],
-                        "content": _format_tool_op(tc_name, tc_input, result),
+                        "content": _format_tool_op(agent_name, tc_name, tc_input, result),
                     }
                 yield AppendMessage(op_msg)
                 history.append(op_msg)
@@ -584,7 +584,9 @@ def _auto_commit_worktrees(policy: SessionPolicy, layer: int) -> None:
             pass
 
 
-def _format_tool_op(name: str, tool_input: dict, result: str) -> str:
+def _format_tool_op(agent_name: str, name: str, tool_input: dict, result: str) -> str:
     """Format a tool operation for the conversation log."""
-    from gotg.tools import format_tool_operation
-    return format_tool_operation({"name": name, "input": tool_input, "result": result})
+    from gotg.tools import format_agent_tool_operation
+    return format_agent_tool_operation(
+        agent_name, {"name": name, "input": tool_input, "result": result}
+    )

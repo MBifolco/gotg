@@ -523,7 +523,11 @@ def _make_advance_team_dir(tmp_path, phase="refinement"):
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    # Seed minimal conversation so advance guard passes
+    log = iter_dir / "conversation.jsonl"
+    log.write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Ready."}) + "\n"
+    )
     return team, iter_dir
 
 
@@ -537,13 +541,13 @@ def test_advance_refinement_to_planning(tmp_path):
     data = json.loads((team / "iteration.json").read_text())
     assert data["iterations"][0]["phase"] == "planning"
 
-    # Verify system messages in log (boundary + transition)
+    # Verify system messages in log (seed + boundary + transition)
     messages = read_log(iter_dir / "conversation.jsonl")
-    assert len(messages) == 2
-    assert messages[0].get("phase_boundary") is True
-    assert messages[1]["from"] == "system"
-    assert "refinement" in messages[1]["content"]
-    assert "planning" in messages[1]["content"]
+    assert len(messages) == 3
+    assert messages[1].get("phase_boundary") is True
+    assert messages[2]["from"] == "system"
+    assert "refinement" in messages[2]["content"]
+    assert "planning" in messages[2]["content"]
 
 
 def test_advance_planning_to_pre_code_review(tmp_path):
@@ -589,6 +593,25 @@ def test_advance_fails_if_not_in_progress(tmp_path):
                 main()
 
 
+def test_advance_refuses_empty_phase(tmp_path):
+    """Cannot advance when no conversation has happened in the current phase."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team, iterations=[
+        {"id": "iter-1", "title": "", "description": "A task",
+         "status": "in-progress", "phase": "refinement", "max_turns": 10},
+    ])
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()  # empty — no conversation
+
+    with patch("sys.argv", ["gotg", "advance"]):
+        with patch("gotg.cli.find_team_dir", return_value=team):
+            with pytest.raises(SystemExit):
+                main()
+
+
 def test_advance_defaults_to_refinement_if_no_phase(tmp_path):
     """Backward compat: iteration without phase field defaults to refinement."""
     team = tmp_path / ".team"
@@ -601,7 +624,9 @@ def test_advance_defaults_to_refinement_if_no_phase(tmp_path):
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    (iter_dir / "conversation.jsonl").write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Ready."}) + "\n"
+    )
 
     with patch("sys.argv", ["gotg", "advance"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
@@ -2752,7 +2777,9 @@ def test_advance_implementation_auto_commits_worktrees(tmp_path, capsys):
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    (iter_dir / "conversation.jsonl").write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Done."}) + "\n"
+    )
 
     # Create a worktree and make it dirty
     from gotg.worktree import create_worktree
@@ -2797,7 +2824,9 @@ def test_advance_auto_commit_only_current_layer(tmp_path, capsys):
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    (iter_dir / "conversation.jsonl").write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Done."}) + "\n"
+    )
 
     # Create worktrees for layer 0 and layer 1, both dirty
     from gotg.worktree import create_worktree, is_worktree_dirty
@@ -3156,7 +3185,9 @@ def test_advance_planning_catches_bad_task_structure(tmp_path, capsys):
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    (iter_dir / "conversation.jsonl").write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Ready."}) + "\n"
+    )
 
     # Coach returns valid JSON but with bad dependency references
     bad_tasks = json.dumps([
@@ -3431,10 +3462,10 @@ def test_advance_writes_history_boundary(tmp_path):
             main()
 
     messages = read_log(iter_dir / "conversation.jsonl")
-    # First message should be boundary, second should be transition
-    assert len(messages) == 2
-    assert messages[0]["content"] == "--- HISTORY BOUNDARY ---"
-    assert messages[1]["content"].startswith("--- Phase advanced:")
+    # seed + boundary + transition
+    assert len(messages) == 3
+    assert messages[1]["content"] == "--- HISTORY BOUNDARY ---"
+    assert messages[2]["content"].startswith("--- Phase advanced:")
 
 
 def test_advance_boundary_has_metadata(tmp_path):
@@ -3445,7 +3476,7 @@ def test_advance_boundary_has_metadata(tmp_path):
             main()
 
     messages = read_log(iter_dir / "conversation.jsonl")
-    boundary = messages[0]
+    boundary = messages[1]  # index 0 is seed message
     assert boundary.get("phase_boundary") is True
     assert boundary.get("from_phase") == "planning"
     assert boundary.get("to_phase") == "pre-code-review"

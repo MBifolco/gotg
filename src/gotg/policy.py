@@ -125,6 +125,7 @@ def grooming_policy(
     history: list[dict],
     coach: dict | None = None,
     max_turns: int = 30,
+    streaming: bool = False,
 ) -> SessionPolicy:
     """Build policy for a freeform grooming conversation."""
     first_agent = agents[0]["name"] if agents else "agent-1"
@@ -154,4 +155,5 @@ def grooming_policy(
         worktree_map=None,
         system_supplement=GROOMING_SYSTEM_SUPPLEMENT,
         coach_system_prompt=GROOMING_COACH_PROMPT if coach else None,
+        streaming=streaming,
     )

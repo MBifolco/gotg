@@ -364,7 +364,10 @@ def _make_advance_team_dir(tmp_path, phase="refinement", with_coach=True):
 
     iter_dir = team_dir / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").write_text("")
+    # Seed minimal conversation so advance guard passes
+    (iter_dir / "conversation.jsonl").write_text(
+        json.dumps({"from": "agent-1", "iteration": "iter-1", "content": "Ready."}) + "\n"
+    )
 
     return team_dir, iter_dir, iteration
 

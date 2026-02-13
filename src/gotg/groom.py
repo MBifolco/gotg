@@ -9,6 +9,7 @@ from pathlib import Path
 from gotg.conversation import append_message, append_debug, read_log, render_message
 from gotg.engine import SessionDeps, run_session
 from gotg.events import (
+    AgentTurnComplete,
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
@@ -16,6 +17,8 @@ from gotg.events import (
     PhaseCompleteSignaled,
     SessionComplete,
     SessionStarted,
+    TextDelta,
+    ToolCallProgress,
 )
 from gotg.policy import grooming_policy
 from gotg.session import persist_event
@@ -152,10 +155,11 @@ def run_grooming_conversation(
     topic: str,
     coach: dict | None = None,
     max_turns_override: int | None = None,
+    streaming: bool = False,
 ) -> None:
     """Run a grooming conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
-    from gotg.model import agentic_completion, chat_completion
+    from gotg.model import agentic_completion, chat_completion, raw_completion_stream
 
     log_path = groom_dir / "conversation.jsonl"
     debug_path = groom_dir / "debug.jsonl"
@@ -164,6 +168,7 @@ def run_grooming_conversation(
     deps = SessionDeps(
         agent_completion=agentic_completion,
         coach_completion=chat_completion,
+        stream_completion=raw_completion_stream if streaming else None,
     )
 
     policy = grooming_policy(
@@ -172,7 +177,10 @@ def run_grooming_conversation(
         history=history,
         coach=coach,
         max_turns=max_turns_override or iteration.get("max_turns", 30),
+        streaming=streaming,
     )
+
+    _suppress_agent_append: str | None = None
 
     for event in run_session(
         agents=agents, iteration=iteration, model_config=model_config,
@@ -180,11 +188,23 @@ def run_grooming_conversation(
     ):
         if isinstance(event, SessionStarted):
             _print_grooming_header(event, topic)
+        elif isinstance(event, TextDelta):
+            sys.stdout.write(event.text)
+            sys.stdout.flush()
+        elif isinstance(event, AgentTurnComplete):
+            sys.stdout.write("\n\n")
+            sys.stdout.flush()
+            _suppress_agent_append = event.agent
+        elif isinstance(event, ToolCallProgress):
+            pass  # grooming has no file tools
         elif isinstance(event, (AppendMessage, AppendDebug)):
             persist_event(event, log_path, debug_path)
             if isinstance(event, AppendMessage):
-                print(render_message(event.msg))
-                print()
+                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
+                    _suppress_agent_append = None
+                else:
+                    print(render_message(event.msg))
+                    print()
         elif isinstance(event, CoachAskedPM):
             print("---")
             print(f"Coach asks: {event.question}")

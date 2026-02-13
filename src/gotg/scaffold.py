@@ -189,6 +189,7 @@ def init_project(path: Path) -> None:
         "worktrees": {
             "enabled": False,
         },
+        "streaming": False,
     }, indent=2) + "\n")
 
     # iteration.json: list format with current pointer

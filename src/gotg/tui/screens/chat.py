@@ -35,6 +35,7 @@ from gotg.tui.messages import EngineEvent, SessionError, TextDeltaMsg, ToolProgr
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList
+from gotg.tui.widgets.participant_panel import ParticipantPanel
 
 
 class SessionState(Enum):
@@ -89,7 +90,7 @@ class ChatScreen(Screen):
         # Streaming state
         self._streaming_widget = None       # StreamingChatbox | None
         self._streaming_turn_id: str | None = None
-        self._suppress_next_append = False
+        self._suppress_agent_append: str | None = None
 
     def compose(self):
         yield Header()
@@ -103,6 +104,7 @@ class ChatScreen(Screen):
                 )
             with Vertical(id="chat-sidebar"):
                 yield InfoTile(id="info-tile")
+                yield ParticipantPanel(id="participant-panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -124,6 +126,11 @@ class ChatScreen(Screen):
         enriched = {**self.metadata, "message_count": len(messages)}
         info = self.query_one("#info-tile", InfoTile)
         info.load_metadata(enriched, self.data_dir)
+        participants = self.query_one("#participant-panel", ParticipantPanel)
+        participants.load_participants(
+            self.metadata.get("agents", []),
+            self.metadata.get("coach"),
+        )
 
         # Count existing agent turns
         self._turn_count = self._count_agent_turns(messages)
@@ -144,9 +151,16 @@ class ChatScreen(Screen):
 
     def _restore_pause_state(self, messages: list[dict]) -> None:
         """Detect if the conversation was paused mid-session and restore UI state."""
+        # Only look at messages in the current phase (after last boundary marker)
+        phase_messages = messages
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("phase_boundary"):
+                phase_messages = messages[i + 1:]
+                break
+
         # Walk backwards past pass_turn system messages to find the real last content
         last_content_msg = None
-        for msg in reversed(messages):
+        for msg in reversed(phase_messages):
             if not msg.get("pass_turn") and msg.get("from") != "system":
                 last_content_msg = msg
                 break
@@ -323,6 +337,9 @@ class ChatScreen(Screen):
                 history = read_log(self._log_path)
                 coach = ctx.coach if groom_meta.get("coach") else None
 
+                from gotg.config import load_streaming_config as _load_streaming
+                streaming_enabled = _load_streaming(ctx.team_dir)
+
                 from gotg.policy import grooming_policy
                 policy = grooming_policy(
                     agents=ctx.agents,
@@ -330,6 +347,7 @@ class ChatScreen(Screen):
                     history=history,
                     coach=coach,
                     max_turns=groom_meta.get("max_turns", 30),
+                    streaming=streaming_enabled,
                 )
 
             deps = SessionDeps(
@@ -421,6 +439,8 @@ class ChatScreen(Screen):
             info = self.query_one("#info-tile", InfoTile)
             info.update_session_status("Running", event.turn)
             self._turn_count = event.turn
+            participants = self.query_one("#participant-panel", ParticipantPanel)
+            participants.load_participants(event.agents, event.coach)
 
         elif isinstance(event, AgentTurnComplete):
             # Finalize the streaming widget with the persisted content
@@ -429,13 +449,15 @@ class ChatScreen(Screen):
                 msg_list.finalize_streaming(self._streaming_widget, event.content)
             self._streaming_widget = None
             self._streaming_turn_id = None
-            self._suppress_next_append = True
+            self._suppress_agent_append = event.agent
+            participants = self.query_one("#participant-panel", ParticipantPanel)
+            participants.mark_idle(event.agent)
 
         elif isinstance(event, AppendMessage):
             msg_list = self.query_one("#message-list", MessageList)
             # Skip rendering if already shown via streaming widget
-            if self._suppress_next_append:
-                self._suppress_next_append = False
+            if self._suppress_agent_append and event.msg.get("from") == self._suppress_agent_append:
+                self._suppress_agent_append = None
             else:
                 msg_list.append_message(event.msg)
             coach_name = resolve_coach_name(self.metadata.get("coach"))
@@ -549,8 +571,9 @@ class ChatScreen(Screen):
             self._streaming_turn_id = message.turn_id
 
         if self._streaming_widget is not None:
-            self._streaming_widget.append_text(message.text)
-            msg_list._maybe_scroll()
+            msg_list.append_stream_delta(self._streaming_widget, message.text)
+        participants = self.query_one("#participant-panel", ParticipantPanel)
+        participants.mark_typing(message.agent)
 
     def on_tool_progress(self, message: ToolProgress) -> None:
         """Handle ToolCallProgress events — update action bar with current operation."""
@@ -566,6 +589,7 @@ class ChatScreen(Screen):
         else:
             text = f"[{event.agent}] {event.tool_name} {event.path}"
         self.query_one("#action-bar", ActionBar).show(text)
+        self.query_one("#participant-panel", ParticipantPanel).add_tool_progress(event)
 
     def on_session_error(self, message: SessionError) -> None:
         """Handle worker thread errors."""

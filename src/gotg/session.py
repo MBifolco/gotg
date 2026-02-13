@@ -386,6 +386,15 @@ def advance_phase(
 
     current_phase, next_phase = validate_advance(iteration)
     log_path = iter_dir / "conversation.jsonl"
+
+    # Guard: refuse to advance if no conversation happened in this phase
+    phase_history = read_phase_history(log_path)
+    agent_messages = [m for m in phase_history if m.get("from") not in ("system", "human")]
+    if not agent_messages:
+        raise PhaseAdvanceError(
+            f"No conversation in {current_phase} phase. Run 'gotg run' first."
+        )
+
     coach = load_coach(team_dir)
     coach_ran = False
     tasks_written = False

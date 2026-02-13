@@ -142,17 +142,31 @@ def _run_discussion_phase(
     log_path, debug_path,
 ):
     """Handle discussion phases (refinement, planning, pre-code-review, code-review)."""
+    _suppress_agent_append: str | None = None  # agent name to suppress
+
     for event in run_session(
         agents=agents, iteration=iteration, model_config=model_config,
         deps=deps, history=history, policy=policy,
     ):
         if isinstance(event, SessionStarted):
             _print_session_header(event)
+        elif isinstance(event, TextDelta):
+            sys.stdout.write(event.text)
+            sys.stdout.flush()
+        elif isinstance(event, AgentTurnComplete):
+            sys.stdout.write("\n\n")
+            sys.stdout.flush()
+            _suppress_agent_append = event.agent
+        elif isinstance(event, ToolCallProgress):
+            _print_tool_progress(event)
         elif isinstance(event, (AppendMessage, AppendDebug)):
             persist_event(event, log_path, debug_path)
             if isinstance(event, AppendMessage):
-                print(render_message(event.msg))
-                print()
+                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
+                    _suppress_agent_append = None
+                else:
+                    print(render_message(event.msg))
+                    print()
         elif isinstance(event, PauseForApprovals):
             print("---")
             print(f"Paused: {event.pending_count} pending approval(s).")
@@ -210,7 +224,7 @@ def _run_implementation_phase(
     current_layer = iteration.get("current_layer", 0)
 
     # Track streaming state to suppress double-printing
-    _suppress_next_append = False
+    _suppress_agent_append: str | None = None
 
     for event in run_implementation(
         agents=agents, tasks=tasks_data, current_layer=current_layer,
@@ -225,12 +239,12 @@ def _run_implementation_phase(
         elif isinstance(event, AgentTurnComplete):
             sys.stdout.write("\n\n")
             sys.stdout.flush()
-            _suppress_next_append = True
+            _suppress_agent_append = event.agent
         elif isinstance(event, (AppendMessage, AppendDebug)):
             persist_event(event, log_path, debug_path)
             if isinstance(event, AppendMessage):
-                if _suppress_next_append:
-                    _suppress_next_append = False
+                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
+                    _suppress_agent_append = None
                 else:
                     print(render_message(event.msg))
                     print()
@@ -983,9 +997,13 @@ def cmd_groom_start(args):
 
     iteration = {"id": slug, "description": topic, "phase": None}
 
+    from gotg.config import load_streaming_config
+    streaming = load_streaming_config(team_dir)
+
     run_grooming_conversation(
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=topic, coach=coach, max_turns_override=max_turns,
+        streaming=streaming,
     )
 
 
@@ -1033,9 +1051,13 @@ def cmd_groom_continue(args):
 
     iteration = {"id": args.slug, "description": metadata["topic"], "phase": None}
 
+    from gotg.config import load_streaming_config
+    streaming = load_streaming_config(team_dir)
+
     run_grooming_conversation(
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=metadata["topic"], coach=coach, max_turns_override=target_total,
+        streaming=streaming,
     )
 
 

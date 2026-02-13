@@ -172,3 +172,8 @@ def format_tool_operation(op: dict) -> str:
     elif name == "file_list":
         return f"[file_list] {path}"
     return f"[{name}] {path}"
+
+
+def format_agent_tool_operation(agent_name: str, op: dict) -> str:
+    """Format a tool operation with explicit actor attribution."""
+    return f"[{agent_name}] {format_tool_operation(op)}"

@@ -811,3 +811,96 @@ def test_raw_completion_openai_returns_completion_round(mock_post):
     # Round-trip: build_continuation should work
     msgs = rnd.build_continuation([{"id": "call_1", "result": "ok"}])
     assert len(msgs) == 2
+
+
+# --- max_tokens parameter plumbing ---
+
+
+@patch("gotg.model.httpx.post")
+def test_raw_completion_anthropic_max_tokens_default(mock_post):
+    """raw_completion defaults to max_tokens=16384 for Anthropic."""
+    from gotg.model import raw_completion
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {},
+    }
+    mock_post.return_value = resp
+    raw_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "hi"}],
+        api_key="sk", provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    assert body["max_tokens"] == 16384
+
+
+@patch("gotg.model.httpx.post")
+def test_raw_completion_anthropic_max_tokens_custom(mock_post):
+    """raw_completion passes custom max_tokens for Anthropic."""
+    from gotg.model import raw_completion
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {},
+    }
+    mock_post.return_value = resp
+    raw_completion(
+        "https://api.anthropic.com", "m",
+        [{"role": "user", "content": "hi"}],
+        api_key="sk", provider="anthropic",
+        max_tokens=4096,
+    )
+    body = mock_post.call_args[1]["json"]
+    assert body["max_tokens"] == 4096
+
+
+@patch("gotg.model.httpx.post")
+def test_raw_completion_openai_max_tokens(mock_post):
+    """raw_completion passes max_tokens for OpenAI."""
+    from gotg.model import raw_completion
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{"message": {"content": "ok"}}]
+    }
+    mock_post.return_value = resp
+    raw_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "hi"}],
+        provider="openai", max_tokens=8192,
+    )
+    body = mock_post.call_args[1]["json"]
+    assert body["max_tokens"] == 8192
+
+
+@patch("gotg.model.httpx.post")
+def test_raw_completion_stream_max_tokens_default(mock_post):
+    """raw_completion_stream defaults to max_tokens=16384."""
+    from gotg.model import raw_completion_stream
+    # Mock stream response
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.iter_lines.return_value = iter([
+        "data: " + json.dumps({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+        "data: " + json.dumps({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ok"}}),
+        "data: " + json.dumps({"type": "content_block_stop", "index": 0}),
+        "data: " + json.dumps({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {}}),
+    ])
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("gotg.model.httpx.stream", return_value=mock_resp) as mock_stream:
+        result = raw_completion_stream(
+            "https://api.anthropic.com", "m",
+            [{"role": "user", "content": "hi"}],
+            api_key="sk", provider="anthropic",
+        )
+        list(result)
+
+    body = mock_stream.call_args[1]["json"]
+    assert body["max_tokens"] == 16384

@@ -1,5 +1,8 @@
-from gotg.engine import SessionDeps, run_session
+import json
+
+from gotg.engine import SessionDeps, run_session, _classify_tool_result
 from gotg.events import (
+    AgentTurnComplete,
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
@@ -7,7 +10,10 @@ from gotg.events import (
     PhaseCompleteSignaled,
     SessionComplete,
     SessionStarted,
+    TextDelta,
+    ToolCallProgress,
 )
+from gotg.model import CompletionRound, StreamingResult
 from gotg.policy import SessionPolicy
 from gotg.prompts import AGENT_TOOLS, COACH_TOOLS
 
@@ -141,6 +147,7 @@ def test_file_operation_logged():
     # First msg is the file op system message, second is the agent message
     assert len(msgs) == 2
     assert msgs[0].msg["from"] == "system"
+    assert "[agent-1]" in msgs[0].msg["content"]
     assert "[file_read]" in msgs[0].msg["content"]
     assert msgs[1].msg["from"] == "agent-1"
 
@@ -326,3 +333,319 @@ def test_no_coach_when_none():
         deps=deps, history=[], policy=_make_policy(max_turns=2),
     ))
     assert call_count["coach"] == 0
+
+
+# --- Streaming agent turn ---
+
+def _text_round(text):
+    return CompletionRound(
+        content=text,
+        tool_calls=[],
+        _provider="openai",
+        _raw={"message": {"content": text}},
+    )
+
+
+def _tool_round(text, tool_calls):
+    raw_tc = [
+        {"id": tc["id"], "function": {"name": tc["name"], "arguments": json.dumps(tc["input"])}}
+        for tc in tool_calls
+    ]
+    return CompletionRound(
+        content=text,
+        tool_calls=tool_calls,
+        _provider="openai",
+        _raw={"message": {"content": text, "tool_calls": raw_tc}},
+    )
+
+
+def _make_streaming_result(chunks, final_round):
+    """Create a StreamingResult that yields chunks and sets round on exhaustion."""
+    def _gen():
+        for chunk in chunks:
+            yield chunk
+        return final_round
+
+    result = StreamingResult(_gen=None)
+
+    def _capturing():
+        try:
+            rnd = yield from _gen()
+        except Exception:
+            raise
+        result.round = rnd
+
+    result._gen = _capturing()
+    return result
+
+
+def test_streaming_agent_turn_text_only():
+    """Streaming agent turn with no tools yields TextDelta + AgentTurnComplete + AppendMessage."""
+    calls = [0]
+    def mock_stream(**kw):
+        calls[0] += 1
+        return _make_streaming_result(["Hello", " world"], _text_round("Hello world"))
+
+    deps = _make_deps()
+    deps.stream_completion = mock_stream
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=1, streaming=True),
+    ))
+
+    deltas = _events_of_type(events, TextDelta)
+    assert len(deltas) == 2
+    assert deltas[0].text == "Hello"
+    assert deltas[1].text == " world"
+    assert deltas[0].agent == "agent-1"
+    assert deltas[0].turn_id == "turn-0-agent-1"
+
+    completes = _events_of_type(events, AgentTurnComplete)
+    assert len(completes) == 1
+    assert completes[0].agent == "agent-1"
+    assert completes[0].content == "Hello world"
+
+    msgs = _events_of_type(events, AppendMessage)
+    agent_msgs = [m for m in msgs if m.msg["from"] == "agent-1"]
+    assert len(agent_msgs) == 1
+    assert agent_msgs[0].msg["content"] == "Hello world"
+
+
+def test_streaming_agent_turn_with_tools():
+    """Streaming agent turn with tool calls yields ToolCallProgress."""
+    calls = [0]
+    def mock_stream(**kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            return _make_streaming_result(
+                ["Reading"],
+                _tool_round("Reading", [
+                    {"name": "pass_turn", "id": "tc1", "input": {"reason": "done"}},
+                ]),
+            )
+        return _make_streaming_result(["Done"], _text_round("Done"))
+
+    deps = _make_deps()
+    deps.stream_completion = mock_stream
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=1, streaming=True),
+    ))
+
+    # pass_turn yields ToolCallProgress
+    progress = _events_of_type(events, ToolCallProgress)
+    assert len(progress) == 1
+    assert progress[0].tool_name == "pass_turn"
+
+    # pass_turn message should be yielded
+    msgs = _events_of_type(events, AppendMessage)
+    pass_msgs = [m for m in msgs if m.msg.get("pass_turn")]
+    assert len(pass_msgs) == 1
+    assert "passes: done" in pass_msgs[0].msg["content"]
+
+    # P1 regression: pass_turn must NOT emit AgentTurnComplete
+    # (otherwise suppression lingers and eats the next real agent message)
+    completes = _events_of_type(events, AgentTurnComplete)
+    assert len(completes) == 0
+
+
+def test_streaming_non_streaming_path_untouched():
+    """When streaming=False, existing agent_completion path is used."""
+    stream_called = []
+    def mock_stream(**kw):
+        stream_called.append(True)
+        return _make_streaming_result(["x"], _text_round("x"))
+
+    deps = _make_deps(agent_response={"content": "non-streaming", "operations": []})
+    deps.stream_completion = mock_stream
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=1, streaming=False),
+    ))
+
+    assert len(stream_called) == 0
+    msgs = _events_of_type(events, AppendMessage)
+    assert msgs[0].msg["content"] == "non-streaming"
+    assert len(_events_of_type(events, TextDelta)) == 0
+
+
+def test_streaming_multi_round_tool_loop():
+    """Streaming agent turn with two tool rounds accumulates operations."""
+    calls = [0]
+    def mock_stream(**kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            return _make_streaming_result(
+                ["round1"],
+                _tool_round("round1", [
+                    {"name": "file_read", "id": "tc1", "input": {"path": "/tmp/a.py"}},
+                ]),
+            )
+        if calls[0] == 2:
+            return _make_streaming_result(
+                ["round2"],
+                _tool_round("round2", [
+                    {"name": "file_read", "id": "tc2", "input": {"path": "/tmp/b.py"}},
+                ]),
+            )
+        return _make_streaming_result(["final"], _text_round("final"))
+
+    deps = _make_deps()
+    deps.stream_completion = mock_stream
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=1, streaming=True),
+    ))
+
+    progress = _events_of_type(events, ToolCallProgress)
+    assert len(progress) == 2
+    assert progress[0].path == "/tmp/a.py"
+    assert progress[1].path == "/tmp/b.py"
+
+    # Tool op system messages
+    msgs = _events_of_type(events, AppendMessage)
+    sys_msgs = [m for m in msgs if m.msg["from"] == "system" and "[file_read]" in m.msg["content"]]
+    assert len(sys_msgs) == 2
+    assert all("[agent-1]" in m.msg["content"] for m in sys_msgs)
+
+
+def test_streaming_max_rounds():
+    """When max_rounds is reached, streaming turn still completes."""
+    def mock_stream(**kw):
+        return _make_streaming_result(
+            ["loop"],
+            _tool_round("loop", [
+                {"name": "file_list", "id": "tc1", "input": {"path": "/tmp"}},
+            ]),
+        )
+
+    deps = _make_deps()
+    deps.stream_completion = mock_stream
+
+    # Use max_rounds=2 via _do_streaming_agent_turn directly
+    from gotg.engine import _do_streaming_agent_turn, build_tool_executor
+    agent = AGENTS[0]
+    policy = _make_policy(streaming=True)
+    agent_tools, tool_executor = build_tool_executor(agent, policy)
+
+    events = list(_do_streaming_agent_turn(
+        agent, ITERATION, MODEL_CONFIG, deps, [], [],
+        agent_tools, tool_executor, 0, max_rounds=2,
+    ))
+
+    # Should get AgentTurnComplete even after max rounds
+    completes = [e for e in events if isinstance(e, AgentTurnComplete)]
+    assert len(completes) == 1
+
+
+def test_streaming_with_coach():
+    """Streaming applies to coach turns when stream_completion is available."""
+    calls = {"agent": 0, "coach_stream": 0, "coach_non_stream": 0}
+
+    def mock_stream(**kw):
+        tool_names = {t["name"] for t in (kw.get("tools") or [])}
+        if "ask_pm" in tool_names:
+            calls["coach_stream"] += 1
+            return _make_streaming_result(["coach summary"], _text_round("coach summary"))
+        calls["agent"] += 1
+        return _make_streaming_result([f"agent says {calls['agent']}"], _text_round(f"agent says {calls['agent']}"))
+
+    def mock_coach(**kw):
+        calls["coach_non_stream"] += 1
+        return {"content": "coach non-stream", "tool_calls": []}
+
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None,  # unused when streaming
+        coach_completion=mock_coach,
+        stream_completion=mock_stream,
+    )
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2, streaming=True),
+    ))
+
+    # Should have TextDelta events from agents and coach
+    deltas = _events_of_type(events, TextDelta)
+    assert any(d.agent == "agent-1" for d in deltas)
+    assert any(d.agent == "agent-2" for d in deltas)
+    assert any(d.agent == "coach" for d in deltas)
+    assert calls["coach_stream"] == 1
+    assert calls["coach_non_stream"] == 0
+
+    # Coach message is still persisted as AppendMessage for history/log continuity.
+    coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
+    assert len(coach_msgs) == 1
+    assert coach_msgs[0].msg["content"] == "coach summary"
+
+
+def test_streaming_coach_tool_only_response_keeps_fallback_visible():
+    """Tool-only coach responses should not emit AgentTurnComplete suppression."""
+    def mock_stream(**kw):
+        tool_names = {t["name"] for t in (kw.get("tools") or [])}
+        if "ask_pm" in tool_names:
+            return _make_streaming_result(
+                [],
+                _tool_round("", [{"name": "ask_pm", "id": "c1", "input": {"question": "Budget?"}}]),
+            )
+        return _make_streaming_result(["agent"], _text_round("agent"))
+
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None,  # unused when streaming
+        coach_completion=lambda **kw: {"content": "unused", "tool_calls": []},
+        stream_completion=mock_stream,
+    )
+
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2, streaming=True),
+    ))
+
+    # No streamed coach text means no coach AgentTurnComplete (prevents suppression bugs).
+    coach_completes = [e for e in _events_of_type(events, AgentTurnComplete) if e.agent == "coach"]
+    assert coach_completes == []
+
+    coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
+    assert len(coach_msgs) == 1
+    assert "Requesting PM input: Budget?" in coach_msgs[0].msg["content"]
+
+    asks = _events_of_type(events, CoachAskedPM)
+    assert len(asks) == 1
+    assert asks[0].question == "Budget?"
+
+
+def test_streaming_history_mutation():
+    """Streaming branch mutates history correctly."""
+    history = []
+    def mock_stream(**kw):
+        return _make_streaming_result(["hello"], _text_round("hello"))
+
+    deps = _make_deps()
+    deps.stream_completion = mock_stream
+
+    _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=history, policy=_make_policy(max_turns=1, streaming=True),
+    ))
+
+    agent_msgs = [m for m in history if m.get("from") == "agent-1"]
+    assert len(agent_msgs) == 1
+    assert agent_msgs[0]["content"] == "hello"
+
+
+# --- _classify_tool_result ---
+
+def test_classify_tool_result_ok():
+    assert _classify_tool_result("File content here") == "ok"
+
+def test_classify_tool_result_error():
+    assert _classify_tool_result("Error: file not found") == "error"
+
+def test_classify_tool_result_pending():
+    assert _classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"

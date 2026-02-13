@@ -139,19 +139,32 @@ class MessageList(VerticalScroll):
 
     def append_message(self, msg: dict) -> None:
         """Append a single message. Only auto-scrolls if user is near the bottom."""
+        should_scroll = self._is_near_bottom()
         for e in self.query(".msg-empty"):
             e.remove()
         self._mount_before_spinner(_make_widget(msg, self._agent_index))
-        self._maybe_scroll()
+        self._maybe_scroll(should_scroll)
 
     def append_coach_prompt(self, question: str) -> None:
         """Append a coach question as a visually distinct prompt."""
+        should_scroll = self._is_near_bottom()
         self._mount_before_spinner(CoachPrompt(question))
-        self._maybe_scroll()
+        self._maybe_scroll(should_scroll)
 
-    def _maybe_scroll(self) -> None:
-        """Auto-scroll only if user is at or near the bottom."""
-        if self.is_vertical_scroll_end or self.max_scroll_y == 0:
+    def _is_near_bottom(self, threshold: int = 2) -> bool:
+        """Return True if the viewport is close enough to the bottom to follow output."""
+        if self.max_scroll_y == 0:
+            return True
+        return (self.max_scroll_y - self.scroll_y) <= threshold
+
+    def _maybe_scroll(self, should_scroll: bool | None = None) -> None:
+        """Auto-scroll when the user was near the bottom before content changed."""
+        if should_scroll is None:
+            should_scroll = self._is_near_bottom()
+        if should_scroll:
+            # Immediate scroll keeps streaming turn-to-turn transitions from lagging
+            # when the next widget mounts before the deferred refresh callback runs.
+            self.scroll_end(animate=False)
             # Defer until after layout so scroll target reflects new content
             self.call_after_refresh(self.scroll_end, animate=False)
 
@@ -159,9 +172,10 @@ class MessageList(VerticalScroll):
         """Show a loading spinner at the bottom of the message list."""
         if self._loading_visible:
             return
+        should_scroll = self._is_near_bottom()
         self._loading_visible = True
         self.mount(LoadingIndicator(classes="ml-loading"))
-        self._maybe_scroll()
+        self._maybe_scroll(should_scroll)
 
     def hide_loading(self) -> None:
         """Remove the loading spinner."""
@@ -171,14 +185,22 @@ class MessageList(VerticalScroll):
 
     def begin_streaming(self, agent: str, css_class: str) -> StreamingChatbox:
         """Create and mount a StreamingChatbox, return it for incremental updates."""
+        should_scroll = self._is_near_bottom()
         for e in self.query(".msg-empty"):
             e.remove()
         widget = StreamingChatbox(agent, css_class=css_class)
         self._mount_before_spinner(widget)
-        self._maybe_scroll()
+        self._maybe_scroll(should_scroll)
         return widget
+
+    def append_stream_delta(self, widget: StreamingChatbox, text: str) -> None:
+        """Append streaming text and keep following output if user was near bottom."""
+        should_scroll = self._is_near_bottom()
+        widget.append_text(text)
+        self._maybe_scroll(should_scroll)
 
     def finalize_streaming(self, widget: StreamingChatbox, content: str) -> None:
         """Swap streaming Static with Markdown rendering."""
+        should_scroll = self._is_near_bottom()
         widget.finalize(content)
-        self._maybe_scroll()
+        self._maybe_scroll(should_scroll)
