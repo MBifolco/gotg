@@ -289,3 +289,150 @@ def test_resolve_merge_conflict_base_none_no_crash():
         "f.py", "b", None, "ours", "theirs", "ctx",
         MODEL_CONFIG, mock_chat,
     )
+
+
+# --- extract_tasks with refinement_summary ---
+
+def test_extract_tasks_passes_refinement_summary():
+    """refinement_summary appears in LLM user message when provided."""
+    captured = []
+
+    def mock_chat(**kwargs):
+        captured.append(kwargs)
+        return '[{"id": "t1", "description": "Do thing", "done_criteria": "Done", "depends_on": [], "assigned_to": null, "status": "pending"}]'
+
+    history = [
+        {"from": "agent-1", "content": "Let's build the timer"},
+    ]
+    extract_tasks(history, MODEL_CONFIG, "coach", mock_chat, refinement_summary="## Out of Scope\n- No pause/resume")
+    assert len(captured) == 1
+    user_msg = captured[0]["messages"][1]["content"]
+    assert "SCOPE SUMMARY" in user_msg
+    assert "No pause/resume" in user_msg
+
+
+def test_extract_tasks_no_summary_backward_compat():
+    """extract_tasks works without refinement_summary (backward compat)."""
+    captured = []
+
+    def mock_chat(**kwargs):
+        captured.append(kwargs)
+        return '[{"id": "t1", "description": "Do thing", "done_criteria": "Done", "depends_on": [], "assigned_to": null, "status": "pending"}]'
+
+    history = [{"from": "agent-1", "content": "Build it"}]
+    tasks, _, _ = extract_tasks(history, MODEL_CONFIG, "coach", mock_chat)
+    assert tasks is not None
+    user_msg = captured[0]["messages"][1]["content"]
+    assert "SCOPE SUMMARY" not in user_msg
+
+
+def test_extract_tasks_preserves_anti_patterns():
+    """anti_patterns array survives extract_tasks."""
+    def mock_chat(**kwargs):
+        return json.dumps([{
+            "id": "t1", "description": "Do thing",
+            "done_criteria": "Done", "depends_on": [],
+            "assigned_to": None, "status": "pending",
+            "anti_patterns": ["Do not use eval()"],
+        }])
+
+    tasks, _, _ = extract_tasks(
+        [{"from": "agent-1", "content": "Build it"}],
+        MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert tasks[0]["anti_patterns"] == ["Do not use eval()"]
+
+
+# --- build_phase_skeleton ---
+
+from gotg.transitions import build_phase_skeleton
+
+
+def test_build_phase_skeleton_basic():
+    history = [
+        {"from": "agent-1", "content": "We agreed to use eval()."},
+        {"from": "agent-2", "content": "Sounds good."},
+    ]
+    result = build_phase_skeleton(history, "refinement", "coach")
+    assert "Decisions:" in result
+    assert "Conversation index:" in result
+    assert "## REFINEMENT phase" in result
+
+
+def test_build_phase_skeleton_extracts_decisions():
+    history = [
+        {"from": "agent-1", "content": "We agreed to use eval(). Let's go with Python."},
+        {"from": "agent-2", "content": "I will use the standard library."},
+    ]
+    result = build_phase_skeleton(history, "planning", "coach")
+    assert "agreed" in result.lower()
+    assert "will use" in result.lower()
+
+
+def test_build_phase_skeleton_filters_system_and_pass_turn():
+    history = [
+        {"from": "system", "content": "kickoff msg"},
+        {"from": "agent-1", "content": "We agreed on X.", "pass_turn": True},
+        {"from": "agent-2", "content": "We decided to use Y."},
+    ]
+    result = build_phase_skeleton(history, "refinement", "coach")
+    assert "kickoff" not in result
+    assert "agreed on X" not in result
+    assert "decided to use Y" in result
+
+
+def test_build_phase_skeleton_truncates_long_messages():
+    long_msg = "A" * 200 + ". We agreed on this."
+    history = [{"from": "agent-1", "content": long_msg}]
+    result = build_phase_skeleton(history, "planning", "coach")
+    # Index line should be truncated
+    index_section = result.split("Conversation index:")[1]
+    for line in index_section.strip().split("\n"):
+        if line.startswith("["):
+            assert len(line) <= 120  # [agent-1]: + 97 + ... = ~110
+
+
+def test_build_phase_skeleton_empty_history():
+    result = build_phase_skeleton([], "refinement", "coach")
+    assert "## REFINEMENT phase" in result
+    assert "Conversation index:" in result
+
+
+def test_build_phase_skeleton_no_decisions():
+    history = [
+        {"from": "agent-1", "content": "Hello there."},
+        {"from": "agent-2", "content": "Good morning."},
+    ]
+    result = build_phase_skeleton(history, "planning", "coach")
+    assert "Decisions:" not in result
+    assert "Conversation index:" in result
+
+
+def test_build_phase_skeleton_caps_index_at_15():
+    history = [
+        {"from": f"agent-{i % 2 + 1}", "content": f"Message {i}."}
+        for i in range(20)
+    ]
+    result = build_phase_skeleton(history, "refinement", "coach")
+    index_section = result.split("Conversation index:")[1].strip()
+    index_lines = [l for l in index_section.split("\n") if l.strip().startswith("[")]
+    assert len(index_lines) == 15
+
+
+def test_build_phase_skeleton_captures_instead_of():
+    history = [
+        {"from": "agent-1", "content": "We should use X instead of Y."},
+        {"from": "agent-2", "content": "Rather than building custom code, let's import."},
+    ]
+    result = build_phase_skeleton(history, "planning", "coach")
+    decisions = result.split("Decisions:")[1].split("Conversation index:")[0]
+    assert "instead of" in decisions.lower()
+    assert "rather than" in decisions.lower()
+
+
+def test_build_phase_skeleton_captures_backtick_code():
+    history = [
+        {"from": "agent-1", "content": "We should implement `parse_expression()` for this."},
+    ]
+    result = build_phase_skeleton(history, "planning", "coach")
+    assert "parse_expression" in result

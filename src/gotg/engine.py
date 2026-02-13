@@ -93,6 +93,7 @@ def run_session(
             diffs_summary=policy.diffs_summary, fileguard=policy.fileguard,
             worktree_map=policy.worktree_map,
             system_supplement=policy.system_supplement,
+            phase_skeleton=policy.phase_skeleton,
         )
         yield AppendDebug({
             "turn": turn,

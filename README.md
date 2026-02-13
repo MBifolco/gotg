@@ -83,6 +83,13 @@ Edit `.team/team.json` — set `worktrees.enabled` to `true`:
 
 This gives each agent an isolated git branch and working directory during implementation. Without worktrees, agents can still discuss and plan but can't write code in isolation.
 
+Optionally enable streaming for real-time token output:
+```json
+{
+  "streaming": true
+}
+```
+
 ### 4. Phase 1: Refinement
 
 Agents discuss *what* to build — requirements, scope, edge cases, acceptance criteria. No implementation details.
@@ -114,13 +121,13 @@ gotg continue                               # Agents plan tasks
 gotg advance                                # Coach extracts tasks.json
 ```
 
-The advance produces `.team/iterations/iter-1/tasks.json` with computed dependency layers:
+The advance produces `.team/iterations/iter-1/tasks.json` with computed dependency layers. Each task includes an `approach` field capturing the team's agreed implementation method:
 
 ```json
 [
-  {"id": "T1", "description": "Create storage layer", "depends_on": [], "assigned_to": "", "layer": 0, ...},
-  {"id": "T2", "description": "Create CLI parser", "depends_on": [], "assigned_to": "", "layer": 0, ...},
-  {"id": "T3", "description": "Wire CLI to storage", "depends_on": ["T1", "T2"], "assigned_to": "", "layer": 1, ...}
+  {"id": "T1", "description": "Create storage layer", "approach": "Use JSON file with pathlib for read/write.", "depends_on": [], "assigned_to": "", "layer": 0, ...},
+  {"id": "T2", "description": "Create CLI parser", "approach": "Use argparse with subcommands.", "depends_on": [], "assigned_to": "", "layer": 0, ...},
+  {"id": "T3", "description": "Wire CLI to storage", "approach": "Import storage module directly, no dependency injection.", "depends_on": ["T1", "T2"], "assigned_to": "", "layer": 1, ...}
 ]
 ```
 
@@ -134,7 +141,7 @@ The advance produces `.team/iterations/iter-1/tasks.json` with computed dependen
 
 ### 6. Phase 3: Pre-code-review
 
-Agents propose implementation approaches — file structure, interfaces, test strategy. One task at a time, layer by layer. No actual code yet.
+Agents propose implementation approaches — file structure, interfaces, test strategy. One task at a time, layer by layer. No actual code yet. The coach verifies proposals are consistent with the `approach` field agreed during planning.
 
 ```bash
 gotg continue                               # Agents discuss approaches
@@ -144,7 +151,7 @@ gotg advance                                # Moves to implementation, sets curr
 
 ### 7. Phase 4: Implementation (layer 0)
 
-Agents write code using file tools (`file_read`, `file_write`, `file_list`) in their own git worktrees. Each agent works on an isolated branch.
+Agents write code using file tools (`file_read`, `file_write`, `file_list`) in their own git worktrees. Each agent works on an isolated branch. Agents can read committed code from the main branch as a fallback when files don't exist in their worktree.
 
 ```bash
 gotg continue                               # Agents write code
@@ -157,7 +164,7 @@ File tools: enabled (writable: src/**, tests/**, docs/**)
 Worktrees: 2 active
 ```
 
-Run `gotg continue` as many times as needed until agents finish their layer 0 tasks. The coach periodically checks progress and signals when all agents confirm completion.
+Run `gotg continue` as many times as needed until agents finish their layer 0 tasks. When agents call `complete_tasks`, they must attest to following the agreed approach for each task. The coach periodically checks progress and flags approach deviations.
 
 When ready:
 ```bash
@@ -240,9 +247,9 @@ GOTG puts you in the role of **Product Manager**. AI agents discuss and design b
 Every iteration progresses through five phases:
 
 1. **Refinement** — Agents discuss *what* to build. Requirements, scope, edge cases, acceptance criteria.
-2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies and done criteria. The coach extracts a structured `tasks.json`.
-3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy.
-4. **Implementation** — Agents write code for their assigned tasks using file tools in isolated worktrees. The coach tracks progress and signals when all agents confirm completion.
+2. **Planning** — Agents break the agreed scope into concrete, assignable tasks with dependencies, done criteria, and an agreed implementation approach per task. The coach extracts a structured `tasks.json`.
+3. **Pre-code-review** — Agents propose implementation approaches for their assigned tasks. File structure, interfaces, test strategy. The coach verifies proposals are consistent with the `approach` agreed during planning.
+4. **Implementation** — Agents write code for their assigned tasks using file tools in isolated worktrees. Each task has an `APPROACH` field that agents must follow. On completion, agents attest to following the agreed approach. The coach tracks progress and flags deviations.
 5. **Code-review** — Agents review each other's implementation diffs. The coach tracks open review concerns and signals completion when all are resolved.
 
 The coach facilitates each phase — summarizing progress, flagging gaps, and signaling when the team is ready to advance. You control transitions with `gotg advance`.
@@ -374,7 +381,8 @@ All configuration lives in `.team/team.json`:
   },
   "worktrees": {
     "enabled": true
-  }
+  },
+  "streaming": true
 }
 ```
 
@@ -401,7 +409,7 @@ When `file_access` is configured, agents get `file_read`, `file_write`, and `fil
 
 ### Worktrees
 
-When `worktrees.enabled` is `true`, each agent gets an isolated git worktree during implementation and code-review phases. Each worktree is a separate branch and working directory — agents write to their own copy of the codebase without stepping on each other.
+When `worktrees.enabled` is `true`, each agent gets an isolated git worktree during implementation and code-review phases. Each worktree is a separate branch and working directory — agents write to their own copy of the codebase without stepping on each other. Reads fall back to the main branch when a file doesn't exist in the agent's worktree, so agents can reference committed code from previous layers or other parts of the codebase.
 
 Worktrees are created automatically when entering implementation or code-review phases. They require:
 - At least one commit on `main`
@@ -525,6 +533,7 @@ Edit `team.json` without leaving the UI:
 - Agent CRUD — add, edit, and remove agents (minimum 2)
 - Coach toggle — enable/disable with a switch
 - File access and worktree configuration
+- Streaming toggle — enable real-time token output
 - **Ctrl+S** — Save changes
 
 Press **?** from any screen to see all available keybindings.
@@ -563,7 +572,7 @@ The editable install (`pip install -e .`) means the `gotg` command points direct
 ### Running tests
 
 ```bash
-pytest -q                     # ~977 tests
+pytest -q                     # ~1179 tests
 pytest tests/test_worktree.py # Just worktree tests
 pytest -k "merge"             # Tests matching "merge"
 ```

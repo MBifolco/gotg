@@ -69,6 +69,9 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
             approach = t.get("approach")
             if approach:
                 entry += f"\n  Approach: {approach}"
+            anti = t.get("anti_patterns")
+            if anti:
+                entry += "\n  MUST NOT: " + "; ".join(anti)
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"
@@ -95,6 +98,9 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
             approach = t.get("approach")
             if approach:
                 entry += f"\n  Approach: {approach}"
+            anti = t.get("anti_patterns")
+            if anti:
+                entry += "\n  MUST NOT: " + "; ".join(anti)
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"

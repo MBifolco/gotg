@@ -378,13 +378,12 @@ def test_implementation_prompt_mentions_file_tools():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "file_read" in prompt
-    assert "file_write" in prompt
 
 
-def test_implementation_prompt_mentions_assigned_tasks():
+def test_implementation_prompt_mentions_approach():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
-    assert "assigned" in prompt
+    assert "approach" in prompt
 
 
 def test_implementation_prompt_mentions_tests():
@@ -393,16 +392,16 @@ def test_implementation_prompt_mentions_tests():
     assert "test" in prompt
 
 
-def test_implementation_prompt_mentions_redirect():
+def test_implementation_prompt_anti_redesign():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
-    assert "settled" in prompt
+    assert "redesign" in prompt
 
 
 def test_implementation_prompt_discourages_cross_task():
     from gotg.scaffold import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
-    assert "outside your assigned" in prompt or "different layer" in prompt
+    assert "tasks outside layer" in prompt
 
 
 def test_coach_facilitation_prompts_has_implementation():

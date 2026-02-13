@@ -82,6 +82,7 @@ def _make_policy(**overrides):
         groomed_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
+        phase_skeleton=None,
     )
     defaults.update(overrides)
     return SessionPolicy(**defaults)
@@ -110,19 +111,9 @@ def _tool_round(text, tool_calls):
 
 
 def _complete_input(task_ids, summary, approach_map=None):
-    approach_map = approach_map or {}
-    att = []
-    for tid in task_ids:
-        att.append({
-            "task_id": tid,
-            "followed_approach": True,
-            "agreed_approach": approach_map.get(tid, ""),
-            "notes": f"Implemented {tid} following the agreed approach.",
-        })
     return {
         "task_ids": task_ids,
         "summary": summary,
-        "approach_attestation": att,
     }
 
 

@@ -950,3 +950,13 @@ def test_build_coach_prompt_no_override():
     system = messages[0]["content"]
     from gotg.prompts import COACH_FACILITATION_PROMPTS
     assert COACH_FACILITATION_PROMPTS["refinement"] in system
+
+
+def test_build_prompt_includes_phase_skeleton(agent_config, iteration):
+    messages = build_prompt(
+        agent_config, iteration, [],
+        phase_skeleton="## REFINEMENT phase\nDecisions:\n- agreed on X",
+    )
+    system = messages[0]["content"]
+    assert "PREVIOUS PHASE CONTEXT" in system
+    assert "agreed on X" in system

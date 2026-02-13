@@ -12,6 +12,7 @@ def build_prompt(
     fileguard=None,
     worktree_map: dict | None = None,
     system_supplement: str | None = None,
+    phase_skeleton: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -93,6 +94,9 @@ def build_prompt(
 
     if tasks_summary:
         system_parts.append("TASK LIST:\n\n" + tasks_summary)
+
+    if phase_skeleton:
+        system_parts.append("PREVIOUS PHASE CONTEXT:\n\n" + phase_skeleton)
 
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)

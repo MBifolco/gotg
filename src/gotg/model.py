@@ -139,12 +139,15 @@ def _anthropic_completion(
         "content-type": "application/json",
     }
 
-    # Anthropic: system is a top-level field, not a message
-    system = None
+    # Anthropic: system is a top-level field, not a message.
+    # All system messages are collected into the `system` parameter as
+    # separate text blocks.  The first block (the main prompt) is cached;
+    # later blocks (nudges, reminders) are ephemeral additions.
+    system_parts: list[str] = []
     chat_messages = []
     for msg in messages:
         if msg["role"] == "system":
-            system = msg["content"]
+            system_parts.append(msg["content"])
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -153,13 +156,16 @@ def _anthropic_completion(
         "max_tokens": 4096,
         "messages": chat_messages,
     }
-    if system:
+    if system_parts:
         body["system"] = [
             {
                 "type": "text",
-                "text": system,
+                "text": system_parts[0],
                 "cache_control": {"type": "ephemeral"},
             }
+        ] + [
+            {"type": "text", "text": part}
+            for part in system_parts[1:]
         ]
     if tools:
         body["tools"] = tools
@@ -236,12 +242,13 @@ def _anthropic_agentic(
         "content-type": "application/json",
     }
 
-    # Extract system from messages (same as _anthropic_completion)
-    system = None
+    # Extract system from messages (same logic as _anthropic_completion).
+    # All system messages collected into system parameter as text blocks.
+    system_parts: list[str] = []
     chat_messages = []
     for msg in messages:
         if msg["role"] == "system":
-            system = msg["content"]
+            system_parts.append(msg["content"])
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -258,13 +265,16 @@ def _anthropic_agentic(
             ]
 
     system_block = None
-    if system:
+    if system_parts:
         system_block = [
             {
                 "type": "text",
-                "text": system,
+                "text": system_parts[0],
                 "cache_control": {"type": "ephemeral"},
             }
+        ] + [
+            {"type": "text", "text": part}
+            for part in system_parts[1:]
         ]
 
     operations = []
@@ -434,12 +444,15 @@ def _anthropic_raw(
         "content-type": "application/json",
     }
 
-    # Extract system from messages
-    system = None
+    # Extract system from messages.
+    # All system messages collected into the `system` parameter as text
+    # blocks.  The first block (main prompt) is cached; later blocks
+    # (nudges, reminders) are ephemeral additions that don't overwrite it.
+    system_parts: list[str] = []
     chat_messages = []
     for msg in messages:
         if msg["role"] == "system":
-            system = msg["content"]
+            system_parts.append(msg["content"])
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -448,13 +461,16 @@ def _anthropic_raw(
         "max_tokens": max_tokens,
         "messages": chat_messages,
     }
-    if system:
+    if system_parts:
         body["system"] = [
             {
                 "type": "text",
-                "text": system,
+                "text": system_parts[0],
                 "cache_control": {"type": "ephemeral"},
             }
+        ] + [
+            {"type": "text", "text": part}
+            for part in system_parts[1:]
         ]
     if tools:
         body["tools"] = tools
@@ -638,12 +654,13 @@ def _anthropic_raw_stream(
         "content-type": "application/json",
     }
 
-    # Extract system from messages (same as _anthropic_raw)
-    system = None
+    # Extract system from messages (same logic as _anthropic_raw).
+    # All system messages collected into system parameter as text blocks.
+    system_parts: list[str] = []
     chat_messages = []
     for msg in messages:
         if msg["role"] == "system":
-            system = msg["content"]
+            system_parts.append(msg["content"])
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
 
@@ -653,13 +670,16 @@ def _anthropic_raw_stream(
         "messages": chat_messages,
         "stream": True,
     }
-    if system:
+    if system_parts:
         body["system"] = [
             {
                 "type": "text",
-                "text": system,
+                "text": system_parts[0],
                 "cache_control": {"type": "ephemeral"},
             }
+        ] + [
+            {"type": "text", "text": part}
+            for part in system_parts[1:]
         ]
     if tools:
         body["tools"] = tools

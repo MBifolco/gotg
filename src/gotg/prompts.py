@@ -37,12 +37,14 @@ COACH_GROOMING_PROMPT = COACH_REFINEMENT_PROMPT  # backward-compat alias
 COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"]
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
+DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
 
 PHASE_KICKOFF_MESSAGES: dict[str, str] = {
     phase: data["kickoff"]
     for phase, data in _DEFAULTS["phases"].items()
     if "kickoff" in data
 }
+
 
 # ── Tool definitions (descriptions from TOML, schemas in Python) ─
 
@@ -130,37 +132,8 @@ COMPLETE_TASKS_TOOL: dict = {
                 "type": "string",
                 "description": "Brief summary of what you built/changed",
             },
-            "approach_attestation": {
-                "type": "array",
-                "description": (
-                    "Per-task attestation that you followed the planned approach. "
-                    "Must include one entry for each completed task ID."
-                ),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "Task ID this attestation applies to",
-                        },
-                        "followed_approach": {
-                            "type": "boolean",
-                            "description": "True only if you followed the agreed task approach",
-                        },
-                        "agreed_approach": {
-                            "type": "string",
-                            "description": "The exact approach text from the task's APPROACH field",
-                        },
-                        "notes": {
-                            "type": "string",
-                            "description": "One sentence describing how your code followed the approach",
-                        },
-                    },
-                    "required": ["task_id", "followed_approach", "agreed_approach", "notes"],
-                },
-            },
         },
-        "required": ["task_ids", "summary", "approach_attestation"],
+        "required": ["task_ids", "summary"],
     },
 }
 

@@ -201,3 +201,36 @@ def test_format_tasks_summary_layer_none_shows_all():
     assert "Layer 1" in result
     assert "**a**" in result
     assert "**b**" in result
+
+
+def test_format_tasks_summary_includes_anti_patterns():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "anti_patterns": ["Do not use eval()", "Do not build a custom parser"]},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "MUST NOT:" in result
+    assert "Do not use eval()" in result
+    assert "Do not build a custom parser" in result
+
+
+def test_format_tasks_summary_omits_anti_patterns_when_empty():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "anti_patterns": []},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "MUST NOT:" not in result
+
+
+def test_format_tasks_summary_anti_patterns_layer_filtered():
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "layer": 0, "anti_patterns": ["Do not use eval()"]},
+    ]
+    result = format_tasks_summary(tasks, layer=0)
+    assert "MUST NOT:" in result
+    assert "Do not use eval()" in result

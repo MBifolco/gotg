@@ -245,3 +245,18 @@ def test_iteration_policy_non_implementation_shows_all_tasks(tmp_path):
     p = iteration_policy(AGENTS, iteration, iter_dir, history=[])
     assert "**a**" in p.tasks_summary
     assert "**b**" in p.tasks_summary
+
+
+def test_iteration_policy_loads_phase_skeleton(tmp_path):
+    iter_dir = _make_iter_dir(tmp_path)
+    skeleton_path = iter_dir / "phase_skeleton.md"
+    skeleton_path.write_text("## REFINEMENT phase\nDecisions:\n- agreed on X\n")
+    p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
+    assert p.phase_skeleton is not None
+    assert "REFINEMENT" in p.phase_skeleton
+
+
+def test_iteration_policy_no_skeleton_file(tmp_path):
+    iter_dir = _make_iter_dir(tmp_path)
+    p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
+    assert p.phase_skeleton is None

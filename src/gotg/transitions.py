@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -20,6 +21,57 @@ def strip_code_fences(text: str) -> str:
             text = text[:-3]
         text = text.strip()
     return text
+
+
+_DECISION_MARKERS = re.compile(
+    r"(?:agreed|decided|will use|let's go with|consensus|approved|settled on|"
+    r"we'll|approach:|plan is|ruling out|excluding|not going to|won't|must not|"
+    r"instead of|rather than|`[^`]+`)",
+    re.IGNORECASE,
+)
+
+_MAX_INDEX_LINES = 15
+
+
+def build_phase_skeleton(history: list[dict], phase: str, coach_name: str) -> str:
+    """Deterministic compression of phase conversation.
+
+    Two sections:
+    1. DECISIONS — sentences containing agreement/decision/rejection language,
+       plus sentences with backtick-quoted code references.
+    2. INDEX — one line per message (last 15): [speaker]: truncated first line
+
+    No LLM call. Filters out system messages and pass_turn messages.
+    """
+    decisions: list[str] = []
+    index_lines: list[str] = []
+    for msg in history:
+        sender = msg.get("from", "")
+        if sender == "system" or msg.get("pass_turn"):
+            continue
+        content = msg.get("content", "").strip()
+        if not content:
+            continue
+
+        first_line = content.split("\n")[0]
+        if len(first_line) > 100:
+            first_line = first_line[:97] + "..."
+        index_lines.append(f"[{sender}]: {first_line}")
+
+        for sentence in re.split(r'(?<=[.!?])\s+', content):
+            if _DECISION_MARKERS.search(sentence):
+                decisions.append(f"[{sender}]: {sentence.strip()}")
+
+    if len(index_lines) > _MAX_INDEX_LINES:
+        index_lines = index_lines[-_MAX_INDEX_LINES:]
+
+    parts = [f"## {phase.upper()} phase"]
+    if decisions:
+        parts.append("Decisions:")
+        parts.extend(f"- {d}" for d in decisions)
+    parts.append("\nConversation index:")
+    parts.extend(index_lines)
+    return "\n".join(parts)
 
 
 def extract_conversation_for_coach(history: list[dict], coach_name: str) -> str:
@@ -67,16 +119,23 @@ def extract_tasks(
     model_config: dict,
     coach_name: str,
     chat_call: Callable,
+    refinement_summary: str | None = None,
 ) -> tuple[list[dict] | None, str | None, str | None]:
     """One-shot LLM call to extract tasks.
 
     Returns (tasks_with_layers, raw_text, error_msg).
     On success: (tasks, None, None).  On failure: (None, raw_text, error_msg).
+
+    When refinement_summary is provided, it is appended so the LLM has scope
+    context (including Out of Scope items) when extracting anti_patterns.
     """
     conversation_text = extract_conversation_for_coach(history, coach_name)
+    user_content = f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="
+    if refinement_summary:
+        user_content += f"\n\n=== SCOPE SUMMARY ===\n{refinement_summary}\n=== END SCOPE SUMMARY ==="
     messages = [
         {"role": "system", "content": COACH_PLANNING_PROMPT},
-        {"role": "user", "content": f"=== TRANSCRIPT START ===\n{conversation_text}\n=== TRANSCRIPT END ==="},
+        {"role": "user", "content": user_content},
     ]
     tasks_json_text = chat_call(
         base_url=model_config["base_url"],

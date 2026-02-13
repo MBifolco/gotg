@@ -376,7 +376,7 @@ def advance_phase(
     )
     from gotg.conversation import read_phase_history
     from gotg.transitions import (
-        auto_commit_layer_worktrees, build_transition_messages,
+        auto_commit_layer_worktrees, build_phase_skeleton, build_transition_messages,
         extract_refinement_summary, extract_task_notes, extract_tasks,
     )
 
@@ -416,7 +416,12 @@ def advance_phase(
         _progress("Extracting tasks from planning conversation...")
         model_config = load_model_config(team_dir)
         history = read_phase_history(log_path)
-        tasks, raw_text, error = extract_tasks(history, model_config, coach["name"], chat_call)
+        summary_path = iter_dir / "refinement_summary.md"
+        ref_summary = summary_path.read_text().strip() if summary_path.exists() else None
+        tasks, raw_text, error = extract_tasks(
+            history, model_config, coach["name"], chat_call,
+            refinement_summary=ref_summary,
+        )
         if tasks is not None:
             tasks_path = iter_dir / "tasks.json"
             tasks_path.write_text(json.dumps(tasks, indent=2) + "\n")
@@ -467,6 +472,12 @@ def advance_phase(
                 elif commit_hash:
                     _progress(f"Auto-committed {branch}: {commit_hash}")
 
+    # Capture phase history BEFORE writing boundary markers —
+    # read_phase_history returns messages after the last boundary,
+    # so it must be called while the current phase's content is still "last".
+    history_for_skeleton = read_phase_history(log_path)
+    coach_name_for_skeleton = coach["name"] if coach else "coach"
+
     # Save phase change + boundary markers
     _progress("Saving phase change and creating checkpoint...")
     save_iteration_phase(team_dir, iteration["id"], next_phase)
@@ -475,6 +486,15 @@ def advance_phase(
     )
     append_message(log_path, boundary_msg)
     append_message(log_path, transition_msg)
+
+    # Compute and accumulate phase skeleton from pre-boundary history
+    skeleton_path = iter_dir / "phase_skeleton.md"
+    existing_skeleton = skeleton_path.read_text().strip() if skeleton_path.exists() else ""
+    new_skeleton = build_phase_skeleton(
+        history_for_skeleton, current_phase, coach_name_for_skeleton,
+    )
+    accumulated = (existing_skeleton + "\n\n" + new_skeleton).strip()
+    skeleton_path.write_text(accumulated + "\n")
 
     # Auto-checkpoint
     iteration["phase"] = next_phase

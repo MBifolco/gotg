@@ -103,6 +103,7 @@ def _make_policy(**overrides):
         groomed_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
+        phase_skeleton=None,
     )
     defaults.update(overrides)
     return SessionPolicy(**defaults)
@@ -133,20 +134,10 @@ def _tool_round(text, tool_calls):
 
 
 def _complete_input(task_ids, summary, approach_map=None):
-    """Build complete_tasks input payload with required approach attestation."""
-    approach_map = approach_map or {}
-    att = []
-    for tid in task_ids:
-        att.append({
-            "task_id": tid,
-            "followed_approach": True,
-            "agreed_approach": approach_map.get(tid, ""),
-            "notes": f"Implemented {tid} following the agreed approach.",
-        })
+    """Build complete_tasks input payload."""
     return {
         "task_ids": task_ids,
         "summary": summary,
-        "approach_attestation": att,
     }
 
 
@@ -187,14 +178,14 @@ def test_format_agent_tasks():
     result = _format_agent_tasks(tasks, "agent-1", 0)
     assert "task-a" in result
     assert "task-b" not in result
-    assert "layer 0" in result
+    assert "TASK 1 ID:" in result
 
 
 def test_format_agent_tasks_shows_approach():
     tasks = _make_tasks()
     tasks[0]["approach"] = "Use eval() after character-set validation."
     result = _format_agent_tasks(tasks, "agent-1", 0)
-    assert "APPROACH: Use eval() after character-set validation." in result
+    assert "TASK 1 APPROACH: Use eval() after character-set validation." in result
 
 
 def test_format_agent_tasks_omits_approach_when_absent():
@@ -218,9 +209,6 @@ def test_handle_complete_tasks_success(tmp_path):
     assert done_task["status"] == "done"
     assert done_task["completed_by"] == "agent-1"
     assert done_task["completion_summary"] == "Did A"
-    assert done_task["approach_followed"] is True
-    assert "approach" in done_task["approach_attestation"]
-    assert done_task["approach_match"] is True
 
 
 def test_handle_complete_tasks_wrong_agent(tmp_path):
@@ -266,58 +254,18 @@ def test_handle_complete_tasks_empty_ids(tmp_path):
     assert result.startswith("Error:")
 
 
-def test_handle_complete_tasks_missing_attestation(tmp_path):
+def test_handle_complete_tasks_no_attestation_required(tmp_path):
+    """complete_tasks works without approach_attestation (removed in drift-check refactor)."""
     tasks = _make_tasks()
     iter_dir = _setup_iter_dir(tmp_path, tasks)
     result = _handle_complete_tasks(
         {"task_ids": ["task-a"], "summary": "Did A"},
         "agent-1", tasks, 0, iter_dir,
     )
-    assert result.startswith("Error:")
-    assert "approach_attestation" in result
-
-
-def test_handle_complete_tasks_followed_false_rejected(tmp_path):
-    tasks = _make_tasks()
-    tasks[0]["approach"] = "Use eval() after validation."
-    iter_dir = _setup_iter_dir(tmp_path, tasks)
-    payload = _complete_input(
-        ["task-a"], "Did A", {"task-a": "Use eval() after validation."},
-    )
-    payload["approach_attestation"][0]["followed_approach"] = False
-    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
-    assert result.startswith("Error:")
-    assert "followed_approach=false" in result
-
-
-def test_handle_complete_tasks_approach_mismatch_warns_but_completes(tmp_path):
-    tasks = _make_tasks()
-    tasks[0]["approach"] = "Use eval() after validation."
-    iter_dir = _setup_iter_dir(tmp_path, tasks)
-    payload = _complete_input(["task-a"], "Did A", {"task-a": "Use custom parser."})
-    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
     assert result.startswith("Completed tasks:")
-    assert "warning:" in result
     saved = json.loads((iter_dir / "tasks.json").read_text())
     done_task = next(t for t in saved if t["id"] == "task-a")
     assert done_task["status"] == "done"
-    assert done_task["approach_match"] is False
-
-
-def test_handle_complete_tasks_approach_format_variation_allowed(tmp_path):
-    tasks = _make_tasks()
-    tasks[0]["approach"] = (
-        "Use ast.parse() + ast.NodeVisitor from Python's standard library "
-        "to safely evaluate expressions."
-    )
-    iter_dir = _setup_iter_dir(tmp_path, tasks)
-    payload = _complete_input(
-        ["task-a"],
-        "Did A",
-        {"task-a": "Use AST parse and NodeVisitor from Python standard library to safely evaluate expressions"},
-    )
-    result = _handle_complete_tasks(payload, "agent-1", tasks, 0, iter_dir)
-    assert result.startswith("Completed tasks:")
 
 
 def test_handle_report_blocked_success(tmp_path):
@@ -485,7 +433,7 @@ def test_complete_tasks_persists_and_emits_layer_complete(tmp_path):
         # Determine which agent based on "Your name is X" in prompt
         msgs = kw.get("messages", [])
         system_text = msgs[0]["content"] if msgs else ""
-        if "Your name is agent-1" in system_text:
+        if "You are agent-1" in system_text:
             agent_calls["agent-1"] += 1
             if agent_calls["agent-1"] == 1:
                 return _tool_round("Completing tasks.", [
@@ -746,7 +694,7 @@ def test_auto_commit_worktrees_on_layer_complete(tmp_path):
 
     def mock_single(**kw):
         system_text = kw["messages"][0]["content"]
-        if "Your name is agent-1" in system_text:
+        if "You are agent-1" in system_text:
             agent = "agent-1"
             task_id = "task-a"
         else:
@@ -857,3 +805,140 @@ def test_text_only_after_tool_gets_single_nudge_retry(tmp_path):
 
     assert call_count[0] == 3  # initial tool round + one retry + stop round
     assert isinstance(events[-1], SessionComplete)
+
+
+# --- anti_patterns in _format_agent_tasks ---
+
+from gotg.implementation import _build_constraint_reminder, _run_drift_check, _extract_scope_boundaries
+
+
+def test_format_agent_tasks_shows_anti_patterns():
+    tasks = _make_tasks()
+    tasks[0]["anti_patterns"] = ["Do not use eval()"]
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "TASK 1 DO NOT:" in result
+    assert "- Use eval()" in result
+
+
+def test_format_agent_tasks_omits_anti_patterns_when_empty():
+    tasks = _make_tasks()
+    tasks[0]["anti_patterns"] = []
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "DO NOT:" not in result
+
+
+def test_format_agent_tasks_numbered_format():
+    tasks = _make_tasks()
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "TASK 1 ID: task-a" in result
+    assert "TASK 1 DESCRIPTION:" in result
+
+
+def test_format_agent_tasks_done_when():
+    tasks = _make_tasks()
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "TASK 1 DONE WHEN:" in result
+
+
+def test_format_agent_tasks_no_scope_boundaries():
+    """Scope boundaries are no longer injected — MUST NOT constraints in tasks cover this."""
+    tasks = _make_tasks()
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "SCOPE BOUNDARIES" not in result
+
+
+def test_format_agent_tasks_shows_requirements():
+    tasks = _make_tasks()
+    tasks[0]["requirements"] = ["Support + and - operators", "Handle parentheses"]
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "TASK 1 DO:" in result
+    assert "- Support + and - operators" in result
+    assert "- Handle parentheses" in result
+
+
+def test_format_agent_tasks_omits_do_when_no_requirements():
+    tasks = _make_tasks()
+    result = _format_agent_tasks(tasks, "agent-1", 0)
+    assert "DO:" not in result
+
+
+def test_extract_scope_boundaries():
+    summary = "## Summary\nOverview.\n\n## Out of Scope\n- No GUI\n\n## Agreed Requirements\n- Must support math\n\n## Assumptions\n- Python 3.11"
+    result = _extract_scope_boundaries(summary)
+    assert "Out of Scope:" in result
+    assert "No GUI" in result
+    assert "Agreed Requirements:" in result
+    assert "Must support math" in result
+    assert "Assumptions" not in result
+
+
+# --- _build_constraint_reminder ---
+
+
+def test_build_constraint_reminder_includes_approach():
+    tasks = [{"id": "t1", "approach": "Use eval()", "anti_patterns": [], "done_criteria": "works"}]
+    result = _build_constraint_reminder(tasks)
+    assert "APPROACH: Use eval()" in result
+
+
+def test_build_constraint_reminder_includes_anti_patterns():
+    tasks = [{"id": "t1", "approach": "", "anti_patterns": ["No custom parser"], "done_criteria": "works"}]
+    result = _build_constraint_reminder(tasks)
+    assert "DO NOT: No custom parser" in result
+
+
+def test_build_constraint_reminder_includes_done_criteria():
+    tasks = [{"id": "t1", "approach": "", "anti_patterns": [], "done_criteria": "passes all tests"}]
+    result = _build_constraint_reminder(tasks)
+    assert "DONE WHEN: passes all tests" in result
+
+
+# --- _run_drift_check ---
+
+
+def test_drift_check_non_blocking_on_llm_failure():
+    """Returns [] when LLM errors (tasks stay done)."""
+    def mock_single(**kw):
+        raise RuntimeError("LLM fail")
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+    result = _run_drift_check(
+        {"main.py": "print('hello')"},
+        [{"id": "t1", "description": "task", "done_criteria": "done"}],
+        MODEL_CONFIG, deps,
+    )
+    assert result == []
+
+
+def test_drift_check_truncates_large_files():
+    """Files >500 lines get truncated."""
+    captured = []
+
+    def mock_single(**kw):
+        captured.append(kw)
+        return CompletionRound(
+            content='[{"task_id": "t1", "approach_ok": true, "anti_pattern_violations": [], "done_criteria_ok": true, "notes": "ok"}]',
+            tool_calls=[], _provider="openai", _raw={},
+        )
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+    large_file = "\n".join(f"line {i}" for i in range(600))
+    _run_drift_check(
+        {"big.py": large_file},
+        [{"id": "t1", "description": "task", "done_criteria": "done"}],
+        MODEL_CONFIG, deps,
+    )
+    user_msg = captured[0]["messages"][0]["content"]
+    assert "... (truncated)" in user_msg
+
+
+def test_drift_check_empty_files_returns_empty():
+    deps = SessionDeps(agent_completion=None, coach_completion=None, single_completion=None)
+    result = _run_drift_check({}, [{"id": "t1", "description": "x", "done_criteria": "y"}], MODEL_CONFIG, deps)
+    assert result == []

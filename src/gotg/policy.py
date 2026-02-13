@@ -42,6 +42,8 @@ class SessionPolicy:
     # Prompt supplements (grooming mode)
     system_supplement: str | None     # Extra text injected early in agent system prompt
     coach_system_prompt: str | None   # Overrides phase-based coach facilitation prompt
+    # Phase context
+    phase_skeleton: str | None = None  # Compressed prior-phase context
     # Streaming
     streaming: bool = False           # opt-in via team.json, default off for safe rollout
 
@@ -71,6 +73,10 @@ def iteration_policy(
     # Load refinement_summary.md artifact
     summary_path = iter_dir / "refinement_summary.md"
     groomed_summary = summary_path.read_text().strip() if summary_path.exists() else None
+
+    # Load phase skeleton (compressed prior-phase context)
+    skeleton_path = iter_dir / "phase_skeleton.md"
+    phase_skeleton = skeleton_path.read_text().strip() if skeleton_path.exists() else None
 
     # Load tasks.json artifact
     tasks_path = iter_dir / "tasks.json"
@@ -115,6 +121,7 @@ def iteration_policy(
         worktree_map=worktree_map,
         system_supplement=None,
         coach_system_prompt=None,
+        phase_skeleton=phase_skeleton,
         streaming=streaming,
     )
 

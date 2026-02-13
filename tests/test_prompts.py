@@ -90,3 +90,29 @@ def test_pre_code_review_coach_mentions_approach():
 def test_implementation_coach_mentions_approach():
     prompt = COACH_FACILITATION_PROMPTS["implementation"]
     assert "approach" in prompt.lower()
+
+
+from gotg.prompts import DRIFT_CHECK_PROMPT
+
+
+def test_task_extraction_prompt_mentions_anti_patterns():
+    assert "anti_patterns" in COACH_PLANNING_PROMPT
+
+
+def test_drift_check_prompt_exists():
+    assert isinstance(DRIFT_CHECK_PROMPT, str) and DRIFT_CHECK_PROMPT
+
+
+def test_drift_check_prompt_mentions_done_criteria():
+    assert "DONE WHEN" in DRIFT_CHECK_PROMPT
+
+
+def test_implementation_prompt_is_concise():
+    from gotg.prompts import PHASE_PROMPTS
+    prompt = PHASE_PROMPTS["implementation"]
+    line_count = len([l for l in prompt.strip().split("\n") if l.strip()])
+    assert line_count <= 20
+
+
+def test_system_prompt_has_scope_matching():
+    assert "nothing more, nothing less" in DEFAULT_SYSTEM_PROMPT

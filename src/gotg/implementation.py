@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 from typing import Iterator
 
-from gotg.agent import build_prompt
 from gotg.engine import SessionDeps, build_tool_executor
 from gotg.events import (
     AgentTurnComplete,
@@ -22,7 +21,8 @@ from gotg.events import (
     ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
-from gotg.prompts import COMPLETE_TASKS_TOOL, REPORT_BLOCKED_TOOL
+from gotg.prompts import COMPLETE_TASKS_TOOL, DRIFT_CHECK_PROMPT, REPORT_BLOCKED_TOOL
+from gotg.transitions import strip_code_fences
 
 _STATE_FILE = "implementation_state.json"
 _READ_ONLY_TOOLS = {"file_read", "file_list"}
@@ -35,35 +35,6 @@ def _classify_result(result_str: str) -> str:
     if result_str.startswith("Pending approval"):
         return "pending_approval"
     return "ok"
-
-
-def _normalize_approach_text(text: str) -> str:
-    """Canonicalize approach text for tolerant matching."""
-    if not text:
-        return ""
-    tokens = re.findall(r"[a-z0-9]+", text.lower())
-    return " ".join(tokens)
-
-
-def _approach_matches(expected: str, attested: str) -> bool:
-    """Return True when attested approach is materially aligned with expected text."""
-    exp = _normalize_approach_text(expected)
-    got = _normalize_approach_text(attested)
-    if not exp:
-        return True
-    if not got:
-        return False
-    if got == exp:
-        return True
-    if got in exp or exp in got:
-        return True
-
-    exp_tokens = set(exp.split())
-    got_tokens = set(got.split())
-    if not exp_tokens:
-        return True
-    coverage = len(exp_tokens & got_tokens) / len(exp_tokens)
-    return coverage >= 0.6
 
 
 def _load_tasks(iter_dir: Path) -> list[dict]:
@@ -111,27 +82,142 @@ def _agents_with_pending_work(
     return result
 
 
+def _strip_do_not(text: str) -> str:
+    """Strip leading 'Do not ' / 'Do not: ' and re-capitalise."""
+    for prefix in ("Do not ", "Do not: "):
+        if text.startswith(prefix):
+            rest = text[len(prefix):]
+            return rest[0].upper() + rest[1:] if rest else text
+    return text
+
+
 def _format_agent_tasks(tasks: list[dict], agent_name: str, layer: int) -> str:
-    """Format task summary for a single agent's prompt."""
+    """Format task specs for a single agent's implementation prompt.
+
+    Numbered TASK labels with explicit field prefixes. Anti-patterns
+    render as "DO NOT:" items with double-negative prefixes stripped.
+    """
     lt = _layer_tasks(tasks, layer)
     my_tasks = _agent_tasks(lt, agent_name)
     if not my_tasks:
         return "No tasks assigned to you in this layer."
-    parts = [f"### Your tasks (layer {layer})"]
-    for t in my_tasks:
-        status = t.get("status", "pending")
-        entry = (
-            f"- **{t['id']}** [{status}]\n"
-            f"  {t['description']}\n"
-        )
+    parts: list[str] = []
+    for i, t in enumerate(my_tasks, 1):
+        tag = f"TASK {i}"
+        lines = [f"{tag} ID: {t['id']}"]
+        lines.append(f"{tag} DESCRIPTION: {t['description']}")
+        reqs = t.get("requirements")
+        if reqs:
+            items = "\n".join(f"- {r}" for r in reqs)
+            lines.append(f"{tag} DO:\n{items}")
         approach = t.get("approach")
         if approach:
-            entry += f"  APPROACH: {approach}\n"
-        entry += f"  Done when: {t['done_criteria']}"
+            lines.append(f"{tag} APPROACH: {approach}")
+        anti = t.get("anti_patterns")
+        if anti:
+            items = "\n".join(f"- {_strip_do_not(a)}" for a in anti)
+            lines.append(f"{tag} DO NOT:\n{items}")
+        lines.append(f"{tag} DONE WHEN: {t.get('done_criteria', '')}")
         notes = t.get("notes")
         if notes:
-            entry += f"\n  Notes: {notes}"
-        parts.append(entry)
+            lines.append(f"{tag} FILES TO CREATE:\n{notes}")
+        parts.append("\n\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def _build_implementation_prompt(
+    agent_name: str,
+    project_description: str,
+    layer: int,
+    tasks_text: str,
+    fileguard=None,
+    worktree_map: dict | None = None,
+) -> list[dict]:
+    """Build a focused implementation prompt — no discussion-phase baggage.
+
+    Returns a two-element messages list (system + user) ready for the LLM.
+    """
+    writable = "src/**, tests/**, docs/**"
+    if fileguard and fileguard.writable_paths:
+        writable = ", ".join(fileguard.writable_paths)
+
+    parts = [
+        f"You are {agent_name}, implementing assigned tasks.",
+        f"These tasks are part of a larger project called: {project_description}",
+        "",
+        "Write exactly what is specified for the tasks below — nothing more, nothing less.",
+        "Do not add features, classes, abstractions, or improvements beyond what each task requires.",
+        "Do not create files that are not mentioned in your task specifications.",
+        "",
+        "PROCESS TO FOLLOW:",
+        "1. Read existing code with file_read before writing.",
+        "2. Write code based on the task specifics below.",
+        "3. Call complete_tasks with task_ids and summary when done.",
+        "",
+        "Call report_blocked if you cannot proceed.",
+        "",
+        f"Files: You can read all project files and write to: {writable}.",
+    ]
+
+    if worktree_map and agent_name in worktree_map:
+        parts.append("Worktree: You are in your own isolated git worktree. Your writes go only to your worktree.")
+
+    parts.append("")
+    parts.append("YOUR TASKS:\n")
+    parts.append(tasks_text)
+
+    system_content = "\n".join(parts)
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": "Implement your assigned tasks."},
+    ]
+
+
+def _extract_scope_boundaries(summary: str) -> str:
+    """Extract Out of Scope and Agreed Requirements sections from refinement summary."""
+    sections: list[str] = []
+    current_section: str | None = None
+    current_lines: list[str] = []
+    for line in summary.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if current_section in ("Out of Scope", "Agreed Requirements") and current_lines:
+                sections.append(f"{current_section}:")
+                sections.extend(current_lines)
+            current_section = stripped[3:].strip()
+            current_lines = []
+        elif stripped and current_section:
+            current_lines.append(f"  {stripped}")
+    # Flush last section
+    if current_section in ("Out of Scope", "Agreed Requirements") and current_lines:
+        sections.append(f"{current_section}:")
+        sections.extend(current_lines)
+    return "\n".join(sections)
+
+
+_REMINDER_CADENCE = 5
+_WRITES_SINCE_REMINDER_THRESHOLD = 3
+
+
+def _build_constraint_reminder(agent_tasks: list[dict]) -> str:
+    """Build a brief constraint reminder for mid-turn injection.
+
+    Uses the same field labels as the task blocks (APPROACH, DO NOT,
+    DONE WHEN) for consistency.
+    """
+    parts = ["Reminder — your task constraints:"]
+    for t in agent_tasks:
+        approach = t.get("approach")
+        anti = t.get("anti_patterns", [])
+        done = t.get("done_criteria", "")
+        if approach or anti or done:
+            parts.append(f"  {t['id']}:")
+            if approach:
+                parts.append(f"    APPROACH: {approach}")
+            for a in anti:
+                parts.append(f"    DO NOT: {_strip_do_not(a)}")
+            if done:
+                parts.append(f"    DONE WHEN: {done}")
     return "\n".join(parts)
 
 
@@ -196,101 +282,85 @@ def _handle_complete_tasks(
     """Validate and persist task completion. Returns result string."""
     task_ids = tool_input.get("task_ids", [])
     summary = tool_input.get("summary", "")
-    approach_attestation = tool_input.get("approach_attestation")
 
     if not task_ids:
         return "Error: task_ids is empty"
-    if not isinstance(approach_attestation, list) or not approach_attestation:
-        return "Error: approach_attestation is required and must be a non-empty array"
 
     lt = _layer_tasks(tasks, layer)
-    lt_by_id = {t["id"]: t for t in lt}
     lt_ids = {t["id"] for t in lt}
     agent_lt = _agent_tasks(lt, agent_name)
     agent_lt_ids = {t["id"] for t in agent_lt}
-
-    # Build and validate attestations.
-    attest_by_task: dict[str, dict] = {}
-    for entry in approach_attestation:
-        if not isinstance(entry, dict):
-            return "Error: each approach_attestation entry must be an object"
-        tid = entry.get("task_id")
-        if not isinstance(tid, str) or not tid:
-            return "Error: each approach_attestation entry must include a non-empty task_id"
-        if tid in attest_by_task:
-            return f"Error: duplicate approach_attestation for task '{tid}'"
-        followed = entry.get("followed_approach")
-        if not isinstance(followed, bool):
-            return (
-                f"Error: approach_attestation for task '{tid}' must include "
-                "boolean followed_approach"
-            )
-        agreed = entry.get("agreed_approach")
-        if not isinstance(agreed, str):
-            return (
-                f"Error: approach_attestation for task '{tid}' must include "
-                "string agreed_approach"
-            )
-        notes = (entry.get("notes") or "").strip()
-        if not notes:
-            return (
-                f"Error: approach_attestation for task '{tid}' must include "
-                "non-empty notes"
-            )
-        attest_by_task[tid] = {
-            "followed_approach": followed,
-            "agreed_approach": " ".join(agreed.split()),
-            "notes": notes,
-        }
-
-    mismatched: list[str] = []
 
     for tid in task_ids:
         if tid not in lt_ids:
             return f"Error: task '{tid}' is not in layer {layer}"
         if tid not in agent_lt_ids:
             return f"Error: task '{tid}' is not assigned to you"
-        if tid not in attest_by_task:
-            return (
-                f"Error: missing approach_attestation for task '{tid}'. "
-                "Provide one attestation entry per completed task."
-            )
-        att = attest_by_task[tid]
-        if not att["followed_approach"]:
-            return (
-                f"Error: task '{tid}' marked followed_approach=false. "
-                "Use report_blocked if you could not follow the agreed approach."
-            )
-        expected_approach_raw = (lt_by_id[tid].get("approach") or "").strip()
-        if expected_approach_raw and not _approach_matches(expected_approach_raw, att["agreed_approach"]):
-            mismatched.append(tid)
 
     completed = []
     for t in tasks:
         if t["id"] in task_ids:
             if t.get("status") == "done":
                 continue
-            att = attest_by_task[t["id"]]
             t["status"] = "done"
             t["completed_by"] = agent_name
             t["completion_summary"] = summary
-            t["approach_followed"] = True
-            t["approach_attestation"] = att["notes"]
-            t["approach_match"] = t["id"] not in mismatched
             t.pop("blocked_by", None)
             t.pop("blocked_reason", None)
             completed.append(t["id"])
 
     _save_tasks(iter_dir, tasks)
 
-    if completed and mismatched:
-        return (
-            f"Completed tasks: {', '.join(completed)} "
-            f"(warning: attestation text differed from task APPROACH for: {', '.join(mismatched)})"
-        )
     if completed:
         return f"Completed tasks: {', '.join(completed)}"
     return "Tasks already marked as done."
+
+
+def _run_drift_check(
+    file_contents: dict[str, str],
+    agent_tasks: list[dict],
+    model_config: dict,
+    deps: SessionDeps,
+) -> list[dict]:
+    """One-shot LLM verification of written code against task specs.
+
+    Returns list of {task_id, approach_ok, anti_pattern_violations, done_criteria_ok, notes}.
+    Returns empty list on LLM/parse failure (non-blocking).
+    """
+    if not file_contents or not agent_tasks:
+        return []
+    fc_parts = []
+    for path, content in file_contents.items():
+        lines = content.split("\n")
+        if len(lines) > 500:
+            content = "\n".join(lines[:500]) + "\n... (truncated)"
+        fc_parts.append(f"=== {path} ===\n{content}")
+    file_text = "\n\n".join(fc_parts)
+    specs = []
+    for t in agent_tasks:
+        spec = f"Task {t['id']}: {t['description']}"
+        if t.get("approach"):
+            spec += f"\n  APPROACH: {t['approach']}"
+        for ap in t.get("anti_patterns", []):
+            spec += f"\n  MUST NOT: {ap}"
+        spec += f"\n  DONE WHEN: {t.get('done_criteria', '')}"
+        specs.append(spec)
+    task_text = "\n\n".join(specs)
+    prompt = DRIFT_CHECK_PROMPT.format(
+        file_contents=file_text, task_specs=task_text,
+    )
+    try:
+        result = deps.single_completion(
+            base_url=model_config["base_url"],
+            model=model_config["model"],
+            messages=[{"role": "user", "content": prompt}],
+            api_key=model_config.get("api_key"),
+            provider=model_config.get("provider", "ollama"),
+        )
+        text = strip_code_fences(result.content if hasattr(result, "content") else str(result))
+        return json.loads(text)
+    except Exception:
+        return []
 
 
 def _handle_report_blocked(
@@ -448,14 +518,19 @@ def run_implementation(
                 resume_gate = None
             continue
 
-        agent_tasks_summary = _format_agent_tasks(tasks, agent_name, current_layer)
-        prompt = build_prompt(
-            agent, iteration, history, all_participants,
-            groomed_summary=policy.groomed_summary,
-            tasks_summary=agent_tasks_summary,
+        agent_tasks_text = _format_agent_tasks(
+            tasks, agent_name, current_layer,
+        )
+        # Dedicated implementation prompt — no discussion-phase norms,
+        # no team context, no overrides.  Just the agent identity, project
+        # context, constraints, and task specs.
+        prompt = _build_implementation_prompt(
+            agent_name=agent_name,
+            project_description=iteration["description"],
+            layer=current_layer,
+            tasks_text=agent_tasks_text,
             fileguard=policy.fileguard,
             worktree_map=policy.worktree_map,
-            system_supplement=policy.system_supplement,
         )
 
         yield AppendDebug({
@@ -472,6 +547,7 @@ def run_implementation(
             read_only_streak = int(resumed.get("read_only_streak", 0))
             no_tool_streak = int(resumed.get("no_tool_streak", 0))
             saw_tool_activity = bool(resumed.get("saw_tool_activity", False))
+            writes_since_reminder = int(resumed.get("writes_since_reminder", 0))
             resume_gate = None
             resumed = None
         else:
@@ -480,7 +556,9 @@ def run_implementation(
             read_only_streak = 0
             no_tool_streak = 0
             saw_tool_activity = False
+            writes_since_reminder = 0
 
+        agent_file_contents: dict[str, str] = {}
         dispatched_agents += 1
 
         for round_num in range(start_round, max_tool_rounds):
@@ -599,6 +677,48 @@ def run_implementation(
                     "result": result,
                 })
 
+                if tc_name == "file_write":
+                    writes_since_reminder += 1
+                    agent_file_contents[tc_input.get("path", "")] = tc_input.get("content", "")
+
+                # Drift check after successful complete_tasks
+                if tc_name == "complete_tasks" and not result.startswith("Error:"):
+                    checks = _run_drift_check(
+                        agent_file_contents,
+                        _agent_tasks(_layer_tasks(tasks, current_layer), agent_name),
+                        model_config, deps,
+                    )
+                    blocking_violations: list[tuple[str, str]] = []
+                    for check in checks:
+                        violations = check.get("anti_pattern_violations", [])
+                        for v in violations:
+                            blocking_violations.append((check["task_id"], v))
+                        if not check.get("approach_ok", True):
+                            warn = f"[drift-check] task {check['task_id']}: approach may not match — {check.get('notes', '')}"
+                            warn_msg = {"from": "system", "iteration": iteration["id"], "content": warn}
+                            yield AppendMessage(warn_msg)
+                            history.append(warn_msg)
+                        if not check.get("done_criteria_ok", True):
+                            warn = f"[drift-check] task {check['task_id']}: done_criteria may not be satisfied — {check.get('notes', '')}"
+                            warn_msg = {"from": "system", "iteration": iteration["id"], "content": warn}
+                            yield AppendMessage(warn_msg)
+                            history.append(warn_msg)
+                    if blocking_violations:
+                        violated_ids = {tid for tid, _ in blocking_violations}
+                        for t in tasks:
+                            if t["id"] in violated_ids and t.get("status") == "done":
+                                t["status"] = "pending"
+                                t.pop("completed_by", None)
+                                t.pop("completion_summary", None)
+                        _save_tasks(iter_dir, tasks)
+                        violation_msgs = [f"MUST NOT violated on {tid}: {v}" for tid, v in blocking_violations]
+                        result = "Drift detected — completion reverted. Fix these issues and call complete_tasks again:\n" + "\n".join(violation_msgs)
+                        for tid, v in blocking_violations:
+                            warn_msg = {"from": "system", "iteration": iteration["id"],
+                                        "content": f"[drift-check] task {tid}: MUST NOT violated — {v}"}
+                            yield AppendMessage(warn_msg)
+                            history.append(warn_msg)
+
                 status = _classify_result(result)
                 content_size = None
                 if tc_name == "file_write":
@@ -674,6 +794,17 @@ def run_implementation(
             else:
                 read_only_streak = 0
             no_tool_streak = 0
+
+            # Mid-turn constraint reminder — on cadence or after N file writes
+            should_remind = (
+                ((round_num + 1) % _REMINDER_CADENCE == 0) or
+                (writes_since_reminder >= _WRITES_SINCE_REMINDER_THRESHOLD)
+            )
+            if should_remind and pending:
+                reminder = _build_constraint_reminder(agent_lt)
+                if "APPROACH:" in reminder or "DO NOT:" in reminder:
+                    llm_messages.append({"role": "system", "content": reminder})
+                    writes_since_reminder = 0
 
             _save_state(
                 iter_dir, current_layer, agent_name, llm_messages,
