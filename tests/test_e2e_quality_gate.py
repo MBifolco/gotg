@@ -693,6 +693,72 @@ def test_replay_test8_implementation_tool_activity_persisted_to_conversation_and
     )
 
 
+def test_e2e_complete_tasks_atomic_rejection_on_invalid_id(tmp_path, monkeypatch):
+    """complete_tasks should reject whole payload on invalid task IDs (no partial completion)."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=1,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "valid-task",
+            "description": "Valid task",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+        return _tool_round(
+            "Attempting completion with invalid id.",
+            [
+                {
+                    "name": "complete_tasks",
+                    "id": "ct1",
+                    "input": {
+                        "task_ids": ["valid-task", "nonexistent-task"],
+                        "summary": "should fail atomically",
+                    },
+                }
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    task = next(t for t in saved_tasks if t["id"] == "valid-task")
+    assert task["status"] == "pending"
+    assert "completed_by" not in task
+    assert "completion_summary" not in task
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    assert any(
+        "[agent-1] [complete_tasks] Error: task 'nonexistent-task' is not in layer 0"
+        in m.get("content", "")
+        for m in messages
+    )
+
+
 def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatch):
     """Streaming output should be persisted with same final content as non-streaming logs."""
     team_dir, iter_dir = _make_team(tmp_path, phase="refinement", max_turns=1, streaming=True)
