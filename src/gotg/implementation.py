@@ -587,6 +587,21 @@ def run_implementation(
                 )
 
             if not rnd.tool_calls:
+                if rnd.content.strip():
+                    if policy.streaming and deps.stream_completion:
+                        yield AgentTurnComplete(
+                            agent=agent_name,
+                            turn_id=turn_id,
+                            content=rnd.content,
+                        )
+                    msg = {
+                        "from": agent_name,
+                        "iteration": iteration["id"],
+                        "content": rnd.content,
+                    }
+                    yield AppendMessage(msg)
+                    history.append(msg)
+
                 tasks = _load_tasks(iter_dir)
                 lt = _layer_tasks(tasks, current_layer)
                 agent_lt = _agent_tasks(lt, agent_name)
@@ -611,20 +626,6 @@ def run_implementation(
                     _clear_state(iter_dir)
                     break
 
-                if rnd.content.strip():
-                    if policy.streaming and deps.stream_completion:
-                        yield AgentTurnComplete(
-                            agent=agent_name,
-                            turn_id=turn_id,
-                            content=rnd.content,
-                        )
-                    msg = {
-                        "from": agent_name,
-                        "iteration": iteration["id"],
-                        "content": rnd.content,
-                    }
-                    yield AppendMessage(msg)
-                    history.append(msg)
                 _clear_state(iter_dir)
                 break
 
