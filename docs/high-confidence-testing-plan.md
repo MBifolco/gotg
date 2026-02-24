@@ -66,6 +66,12 @@ Merge gating:
 - Block merges on `core-non-tui` and `tui-pty`.
 - Run replay lane nightly.
 
+Implementation status:
+
+- `core-non-tui`: `.github/workflows/core-non-tui.yml`
+- `tui-pty`: `.github/workflows/tui-pty.yml`
+- `nightly-replay`: `.github/workflows/nightly-replay.yml`
+
 ### 5. Add Mutation Testing Pilot (2 days)
 
 Run mutation testing on critical modules and enforce an initial floor (for example 45%), then ratchet upward over time.
