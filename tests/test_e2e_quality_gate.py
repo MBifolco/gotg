@@ -842,6 +842,99 @@ def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatc
     )
 
 
+def test_e2e_coach_streaming_tool_only_phase_complete(tmp_path, monkeypatch):
+    """Coach streaming tool-only response should persist fallback text and phase-complete signal."""
+    team_dir, iter_dir = _make_team(tmp_path, phase="refinement", max_turns=2, streaming=True)
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+    coach = {"name": "coach", "role": "Agile Coach"}
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+    monkeypatch.setattr("gotg.cli.raw_completion", lambda **_kw: _text_round("unused"))
+
+    def _raw_stream(**kw):
+        tools = kw.get("tools") or []
+        tool_names = {t.get("name") for t in tools}
+        if "signal_phase_complete" in tool_names:
+            # Coach turn: tool-only response.
+            return _stream_result(
+                [],
+                _tool_round(
+                    "",
+                    [{"name": "signal_phase_complete", "id": "spc1", "input": {"summary": "resolved"}}],
+                ),
+            )
+        # Agent turn: simple streamed text.
+        return _stream_result(["agent ", "stream"], _text_round("agent stream"))
+
+    monkeypatch.setattr("gotg.cli.raw_completion_stream", _raw_stream)
+
+    run_conversation(
+        iter_dir,
+        agents,
+        {"id": "iter-1", "description": "Build a CLI calculator", "phase": "refinement", "max_turns": 2},
+        model_config,
+        coach=coach,
+        streaming=True,
+    )
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    assert any(m.get("from") == "coach" and m.get("content") == "(Phase complete signal sent.)" for m in messages)
+    assert any(
+        isinstance(row.get("turn"), str)
+        and row.get("turn", "").startswith("coach-after-")
+        and any(tc.get("name") == "signal_phase_complete" for tc in row.get("tool_calls", []))
+        for row in debug_rows
+    )
+
+
+def test_e2e_coach_streaming_mixed_text_and_tool_single_persisted_message(tmp_path, monkeypatch):
+    """Coach streamed text plus tool call should persist exactly one coach message with final content."""
+    team_dir, iter_dir = _make_team(tmp_path, phase="refinement", max_turns=2, streaming=True)
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+    coach = {"name": "coach", "role": "Agile Coach"}
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+    monkeypatch.setattr("gotg.cli.raw_completion", lambda **_kw: _text_round("unused"))
+
+    def _raw_stream(**kw):
+        tools = kw.get("tools") or []
+        tool_names = {t.get("name") for t in tools}
+        if "signal_phase_complete" in tool_names:
+            return _stream_result(
+                ["Team ", "aligned."],
+                _tool_round(
+                    "Team aligned.",
+                    [{"name": "signal_phase_complete", "id": "spc1", "input": {"summary": "resolved"}}],
+                ),
+            )
+        return _stream_result(["agent ", "stream"], _text_round("agent stream"))
+
+    monkeypatch.setattr("gotg.cli.raw_completion_stream", _raw_stream)
+
+    run_conversation(
+        iter_dir,
+        agents,
+        {"id": "iter-1", "description": "Build a CLI calculator", "phase": "refinement", "max_turns": 2},
+        model_config,
+        coach=coach,
+        streaming=True,
+    )
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    coach_msgs = [m for m in messages if m.get("from") == "coach" and m.get("content") == "Team aligned."]
+    assert len(coach_msgs) == 1
+
+
 def test_e2e_approval_pause_resume_implementation(tmp_path, monkeypatch):
     """Implementation should pause for approvals, then resume and complete after approval."""
     team_dir, iter_dir = _make_team(

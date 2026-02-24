@@ -65,6 +65,11 @@ Tests:
 - `tests/test_behavior_contracts.py::test_contract_pass_turn_does_not_suppress_next_agent_message`
 - `tests/test_engine.py::test_streaming_agent_turn_with_tools`
 
+Behavior: Streaming coach turns persist correctly for tool-only and mixed text+tool responses.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_e2e_coach_streaming_tool_only_phase_complete`
+- `tests/test_e2e_quality_gate.py::test_e2e_coach_streaming_mixed_text_and_tool_single_persisted_message`
+
 ## Task State and Constraints
 
 Behavior: `complete_tasks` can only close tasks assigned to the acting agent in the current layer.
