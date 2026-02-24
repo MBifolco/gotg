@@ -104,3 +104,6 @@ Purpose: Historical scenario replays and longer-running regression suites.
 
 4. `mutation-pilot`
 Purpose: Curated mutation checks over critical execution modules with a kill-rate floor.
+
+Operational checklist and triage playbook:
+- `docs/ci-lane-checklist-and-triage.md`
