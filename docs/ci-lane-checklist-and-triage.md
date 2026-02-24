@@ -12,6 +12,9 @@ Use this during PR review and when CI fails.
 6. `docs/testing-behavior-map.md` is updated for any critical-flow change.
 7. New escaped bug has a deterministic replay/contract test within 24h.
 
+Branch protection setup reference:
+- `docs/branch-protection-setup.md`
+
 ## Lanes
 
 ### `core-non-tui`

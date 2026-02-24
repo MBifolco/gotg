@@ -113,3 +113,6 @@ Purpose: Enforce behavior-map + test updates when critical execution files chang
 
 Operational checklist and triage playbook:
 - `docs/ci-lane-checklist-and-triage.md`
+
+Branch-protection setup reference:
+- `docs/branch-protection-setup.md`

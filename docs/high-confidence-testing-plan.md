@@ -84,6 +84,7 @@ Implementation status:
 - `tui-pty`: `.github/workflows/tui-pty.yml`
 - `nightly-replay`: `.github/workflows/nightly-replay.yml`
 - CI ops checklist and triage: `docs/ci-lane-checklist-and-triage.md`
+- Branch protection setup script: `scripts/ops/configure_branch_protection.sh`
 
 ### 5. Add Mutation Testing Pilot (2 days)
 
