@@ -84,6 +84,14 @@ Behavior: `report_blocked` validates ownership and persists blocked state.
 Tests:
 - `tests/test_implementation.py::test_handle_report_blocked_success`
 - `tests/test_implementation.py::test_handle_report_blocked_wrong_agent`
+- `tests/test_implementation.py::test_handle_report_blocked_empty_ids`
+- `tests/test_implementation.py::test_handle_report_blocked_reason_required`
+- `tests/test_implementation.py::test_handle_report_blocked_wrong_layer`
+- `tests/test_implementation.py::test_handle_report_blocked_rejects_done_task`
+
+Behavior: Invalid `report_blocked` payload does not deadlock implementation progress.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completion`
 
 Behavior: Attestation payload mismatch does not deadlock implementation completion.
 Tests:
@@ -92,6 +100,10 @@ Tests:
 Behavior: File writes do not complete a task unless `complete_tasks` is explicitly called.
 Tests:
 - `tests/test_e2e_quality_gate.py::test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks`
+
+Behavior: Drift-check reverts MUST NOT violations but still allows later successful completion.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_e2e_drift_check_recovery_allows_subsequent_completion`
 
 ## Approval and Resume
 

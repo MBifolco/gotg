@@ -26,7 +26,5 @@ jobs:
           python -m pip install -e ".[tui]" pytest
 
       - name: Run TUI test suite (PTY lane)
-        env:
-          TERM: xterm-256color
         run: |
-          timeout 420 python -m pytest tests/test_tui*.py -q --tb=short
+          ./scripts/ci/run_tui_pty.sh

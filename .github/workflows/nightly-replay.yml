@@ -28,4 +28,4 @@ jobs:
 
       - name: Run replay and quality-gate e2e contracts
         run: |
-          python -m pytest tests/test_e2e_quality_gate.py -q --tb=short
+          ./scripts/ci/run_nightly_replay.sh

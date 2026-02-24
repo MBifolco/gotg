@@ -1283,6 +1283,202 @@ def test_e2e_drift_check_reverts_completion_on_must_not_violation(tmp_path, monk
     )
 
 
+def test_e2e_drift_check_recovery_allows_subsequent_completion(tmp_path, monkeypatch):
+    """After drift-check reverts completion, agent can fix and complete in a later round."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=4,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "recover-task",
+            "description": "Implement evaluator safely",
+            "done_criteria": "Evaluator works without eval",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+            "approach": "Use parser logic, no eval.",
+            "anti_patterns": ["Do not use eval()"],
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    state = {"impl_calls": 0, "drift_calls": 0}
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if has_complete_tasks:
+            state["impl_calls"] += 1
+            if state["impl_calls"] == 1:
+                return _tool_round(
+                    "First attempt.",
+                    [
+                        {
+                            "name": "file_write",
+                            "id": "fw1",
+                            "input": {"path": "src/evaluator.py", "content": "def evaluate(expr):\n    return eval(expr)\n"},
+                        },
+                        {
+                            "name": "complete_tasks",
+                            "id": "ct1",
+                            "input": {"task_ids": ["recover-task"], "summary": "first pass"},
+                        },
+                    ],
+                )
+            return _tool_round(
+                "Second attempt with fix.",
+                [
+                    {
+                        "name": "file_write",
+                        "id": "fw2",
+                        "input": {"path": "src/evaluator.py", "content": "def evaluate(expr):\n    return float(expr)\n"},
+                    },
+                    {
+                        "name": "complete_tasks",
+                        "id": "ct2",
+                        "input": {"task_ids": ["recover-task"], "summary": "fixed and complete"},
+                    },
+                ],
+            )
+
+        # Drift-check calls (no tools).
+        state["drift_calls"] += 1
+        if state["drift_calls"] == 1:
+            return _text_round(
+                json.dumps(
+                    [
+                        {
+                            "task_id": "recover-task",
+                            "approach_ok": False,
+                            "anti_pattern_violations": ["Do not use eval()"],
+                            "done_criteria_ok": True,
+                            "notes": "Used eval() in evaluator.",
+                        }
+                    ]
+                )
+            )
+        return _text_round(
+            json.dumps(
+                [
+                    {
+                        "task_id": "recover-task",
+                        "approach_ok": True,
+                        "anti_pattern_violations": [],
+                        "done_criteria_ok": True,
+                        "notes": "No violations.",
+                    }
+                ]
+            )
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    task = next(t for t in saved_tasks if t["id"] == "recover-task")
+    messages = read_log(iter_dir / "conversation.jsonl")
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    assert state["impl_calls"] == 2
+    assert state["drift_calls"] == 2
+    assert task["status"] == "done"
+    assert task.get("completed_by") == "agent-1"
+    assert any("Drift detected — completion reverted" in m.get("content", "") for m in messages)
+    assert any("[complete_tasks] Completed tasks: recover-task" in m.get("content", "") for m in messages)
+    complete_ops = sum(
+        1
+        for row in debug_rows
+        for op in row.get("tool_operations", [])
+        if op.get("name") == "complete_tasks"
+    )
+    assert complete_ops == 2
+
+
+def test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completion(tmp_path, monkeypatch):
+    """Replay guard from test14: invalid report_blocked should not prevent later completion."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=3,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "blocked-recovery-task",
+            "description": "Recover after invalid report_blocked payload",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    state = {"calls": 0}
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+
+        state["calls"] += 1
+        if state["calls"] == 1:
+            return _tool_round(
+                "Attempting to report blocked with invalid payload.",
+                [{"name": "report_blocked", "id": "rb1", "input": {"task_ids": [], "reason": "need help"}}],
+            )
+        return _tool_round(
+            "Completing after failed report_blocked.",
+            [
+                {
+                    "name": "complete_tasks",
+                    "id": "ct1",
+                    "input": {"task_ids": ["blocked-recovery-task"], "summary": "completed after retry"},
+                }
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    task = next(t for t in saved_tasks if t["id"] == "blocked-recovery-task")
+    messages = read_log(iter_dir / "conversation.jsonl")
+
+    assert state["calls"] == 2
+    assert task["status"] == "done"
+    assert any("[agent-1] [report_blocked] Error: task_ids is empty" in m.get("content", "") for m in messages)
+    assert any("[agent-1] [complete_tasks] Completed tasks: blocked-recovery-task" in m.get("content", "") for m in messages)
+
+
 def test_replay_streamed_text_only_round_is_persisted_for_traceability(tmp_path, monkeypatch):
     """Replay guard: streamed assistant text should be persisted even when no tools are called.
 

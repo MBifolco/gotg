@@ -29,4 +29,4 @@ jobs:
 
       - name: Run non-TUI test suite
         run: |
-          python -m pytest tests/ -q --tb=short --ignore-glob='tests/test_tui*.py'
+          ./scripts/ci/run_core_non_tui.sh
