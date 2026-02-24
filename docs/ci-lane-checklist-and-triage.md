@@ -8,8 +8,9 @@ Use this during PR review and when CI fails.
 2. `tui-pty` is green for UI/streaming/autoscroll changes.
 3. `nightly-replay` is green (or no new failures introduced by the PR).
 4. `mutation-pilot` is green (kill-rate floor met).
-5. `docs/testing-behavior-map.md` is updated for any critical-flow change.
-6. New escaped bug has a deterministic replay/contract test within 24h.
+5. `behavior-map-guard` is green.
+6. `docs/testing-behavior-map.md` is updated for any critical-flow change.
+7. New escaped bug has a deterministic replay/contract test within 24h.
 
 ## Lanes
 
@@ -43,6 +44,13 @@ Use this during PR review and when CI fails.
 - Floor override:
   - `GOTG_MUTATION_FLOOR=0.85 bash scripts/ci/run_mutation_pilot.sh`
 
+### `behavior-map-guard`
+- Workflow: `.github/workflows/behavior-map-guard.yml`
+- Script: `scripts/ci/run_behavior_map_guard.sh`
+- Purpose: enforce behavior-map + tests updates for critical execution changes.
+- Local repro:
+  - `BASE_REF=main bash scripts/ci/run_behavior_map_guard.sh`
+
 ## Failure Triage
 
 ### 1) `core-non-tui` failed
@@ -71,7 +79,15 @@ Use this during PR review and when CI fails.
 3. Add/strengthen tests that should kill that mutation (behavior-level first).
 4. Re-run mutation pilot and verify kill-rate floor.
 
-### 4) `tui-pty` failed
+### 4) `behavior-map-guard` failed
+
+1. Run `BASE_REF=main bash scripts/ci/run_behavior_map_guard.sh`.
+2. If critical files changed, add:
+   - an update to `docs/testing-behavior-map.md`
+   - at least one relevant test update under `tests/`
+3. Re-run guard; then run `core-non-tui`.
+
+### 5) `tui-pty` failed
 
 1. Check if failure is PTY/env-specific vs app logic.
 2. Re-run `bash scripts/ci/run_tui_pty.sh` in a PTY-capable local shell.

@@ -102,6 +102,11 @@ Require each PR touching critical flows to:
 1. Update `docs/testing-behavior-map.md`.
 2. Add at least one behavior-level test.
 
+Implementation status:
+
+- Governance guard runner: `scripts/testing/behavior_map_guard.py`
+- CI lane: `.github/workflows/behavior-map-guard.yml`
+
 ## Definition of Done (High Confidence)
 
 1. No known red replay tests.

@@ -45,6 +45,9 @@ Behavior: Tests assert consistency across `conversation.jsonl`, `debug.jsonl`, `
 10. Failure-quality checks pass.
 Behavior: Negative tests assert clear failure modes, not just absence of crash.
 
+Governance enforcement:
+- `.github/workflows/behavior-map-guard.yml` ensures critical execution changes include behavior-map and test updates.
+
 ## Prioritized Next 10 High-Value Tests
 
 1. Full deterministic end-to-end iteration lifecycle.
@@ -104,6 +107,9 @@ Purpose: Historical scenario replays and longer-running regression suites.
 
 4. `mutation-pilot`
 Purpose: Curated mutation checks over critical execution modules with a kill-rate floor.
+
+5. `behavior-map-guard`
+Purpose: Enforce behavior-map + test updates when critical execution files change.
 
 Operational checklist and triage playbook:
 - `docs/ci-lane-checklist-and-triage.md`
