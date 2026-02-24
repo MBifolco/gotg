@@ -51,6 +51,11 @@ Tests:
 - `tests/test_behavior_contracts.py::test_contract_implementation_streaming_logs_text_and_tool_ops`
 - `tests/test_e2e_quality_gate.py::test_replay_streamed_text_only_round_is_persisted_for_traceability`
 
+Behavior: Implementation artifacts stay consistent across debug tool ops, conversation tool messages, and task state.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_e2e_artifact_consistency_tool_ops_and_task_state`
+- `tests/test_e2e_quality_gate.py::test_replay_test8_implementation_tool_activity_persisted_to_conversation_and_debug`
+
 Behavior: Non-streaming implementation persists both assistant text and tool operation messages.
 Tests:
 - `tests/test_behavior_contracts.py::test_contract_implementation_non_streaming_logs_text_and_tool_ops`
@@ -103,6 +108,10 @@ Tests:
 - `tests/test_session_review.py::test_validate_next_layer_wrong_phase`
 - `tests/test_session_review.py::test_validate_next_layer_unmerged_branches`
 - `tests/test_session_review.py::test_validate_next_layer_dirty_worktree`
+
+Behavior: File writes during implementation are isolated per agent worktree root.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_e2e_worktree_isolation_contract`
 
 ## Known Gaps (Next Additions)
 

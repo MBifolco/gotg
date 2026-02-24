@@ -395,6 +395,304 @@ def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
     assert any(m.get("phase_boundary") and m.get("layer") == 1 for m in read_log(iter_dir / "conversation.jsonl"))
 
 
+def test_e2e_worktree_isolation_contract(tmp_path, monkeypatch):
+    """Implementation file tools must route writes to per-agent worktree roots."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=1,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "iso-a",
+            "description": "agent-1 writes shared path in own worktree",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        },
+        {
+            "id": "iso-b",
+            "description": "agent-2 writes shared path in own worktree",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-2",
+            "status": "pending",
+            "layer": 0,
+        },
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    # Main/project file used to verify read fallback from worktree roots.
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "common.txt").write_text("root common content\n")
+
+    wt1 = tmp_path / ".worktrees" / "agent-1-layer-0"
+    wt2 = tmp_path / ".worktrees" / "agent-2-layer-0"
+    wt1.mkdir(parents=True, exist_ok=True)
+    wt2.mkdir(parents=True, exist_ok=True)
+    worktree_map = {"agent-1": wt1, "agent-2": wt2}
+
+    fileguard = FileGuard(
+        tmp_path,
+        {
+            "writable_paths": ["src/**"],
+            "max_file_size_bytes": 1_048_576,
+            "max_files_per_turn": 10,
+            "enable_approvals": False,
+        },
+    )
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+
+        messages = kw.get("messages", [])
+        agent_name = "agent-1"
+        for m in messages:
+            if m.get("role") == "system":
+                match = re.search(r"You are (agent-\d+)", m.get("content", ""))
+                if match:
+                    agent_name = match.group(1)
+                    break
+
+        task_id = _task_id_from_prompt(messages, agent_name)
+        content = f"{agent_name} isolated write\n"
+        return _tool_round(
+            f"{agent_name} implementing",
+            [
+                {"name": "file_read", "id": "fr1", "input": {"path": "src/common.txt"}},
+                {"name": "file_write", "id": "fw1", "input": {"path": "src/shared.py", "content": content}},
+                {"name": "complete_tasks", "id": "ct1", "input": {"task_ids": [task_id], "summary": "done"}},
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        worktree_map=worktree_map,
+        streaming=False,
+    )
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert all(t.get("status") == "done" for t in saved_tasks)
+
+    # Root should not be directly written when worktree_map is active.
+    assert not (tmp_path / "src" / "shared.py").exists()
+
+    # Each worktree gets its own copy of the same path with agent-specific content.
+    assert (wt1 / "src" / "shared.py").read_text() == "agent-1 isolated write\n"
+    assert (wt2 / "src" / "shared.py").read_text() == "agent-2 isolated write\n"
+
+    # Read fallback should resolve src/common.txt from project root.
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    assert any(
+        any(op.get("name") == "file_read" and op.get("result") == "root common content\n" for op in row.get("tool_operations", []))
+        for row in debug_rows
+    )
+
+
+def test_e2e_artifact_consistency_tool_ops_and_task_state(tmp_path, monkeypatch):
+    """Tool operations should be consistent across debug log, conversation log, and task state."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=1,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "consistency-task",
+            "description": "Read, write, and complete",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "input.txt").write_text("input data\n")
+
+    fileguard = FileGuard(
+        tmp_path,
+        {
+            "writable_paths": ["src/**"],
+            "max_file_size_bytes": 1_048_576,
+            "max_files_per_turn": 10,
+            "enable_approvals": False,
+        },
+    )
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+        return _tool_round(
+            "Doing work.",
+            [
+                {"name": "file_read", "id": "fr1", "input": {"path": "src/input.txt"}},
+                {"name": "file_write", "id": "fw1", "input": {"path": "src/output.txt", "content": "output data\n"}},
+                {
+                    "name": "complete_tasks",
+                    "id": "ct1",
+                    "input": {"task_ids": ["consistency-task"], "summary": "completed tool chain"},
+                },
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        streaming=False,
+    )
+
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    op_rows = [row for row in debug_rows if row.get("tool_operations")]
+    assert op_rows, "Expected tool_operations in debug log"
+    debug_ops = [op.get("name") for op in op_rows[-1]["tool_operations"]]
+    assert debug_ops == ["file_read", "file_write", "complete_tasks"]
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    tool_msgs = [
+        m.get("content", "")
+        for m in messages
+        if m.get("from") == "system" and m.get("content", "").startswith("[agent-1] [")
+    ]
+    conv_ops = []
+    for content in tool_msgs:
+        match = re.match(r"^\[agent-1\] \[([^\]]+)\]", content)
+        if match:
+            conv_ops.append(match.group(1))
+    assert conv_ops == ["file_read", "file_write", "complete_tasks"]
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert next(t for t in saved_tasks if t["id"] == "consistency-task")["status"] == "done"
+    assert (tmp_path / "src" / "output.txt").read_text() == "output data\n"
+
+
+def test_replay_test8_implementation_tool_activity_persisted_to_conversation_and_debug(tmp_path, monkeypatch):
+    """Replay guard from test8: implementation activity must persist in both conversation and debug logs."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=1,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "replay8-task",
+            "description": "Write then complete",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    fileguard = FileGuard(
+        tmp_path,
+        {
+            "writable_paths": ["src/**"],
+            "max_file_size_bytes": 1_048_576,
+            "max_files_per_turn": 10,
+            "enable_approvals": False,
+        },
+    )
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+        return _tool_round(
+            "Implementing replay8 task.",
+            [
+                {"name": "file_write", "id": "fw1", "input": {"path": "src/replay8.py", "content": "x = 1\n"}},
+                {"name": "complete_tasks", "id": "ct1", "input": {"task_ids": ["replay8-task"], "summary": "done"}},
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        streaming=False,
+    )
+
+    messages = read_log(iter_dir / "conversation.jsonl")
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    assert any("[agent-1] [file_write] src/replay8.py" in m.get("content", "") for m in messages)
+    assert any("[agent-1] [complete_tasks] Completed tasks: replay8-task" in m.get("content", "") for m in messages)
+    assert any(
+        any(op.get("name") == "file_write" for op in row.get("tool_operations", []))
+        for row in debug_rows
+    )
+    assert any(
+        any(op.get("name") == "complete_tasks" for op in row.get("tool_operations", []))
+        for row in debug_rows
+    )
+
+
 def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatch):
     """Streaming output should be persisted with same final content as non-streaming logs."""
     team_dir, iter_dir = _make_team(tmp_path, phase="refinement", max_turns=1, streaming=True)
