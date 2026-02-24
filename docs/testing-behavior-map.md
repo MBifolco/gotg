@@ -88,6 +88,9 @@ Tests:
 - `tests/test_implementation.py::test_handle_report_blocked_reason_required`
 - `tests/test_implementation.py::test_handle_report_blocked_wrong_layer`
 - `tests/test_implementation.py::test_handle_report_blocked_rejects_done_task`
+- `tests/test_implementation.py::test_handle_report_blocked_atomic_on_mixed_valid_and_invalid_ids`
+- `tests/test_implementation.py::test_handle_report_blocked_atomic_on_mixed_own_and_foreign_ids`
+- `tests/test_implementation.py::test_handle_report_blocked_atomic_on_mixed_done_and_pending_ids`
 
 Behavior: Invalid `report_blocked` payload does not deadlock implementation progress.
 Tests:
