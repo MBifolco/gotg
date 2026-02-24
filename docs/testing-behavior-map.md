@@ -92,6 +92,10 @@ Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_approval_pause_resume_implementation`
 - `tests/test_e2e_quality_gate.py::test_e2e_implementation_state_resume_contract`
 
+Behavior: Restore checkpoint rewinds iteration phase and iteration artifacts to snapshot.
+Tests:
+- `tests/test_e2e_quality_gate.py::test_e2e_checkpoint_restore_contract`
+
 ## Review and Merge Safety
 
 Behavior: Merge and next-layer safety checks prevent unsafe transitions.
