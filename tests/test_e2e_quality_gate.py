@@ -535,6 +535,136 @@ def test_e2e_approval_pause_resume_implementation(tmp_path, monkeypatch):
     assert any("[complete_tasks] Completed tasks: approval-task" in m.get("content", "") for m in messages)
 
 
+def test_e2e_implementation_state_resume_contract(tmp_path, monkeypatch):
+    """Implementation pause/resume should persist and consume implementation_state.json."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=4,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "resume-task",
+            "description": "Write root file with approval, then complete on resume",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    # Writable only under src/** so writing main.py requires approval.
+    fileguard = FileGuard(
+        tmp_path,
+        {
+            "writable_paths": ["src/**"],
+            "max_file_size_bytes": 1_048_576,
+            "max_files_per_turn": 10,
+            "enable_approvals": True,
+        },
+    )
+    approval_store = ApprovalStore(iter_dir / "approvals.json")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    state = {"saw_resume_continuation": False}
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+
+        messages = kw.get("messages", [])
+        saw_tool_continuation = any(
+            m.get("role") == "tool" and "Pending approval" in str(m.get("content", ""))
+            for m in messages
+        )
+        if saw_tool_continuation:
+            state["saw_resume_continuation"] = True
+            return _tool_round(
+                "Resuming after approval pause.",
+                [
+                    {
+                        "name": "complete_tasks",
+                        "id": "ct1",
+                        "input": {"task_ids": ["resume-task"], "summary": "completed after resume"},
+                    }
+                ],
+            )
+
+        return _tool_round(
+            "Writing file that requires approval.",
+            [
+                {
+                    "name": "file_write",
+                    "id": "fw1",
+                    "input": {"path": "main.py", "content": "print('resume')\n"},
+                }
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+
+    # First run should pause and persist implementation_state.json.
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        approval_store=approval_store,
+        streaming=False,
+    )
+
+    state_path = iter_dir / "implementation_state.json"
+    assert state_path.exists()
+    saved_state = json.loads(state_path.read_text())
+    assert saved_state.get("layer") == 0
+    assert saved_state.get("agent_name") == "agent-1"
+    assert isinstance(saved_state.get("llm_messages"), list)
+    assert saved_state.get("round_num", 0) >= 1
+
+    pending = approval_store.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["path"] == "main.py"
+
+    # Approve and apply write.
+    approval_store.approve("a1")
+    apply_and_inject(
+        approval_store,
+        fileguard,
+        iteration,
+        iter_dir / "conversation.jsonl",
+    )
+
+    # Second run should resume from saved continuation and complete the task.
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        approval_store=approval_store,
+        streaming=False,
+    )
+
+    assert state["saw_resume_continuation"] is True
+    assert not state_path.exists()
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    assert next(t for t in saved_tasks if t["id"] == "resume-task")["status"] == "done"
+
+
 def test_replay_streamed_text_only_round_is_persisted_for_traceability(tmp_path, monkeypatch):
     """Replay guard: streamed assistant text should be persisted even when no tools are called.
 

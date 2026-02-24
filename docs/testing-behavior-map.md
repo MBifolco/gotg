@@ -89,6 +89,7 @@ Tests:
 - `tests/test_session.py::test_apply_and_inject_injects_denials`
 - `tests/test_implementation.py::test_pause_for_approvals`
 - `tests/test_e2e_quality_gate.py::test_e2e_approval_pause_resume_implementation`
+- `tests/test_e2e_quality_gate.py::test_e2e_implementation_state_resume_contract`
 
 ## Review and Merge Safety
 
