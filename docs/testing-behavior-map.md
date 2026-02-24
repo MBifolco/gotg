@@ -107,6 +107,7 @@ Tests:
 Behavior: Drift-check reverts MUST NOT violations but still allows later successful completion.
 Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_drift_check_recovery_allows_subsequent_completion`
+- `tests/test_e2e_quality_gate.py::test_replay_test11_must_not_reverts_but_warning_only_allows_completion`
 
 ## Approval and Resume
 

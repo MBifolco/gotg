@@ -61,6 +61,7 @@ Implementation status:
   - `test_replay_test8_implementation_tool_activity_persisted_to_conversation_and_debug`
   - `test_replay_test9_attestation_payload_mismatch_does_not_block_completion`
   - `test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks`
+  - `test_replay_test11_must_not_reverts_but_warning_only_allows_completion`
   - `test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completion`
   - `test_replay_test16_next_layer_boundary_uses_implementation_phase`
 

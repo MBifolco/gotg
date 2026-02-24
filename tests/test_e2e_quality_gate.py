@@ -1548,6 +1548,207 @@ def test_e2e_drift_check_recovery_allows_subsequent_completion(tmp_path, monkeyp
     assert complete_ops == 2
 
 
+def test_replay_test11_must_not_reverts_but_warning_only_allows_completion(tmp_path, monkeypatch):
+    """Replay guard from test11: MUST NOT blocks completion; warning-only drift feedback does not."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=4,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "expression-parsing-evaluation",
+            "description": "Build parser/evaluator",
+            "done_criteria": "returns expected arithmetic results",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+            "approach": "Build simple arithmetic parser.",
+            "anti_patterns": ["Do not implement modulo operator"],
+        },
+        {
+            "id": "repl-infrastructure",
+            "description": "Build REPL shell",
+            "done_criteria": "loop reads expressions and evaluates them",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+            "approach": "Minimal REPL loop with prompt.",
+            "anti_patterns": ["Do not implement startup/welcome message"],
+        },
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    state = {"impl_calls": 0, "drift_calls": 0}
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+
+        state["impl_calls"] += 1
+        if state["impl_calls"] == 1:
+            return _tool_round(
+                "First implementation attempt.",
+                [
+                    {
+                        "name": "file_write",
+                        "id": "fw1",
+                        "input": {"path": "src/evaluator.py", "content": "def eval_expr(x):\n    return x % 2\n"},
+                    },
+                    {
+                        "name": "file_write",
+                        "id": "fw2",
+                        "input": {"path": "src/repl.py", "content": "print('Welcome!')\n"},
+                    },
+                    {
+                        "name": "complete_tasks",
+                        "id": "ct1",
+                        "input": {
+                            "task_ids": ["expression-parsing-evaluation", "repl-infrastructure"],
+                            "summary": "initial implementation",
+                        },
+                    },
+                ],
+            )
+
+        return _tool_round(
+            "Second implementation attempt.",
+            [
+                {
+                    "name": "file_write",
+                    "id": "fw3",
+                    "input": {"path": "src/evaluator.py", "content": "def eval_expr(x):\n    return float(x)\n"},
+                },
+                {
+                    "name": "file_write",
+                    "id": "fw4",
+                    "input": {"path": "src/repl.py", "content": "def repl():\n    pass\n"},
+                },
+                {
+                    "name": "complete_tasks",
+                    "id": "ct2",
+                    "input": {
+                        "task_ids": ["expression-parsing-evaluation", "repl-infrastructure"],
+                        "summary": "revised implementation",
+                    },
+                },
+            ],
+        )
+
+    def _drift_result_with_violations():
+        return _text_round(
+            json.dumps(
+                [
+                    {
+                        "task_id": "expression-parsing-evaluation",
+                        "approach_ok": False,
+                        "anti_pattern_violations": ["Do not implement modulo operator"],
+                        "done_criteria_ok": False,
+                        "notes": "Modulo operator found.",
+                    },
+                    {
+                        "task_id": "repl-infrastructure",
+                        "approach_ok": True,
+                        "anti_pattern_violations": ["Do not implement startup/welcome message"],
+                        "done_criteria_ok": True,
+                        "notes": "Welcome message printed.",
+                    },
+                ]
+            )
+        )
+
+    def _drift_result_warning_only():
+        return _text_round(
+            json.dumps(
+                [
+                    {
+                        "task_id": "expression-parsing-evaluation",
+                        "approach_ok": False,
+                        "anti_pattern_violations": [],
+                        "done_criteria_ok": True,
+                        "notes": "Approach differs but no MUST NOT violations.",
+                    },
+                    {
+                        "task_id": "repl-infrastructure",
+                        "approach_ok": True,
+                        "anti_pattern_violations": [],
+                        "done_criteria_ok": False,
+                        "notes": "Done criteria may not be fully satisfied yet.",
+                    },
+                ]
+            )
+        )
+
+    def _raw_completion_router(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if has_complete_tasks:
+            return _raw_completion(**kw)
+        state["drift_calls"] += 1
+        if state["drift_calls"] == 1:
+            return _drift_result_with_violations()
+        return _drift_result_warning_only()
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion_router)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    messages = read_log(iter_dir / "conversation.jsonl")
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    assert state["impl_calls"] == 2
+    assert state["drift_calls"] == 2
+    assert all(t["status"] == "done" for t in saved_tasks)
+
+    # First attempt reverted due to MUST NOT violations.
+    assert any("MUST NOT violated on expression-parsing-evaluation" in m.get("content", "") for m in messages)
+    assert any("MUST NOT violated on repl-infrastructure" in m.get("content", "") for m in messages)
+    assert sum(1 for m in messages if "Drift detected — completion reverted" in m.get("content", "")) == 1
+
+    # Second attempt includes warnings but still completes.
+    assert any(
+        "[drift-check] task expression-parsing-evaluation: approach may not match"
+        in m.get("content", "")
+        for m in messages
+    )
+    assert any(
+        "[drift-check] task repl-infrastructure: done_criteria may not be satisfied"
+        in m.get("content", "")
+        for m in messages
+    )
+    assert any(
+        "[agent-1] [complete_tasks] Completed tasks: expression-parsing-evaluation, repl-infrastructure"
+        in m.get("content", "")
+        for m in messages
+    )
+
+    complete_ops = sum(
+        1
+        for row in debug_rows
+        for op in row.get("tool_operations", [])
+        if op.get("name") == "complete_tasks"
+    )
+    assert complete_ops == 2
+
+
 def test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completion(tmp_path, monkeypatch):
     """Replay guard from test14: invalid report_blocked should not prevent later completion."""
     team_dir, iter_dir = _make_team(
