@@ -67,6 +67,7 @@ Tests:
 - `tests/test_implementation.py::test_handle_complete_tasks_wrong_agent`
 - `tests/test_implementation.py::test_handle_complete_tasks_wrong_layer`
 - `tests/test_implementation.py::test_complete_tasks_validation_rejects_wrong_agent`
+- `tests/test_e2e_quality_gate.py::test_e2e_drift_check_reverts_completion_on_must_not_violation`
 
 Behavior: `report_blocked` validates ownership and persists blocked state.
 Tests:

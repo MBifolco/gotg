@@ -665,6 +665,102 @@ def test_e2e_implementation_state_resume_contract(tmp_path, monkeypatch):
     assert next(t for t in saved_tasks if t["id"] == "resume-task")["status"] == "done"
 
 
+def test_e2e_drift_check_reverts_completion_on_must_not_violation(tmp_path, monkeypatch):
+    """Drift-check contract: MUST NOT violations revert done -> pending and emit diagnostics."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=1,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "drift-task",
+            "description": "Implement evaluator without eval",
+            "done_criteria": "Evaluator works for arithmetic",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+            "approach": "Use ast.parse and whitelist nodes.",
+            "anti_patterns": ["Do not use eval()"],
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if has_complete_tasks:
+            return _tool_round(
+                "Implemented and completing.",
+                [
+                    {
+                        "name": "file_write",
+                        "id": "fw1",
+                        "input": {
+                            "path": "src/evaluator.py",
+                            "content": "def evaluate(expr):\n    return eval(expr)\n",
+                        },
+                    },
+                    {
+                        "name": "complete_tasks",
+                        "id": "ct1",
+                        "input": {"task_ids": ["drift-task"], "summary": "done"},
+                    },
+                ],
+            )
+
+        # Drift-check call (no tools): return strict verifier output with MUST NOT violation.
+        return _text_round(
+            json.dumps(
+                [
+                    {
+                        "task_id": "drift-task",
+                        "approach_ok": False,
+                        "anti_pattern_violations": ["Do not use eval()"],
+                        "done_criteria_ok": True,
+                        "notes": "Used eval() despite explicit prohibition.",
+                    }
+                ]
+            )
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    messages = read_log(iter_dir / "conversation.jsonl")
+    debug_rows = [
+        json.loads(line)
+        for line in (iter_dir / "debug.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+
+    task = next(t for t in saved_tasks if t["id"] == "drift-task")
+    assert task["status"] == "pending"
+    assert "completed_by" not in task
+    assert "completion_summary" not in task
+    assert any("[drift-check] task drift-task: MUST NOT violated" in m.get("content", "") for m in messages)
+    assert any("Drift detected — completion reverted" in m.get("content", "") for m in messages)
+    assert any(
+        any(
+            op.get("name") == "complete_tasks"
+            for op in row.get("tool_operations", [])
+        )
+        for row in debug_rows
+    )
+
+
 def test_replay_streamed_text_only_round_is_persisted_for_traceability(tmp_path, monkeypatch):
     """Replay guard: streamed assistant text should be persisted even when no tools are called.
 
