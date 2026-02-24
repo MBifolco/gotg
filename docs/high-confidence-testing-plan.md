@@ -87,6 +87,12 @@ Implementation status:
 
 Run mutation testing on critical modules and enforce an initial floor (for example 45%), then ratchet upward over time.
 
+Implementation status:
+
+- Mutation pilot runner: `scripts/testing/mutation_pilot.py`
+- CI lane: `.github/workflows/mutation-pilot.yml`
+- Current floor (env-configurable): `GOTG_MUTATION_FLOOR=0.80`
+
 ### 6. Enforce Behavior-Map Governance (1 day)
 
 Require each PR touching critical flows to:
