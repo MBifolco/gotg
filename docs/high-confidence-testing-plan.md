@@ -47,11 +47,22 @@ Encode escaped incidents as deterministic tests:
 - `gotg-tests/test8`
 - `gotg-tests/test9`
 - `gotg-tests/test10`
+- `gotg-tests/test11`
+- `gotg-tests/test14`
 - `gotg-tests/test16`
 
 Policy:
 
 - Every future escape gets a replay regression test within 24 hours.
+
+Implementation status:
+
+- Replay contracts currently encoded in `tests/test_e2e_quality_gate.py`:
+  - `test_replay_test8_implementation_tool_activity_persisted_to_conversation_and_debug`
+  - `test_replay_test9_attestation_payload_mismatch_does_not_block_completion`
+  - `test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks`
+  - `test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completion`
+  - `test_replay_test16_next_layer_boundary_uses_implementation_phase`
 
 ### 4. Add CI Lane Split (1-2 days)
 

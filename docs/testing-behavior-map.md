@@ -114,6 +114,7 @@ Tests:
 - `tests/test_implementation.py::test_pause_for_approvals`
 - `tests/test_e2e_quality_gate.py::test_e2e_approval_pause_resume_implementation`
 - `tests/test_e2e_quality_gate.py::test_e2e_implementation_state_resume_contract`
+- `tests/test_e2e_quality_gate.py::test_e2e_mixed_approval_resume_contract`
 
 Behavior: Restore checkpoint rewinds iteration phase and iteration artifacts to snapshot.
 Tests:

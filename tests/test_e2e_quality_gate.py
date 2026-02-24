@@ -1187,6 +1187,143 @@ def test_e2e_implementation_state_resume_contract(tmp_path, monkeypatch):
     assert next(t for t in saved_tasks if t["id"] == "resume-task")["status"] == "done"
 
 
+def test_e2e_mixed_approval_resume_contract(tmp_path, monkeypatch):
+    """Implementation resumes after mixed approve/deny decisions and can still complete."""
+    team_dir, iter_dir = _make_team(
+        tmp_path,
+        phase="implementation",
+        current_layer=0,
+        max_turns=4,
+        streaming=False,
+    )
+    model_config = json.loads((team_dir / "team.json").read_text())["model"]
+    agents = json.loads((team_dir / "team.json").read_text())["agents"]
+
+    tasks = [
+        {
+            "id": "mixed-approval-task",
+            "description": "Write two guarded files then complete",
+            "done_criteria": "done",
+            "depends_on": [],
+            "assigned_to": "agent-1",
+            "status": "pending",
+            "layer": 0,
+        }
+    ]
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
+
+    # Writable only under src/** so writing main.py and README.md requires approval.
+    fileguard = FileGuard(
+        tmp_path,
+        {
+            "writable_paths": ["src/**"],
+            "max_file_size_bytes": 1_048_576,
+            "max_files_per_turn": 10,
+            "enable_approvals": True,
+        },
+    )
+    approval_store = ApprovalStore(iter_dir / "approvals.json")
+
+    monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
+    monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
+
+    state = {"saw_resume_continuation": False, "round": 0}
+
+    def _raw_completion(**kw):
+        tools = kw.get("tools") or []
+        has_complete_tasks = any(t.get("name") == "complete_tasks" for t in tools)
+        if not has_complete_tasks:
+            return _text_round("[]")
+
+        messages = kw.get("messages", [])
+        saw_pending = any(
+            m.get("role") == "tool" and "Pending approval" in str(m.get("content", ""))
+            for m in messages
+        )
+        if saw_pending:
+            state["saw_resume_continuation"] = True
+            return _tool_round(
+                "Completing after mixed approval decisions.",
+                [
+                    {
+                        "name": "complete_tasks",
+                        "id": "ct1",
+                        "input": {"task_ids": ["mixed-approval-task"], "summary": "completed after mixed approvals"},
+                    }
+                ],
+            )
+
+        state["round"] += 1
+        return _tool_round(
+            "Requesting two guarded writes.",
+            [
+                {
+                    "name": "file_write",
+                    "id": "fw1",
+                    "input": {"path": "main.py", "content": "print('approved')\n"},
+                },
+                {
+                    "name": "file_write",
+                    "id": "fw2",
+                    "input": {"path": "README.md", "content": "denied write\n"},
+                },
+            ],
+        )
+
+    monkeypatch.setattr("gotg.cli.raw_completion", _raw_completion)
+
+    iteration, _ = get_current_iteration(team_dir)
+
+    # First run pauses with two pending approvals.
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        approval_store=approval_store,
+        streaming=False,
+    )
+
+    pending = approval_store.get_pending()
+    assert len(pending) == 2
+    ids_by_path = {req["path"]: req["id"] for req in pending}
+    approval_store.approve(ids_by_path["main.py"])
+    approval_store.deny(ids_by_path["README.md"], "not needed")
+
+    applied_msgs = apply_and_inject(
+        approval_store,
+        fileguard,
+        iteration,
+        iter_dir / "conversation.jsonl",
+    )
+    assert any("APPROVED" in m["content"] and "main.py" in m["content"] for m in applied_msgs)
+    assert any("DENIED" in m["content"] and "README.md" in m["content"] for m in applied_msgs)
+
+    # Resume and complete.
+    run_conversation(
+        iter_dir,
+        agents,
+        iteration,
+        model_config,
+        fileguard=fileguard,
+        approval_store=approval_store,
+        streaming=False,
+    )
+
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    task = next(t for t in saved_tasks if t["id"] == "mixed-approval-task")
+    messages = read_log(iter_dir / "conversation.jsonl")
+
+    assert state["saw_resume_continuation"] is True
+    assert task["status"] == "done"
+    assert (tmp_path / "main.py").exists()
+    assert not (tmp_path / "README.md").exists()
+    assert any("[file_write] APPROVED: Written: main.py" in m.get("content", "") for m in messages)
+    assert any("[file_write] DENIED by PM: README.md" in m.get("content", "") for m in messages)
+    assert any("[complete_tasks] Completed tasks: mixed-approval-task" in m.get("content", "") for m in messages)
+
+
 def test_e2e_drift_check_reverts_completion_on_must_not_violation(tmp_path, monkeypatch):
     """Drift-check contract: MUST NOT violations revert done -> pending and emit diagnostics."""
     team_dir, iter_dir = _make_team(
