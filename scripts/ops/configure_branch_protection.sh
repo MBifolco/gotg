@@ -9,7 +9,7 @@ set -euo pipefail
 # Optional env vars:
 #   REPO=owner/name
 #   BRANCH=main
-#   REQUIRED_CHECKS_CSV="core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)"
+#   REQUIRED_CHECKS_CSV="tests,tui-tests,guard"
 #   REQUIRED_CHECK_APP_ID=        # optional numeric GitHub App ID; empty = any app
 #   DRY_RUN=1
 
@@ -20,7 +20,7 @@ fi
 
 DRY_RUN="${DRY_RUN:-0}"
 BRANCH="${BRANCH:-main}"
-REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)}"
+REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-tests,tui-tests,guard}"
 REQUIRED_CHECK_APP_ID="${REQUIRED_CHECK_APP_ID:-}"
 REPO="${REPO:-}"
 

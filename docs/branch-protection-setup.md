@@ -8,11 +8,11 @@ This repo uses CI lanes that should be required for merges to `main`.
 2. `tui-pty / tui-tests`
 3. `behavior-map-guard / guard`
 
-For this repository's current workflows, required checks must match the PR check-run names exactly:
+For this repository, required checks must match the **check run names** exactly:
 
-1. `core-non-tui / tests (pull_request)`
-2. `tui-pty / tui-tests (pull_request)`
-3. `behavior-map-guard / guard (pull_request)`
+1. `tests`
+2. `tui-tests`
+3. `guard`
 
 `nightly-replay` and `mutation-pilot` are scheduled/manual lanes and should not be required PR checks by default.
 
@@ -48,6 +48,6 @@ REPO=owner/repo BRANCH=main scripts/ops/configure_branch_protection.sh
 2. It enables review requirements with `required_approving_review_count=1`.
 3. It enforces admin protection.
 4. The script writes required checks via `required_status_checks.checks` (no legacy `contexts`).
-5. Required checks are exact string matches; include `(pull_request)` when that is how the run is named.
+5. Required checks are exact string matches against `check_runs[].name` (from the GitHub API), not the decorated label shown in the PR UI.
 6. If results still look duplicated/mismatched after applying branch protection, check repository Rulesets for additional required checks configured there.
 7. If pinning to a specific app, set `REQUIRED_CHECK_APP_ID=<id>`; otherwise leave it unset so any app can satisfy the check.

@@ -15,8 +15,8 @@ Use this during PR review and when CI fails.
 Branch protection setup reference:
 - `docs/branch-protection-setup.md`
 
-Note: required checks are exact string matches. In this repo they should use the
-`(pull_request)` suffixed names shown in PR check runs.
+Note: required checks must match `check_runs[].name` exactly (`tests`, `tui-tests`, `guard`),
+not the decorated workflow labels shown in the PR UI.
 
 ## Lanes
 
