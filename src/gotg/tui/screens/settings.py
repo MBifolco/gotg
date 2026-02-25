@@ -231,11 +231,19 @@ class SettingsScreen(Screen):
         known_values = {v for _, v in options}
         if current_model and current_model not in known_values:
             options.insert(0, (current_model, current_model))
-        model_select.set_options(options)
+        # Textual API compatibility:
+        # - Older versions accept allow_blank in set_options and may default it off.
+        # - Newer versions don't accept allow_blank and preserve constructor behavior.
+        try:
+            model_select.set_options(options, allow_blank=True)
+        except TypeError:
+            model_select.set_options(options)
         if current_model:
             model_select.value = current_model
         elif options:
             model_select.value = options[0][1]
+        else:
+            model_select.value = Select.BLANK
 
     # ── Provider preset ──────────────────────────────────────
 
@@ -276,7 +284,11 @@ class SettingsScreen(Screen):
     def action_save(self) -> None:
         """Validate and save all settings to team.json."""
         model_select = self.query_one("#set-model-name", Select)
-        model_name = str(model_select.value).strip() if model_select.value is not Select.BLANK else ""
+        model_name = (
+            str(model_select.value).strip()
+            if model_select.value not in (None, Select.BLANK, "")
+            else ""
+        )
         if not model_name:
             self.notify("Model name is required.", severity="warning")
             return
