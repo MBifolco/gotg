@@ -91,8 +91,8 @@ class SettingsScreen(Screen):
             )
             yield Label("Model name", classes="field-label")
             yield Select(
-                PROVIDER_MODELS.get("ollama", []),
-                allow_blank=True,
+                [("", Select.BLANK), *PROVIDER_MODELS.get("ollama", [])],
+                allow_blank=False,
                 id="set-model-name",
             )
             yield Label("Base URL", classes="field-label")
@@ -231,21 +231,14 @@ class SettingsScreen(Screen):
         known_values = {v for _, v in options}
         if current_model and current_model not in known_values:
             options.insert(0, (current_model, current_model))
-        # Textual API compatibility:
-        # - Older versions accept allow_blank in set_options and may default it off.
-        # - Newer versions don't accept allow_blank and preserve constructor behavior.
-        try:
-            model_select.set_options(options, allow_blank=True)
-        except TypeError:
-            # Some Textual versions expose allow_blank as positional-only.
-            try:
-                model_select.set_options(options, True)
-            except TypeError:
-                model_select.set_options(options)
+        # Keep blank model selection as a concrete option value so tests and
+        # validation work across Textual versions.
+        options = [("", Select.BLANK), *options]
+        model_select.set_options(options)
         if current_model:
             model_select.value = current_model
-        elif options:
-            model_select.value = options[0][1]
+        elif len(options) > 1:
+            model_select.value = options[1][1]
         else:
             model_select.value = Select.BLANK
 
