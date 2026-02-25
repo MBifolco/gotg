@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterator
 
 from gotg.agent import build_prompt, build_coach_prompt
+from gotg.config import resolve_model_config
 from gotg.events import (
     AgentTurnComplete,
     AppendDebug,
@@ -27,6 +28,7 @@ class SessionDeps:
     coach_completion: Callable
     single_completion: Callable | None = None  # raw_completion (implementation tool loop)
     stream_completion: Callable | None = None  # raw_completion_stream (streaming)
+    model_resolver: Callable | None = None     # (name: str | None) -> dict
 
 
 def run_session(
@@ -104,10 +106,12 @@ def run_session(
         # Build tools + executor
         agent_tools, tool_executor = build_tool_executor(agent, policy)
 
+        agent_cfg = resolve_model_config(deps.model_resolver, model_config, agent["name"])
+
         if policy.streaming and deps.stream_completion:
             # Engine-driven streaming tool loop
             for sub_event in _do_streaming_agent_turn(
-                agent, iteration, model_config, deps, history, prompt,
+                agent, iteration, agent_cfg, deps, history, prompt,
                 agent_tools, tool_executor, turn,
             ):
                 yield sub_event
@@ -116,11 +120,11 @@ def run_session(
         else:
             # Existing non-streaming path
             result = deps.agent_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
+                base_url=agent_cfg["base_url"],
+                model=agent_cfg["model"],
                 messages=prompt,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
+                api_key=agent_cfg.get("api_key"),
+                provider=agent_cfg.get("provider", "ollama"),
                 tools=agent_tools,
                 tool_executor=tool_executor,
             )
@@ -137,8 +141,9 @@ def run_session(
 
         # Coach injection after every full rotation
         if policy.coach and policy.coach_cadence and turn % policy.coach_cadence == 0:
+            coach_cfg = resolve_model_config(deps.model_resolver, model_config, policy.coach["name"])
             stop = yield from _do_coach_turn(
-                iteration, model_config, deps, history,
+                iteration, coach_cfg, deps, history,
                 all_participants, turn, policy,
             )
             if stop:

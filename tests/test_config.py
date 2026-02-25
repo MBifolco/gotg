@@ -8,6 +8,7 @@ from gotg.config import (
     load_file_access, read_dotenv, ensure_dotenv_key,
     get_iteration_dir, get_current_iteration, save_model_config,
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
+    build_model_resolver, resolve_model_config,
 )
 
 
@@ -495,3 +496,133 @@ def test_load_file_access_returns_config(tmp_path):
 def test_load_file_access_returns_none_when_absent(team_dir):
     result = load_file_access(team_dir)
     assert result is None
+
+
+# --- build_model_resolver ---
+
+_DEFAULT_MODEL = {
+    "provider": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5-20250929",
+    "api_key": "sk-test-key",
+}
+
+
+def test_build_model_resolver_no_overrides(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice"}, {"name": "Bob"}]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    assert resolver("Alice")["model"] == "claude-sonnet-4-5-20250929"
+    assert resolver("Bob")["model"] == "claude-sonnet-4-5-20250929"
+
+
+def test_build_model_resolver_agent_override(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [
+        {
+            "name": "Alice",
+            "model": {
+                "provider": "openai",
+                "base_url": "https://api.openai.com",
+                "model": "gpt-4o",
+                "api_key": "sk-openai",
+            },
+        },
+        {"name": "Bob"},
+    ]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    alice_cfg = resolver("Alice")
+    assert alice_cfg["provider"] == "openai"
+    assert alice_cfg["model"] == "gpt-4o"
+    assert alice_cfg["base_url"] == "https://api.openai.com"
+    # Bob inherits team default
+    bob_cfg = resolver("Bob")
+    assert bob_cfg["provider"] == "anthropic"
+    assert bob_cfg["model"] == "claude-sonnet-4-5-20250929"
+
+
+def test_build_model_resolver_coach_override(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice"}]
+    coach = {"name": "Sam", "model": {"model": "claude-opus-4-6"}}
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, coach, team)
+    sam_cfg = resolver("Sam")
+    assert sam_cfg["model"] == "claude-opus-4-6"
+    assert sam_cfg["provider"] == "anthropic"  # inherited
+
+
+def test_build_model_resolver_api_key_resolution(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-resolved\n")
+    agents = [
+        {
+            "name": "Alice",
+            "model": {
+                "provider": "openai",
+                "base_url": "https://api.openai.com",
+                "model": "gpt-4o",
+                "api_key": "$OPENAI_API_KEY",
+            },
+        },
+    ]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    assert resolver("Alice")["api_key"] == "sk-resolved"
+
+
+def test_build_model_resolver_unknown_name_returns_default(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice"}]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    cfg = resolver("Unknown")
+    assert cfg["model"] == "claude-sonnet-4-5-20250929"
+
+
+def test_build_model_resolver_partial_override(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice", "model": {"model": "claude-opus-4-6"}}]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    cfg = resolver("Alice")
+    assert cfg["model"] == "claude-opus-4-6"
+    assert cfg["provider"] == "anthropic"  # inherited
+    assert cfg["base_url"] == "https://api.anthropic.com"  # inherited
+    assert cfg["api_key"] == "sk-test-key"  # inherited
+
+
+def test_build_model_resolver_returns_copies(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice", "model": {"model": "claude-opus-4-6"}}]
+    resolver = build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+    cfg1 = resolver("Alice")
+    cfg1["model"] = "mutated"
+    cfg2 = resolver("Alice")
+    assert cfg2["model"] == "claude-opus-4-6"
+
+
+def test_build_model_resolver_cross_provider_without_base_url_fails(tmp_path):
+    team = tmp_path / ".team"
+    team.mkdir()
+    agents = [{"name": "Alice", "model": {"provider": "openai", "model": "gpt-4o"}}]
+    with pytest.raises(ValueError, match="does not specify base_url"):
+        build_model_resolver(_DEFAULT_MODEL, agents, None, team)
+
+
+def test_resolve_model_config_with_resolver():
+    resolver = lambda name: {"model": f"model-for-{name}"}
+    cfg = resolve_model_config(resolver, {"model": "default"}, "Alice")
+    assert cfg["model"] == "model-for-Alice"
+
+
+def test_resolve_model_config_fallback_no_resolver():
+    original = {"model": "default", "provider": "ollama"}
+    cfg = resolve_model_config(None, original, "Alice")
+    assert cfg["model"] == "default"
+    # Returns a copy, not the same object
+    cfg["model"] = "mutated"
+    assert original["model"] == "default"

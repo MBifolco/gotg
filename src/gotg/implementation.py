@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Iterator
 
+from gotg.config import resolve_model_config
 from gotg.engine import SessionDeps, build_tool_executor
 from gotg.events import (
     AgentTurnComplete,
@@ -560,17 +561,18 @@ def run_implementation(
 
         agent_file_contents: dict[str, str] = {}
         dispatched_agents += 1
+        agent_cfg = resolve_model_config(deps.model_resolver, model_config, agent_name)
 
         for round_num in range(start_round, max_tool_rounds):
             turn_id = f"impl-{agent_name}-r{round_num}"
 
             if policy.streaming and deps.stream_completion:
                 stream = deps.stream_completion(
-                    base_url=model_config["base_url"],
-                    model=model_config["model"],
+                    base_url=agent_cfg["base_url"],
+                    model=agent_cfg["model"],
                     messages=llm_messages,
-                    api_key=model_config.get("api_key"),
-                    provider=model_config.get("provider", "ollama"),
+                    api_key=agent_cfg.get("api_key"),
+                    provider=agent_cfg.get("provider", "ollama"),
                     tools=impl_tools,
                 )
                 for chunk in stream:
@@ -578,11 +580,11 @@ def run_implementation(
                 rnd = stream.round
             else:
                 rnd = deps.single_completion(
-                    base_url=model_config["base_url"],
-                    model=model_config["model"],
+                    base_url=agent_cfg["base_url"],
+                    model=agent_cfg["model"],
                     messages=llm_messages,
-                    api_key=model_config.get("api_key"),
-                    provider=model_config.get("provider", "ollama"),
+                    api_key=agent_cfg.get("api_key"),
+                    provider=agent_cfg.get("provider", "ollama"),
                     tools=impl_tools,
                 )
 
@@ -684,10 +686,11 @@ def run_implementation(
 
                 # Drift check after successful complete_tasks
                 if tc_name == "complete_tasks" and not result.startswith("Error:"):
+                    drift_cfg = resolve_model_config(deps.model_resolver, model_config, None)
                     checks = _run_drift_check(
                         agent_file_contents,
                         _agent_tasks(_layer_tasks(tasks, current_layer), agent_name),
-                        model_config, deps,
+                        drift_cfg, deps,
                     )
                     blocking_violations: list[tuple[str, str]] = []
                     for check in checks:

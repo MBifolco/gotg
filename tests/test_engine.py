@@ -650,3 +650,66 @@ def test_classify_tool_result_error():
 
 def test_classify_tool_result_pending():
     assert _classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"
+
+
+# --- Per-agent model routing ---
+
+def test_session_uses_per_agent_model():
+    """Each agent's completion should be called with its own model config."""
+    captured_configs = []
+
+    def mock_agent(**kw):
+        captured_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return {"content": "hello", "operations": []}
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://a1", "model": "model-a1", "api_key": None, "provider": "ollama"}
+        if name == "agent-2":
+            return {"base_url": "http://a2", "model": "model-a2", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=mock_agent,
+        coach_completion=lambda **kw: {"content": "ok", "tool_calls": []},
+        model_resolver=resolver,
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=2),
+    ))
+    assert len(captured_configs) == 2
+    assert captured_configs[0]["model"] == "model-a1"
+    assert captured_configs[0]["base_url"] == "http://a1"
+    assert captured_configs[1]["model"] == "model-a2"
+    assert captured_configs[1]["base_url"] == "http://a2"
+
+
+def test_session_coach_uses_coach_model_override():
+    """Coach completion should use the coach-specific model config."""
+    captured_coach_config = []
+
+    def mock_agent(**kw):
+        return {"content": "hello", "operations": []}
+
+    def mock_coach(**kw):
+        captured_coach_config.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return {"content": "coach says", "tool_calls": []}
+
+    def resolver(name):
+        if name == "coach":
+            return {"base_url": "http://coach", "model": "coach-model", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=mock_agent,
+        coach_completion=mock_coach,
+        model_resolver=resolver,
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    assert len(captured_coach_config) == 1
+    assert captured_coach_config[0]["model"] == "coach-model"
+    assert captured_coach_config[0]["base_url"] == "http://coach"

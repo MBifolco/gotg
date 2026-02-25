@@ -1053,3 +1053,110 @@ def test_drift_check_empty_files_returns_empty():
     deps = SessionDeps(agent_completion=None, coach_completion=None, single_completion=None)
     result = _run_drift_check({}, [{"id": "t1", "description": "x", "done_criteria": "y"}], MODEL_CONFIG, deps)
     assert result == []
+
+
+# --- Per-agent model routing ---
+
+def test_implementation_uses_per_agent_model(tmp_path):
+    """run_implementation should call completion with agent-specific model config."""
+    captured_configs = []
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    def mock_single(**kw):
+        captured_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return _tool_round("", [{
+            "id": "tc1", "name": "complete_tasks",
+            "input": {"task_ids": ["task-a"], "summary": "Done"},
+        }])
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://agent1", "model": "agent1-model", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+        model_resolver=resolver,
+    )
+
+    events = _collect(run_implementation(
+        agents=AGENTS[:1], tasks=tasks, current_layer=0,
+        iteration=ITERATION, iter_dir=iter_dir,
+        model_config=MODEL_CONFIG, deps=deps,
+        history=[], policy=_make_policy(),
+    ))
+    assert len(captured_configs) >= 1
+    assert captured_configs[0]["model"] == "agent1-model"
+    assert captured_configs[0]["base_url"] == "http://agent1"
+
+
+def test_drift_check_uses_team_default_model(tmp_path):
+    """Drift check should use team default, not agent-specific model."""
+    captured_drift_configs = []
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    call_count = 0
+
+    def mock_single(**kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Agent's implementation call
+            return _tool_round("", [{
+                "id": "tc1", "name": "file_write",
+                "input": {"path": "src/main.py", "content": "code"},
+            }])
+        elif call_count == 2:
+            # Agent's complete_tasks call
+            return _tool_round("", [{
+                "id": "tc2", "name": "complete_tasks",
+                "input": {"task_ids": ["task-a"], "summary": "Done"},
+            }])
+        else:
+            # Drift check call — capture the config used
+            captured_drift_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+            return CompletionRound(
+                content='[{"task_id": "task-a", "approach_ok": true, "anti_pattern_violations": [], "done_criteria_ok": true}]',
+                tool_calls=[], _provider="openai", _raw={},
+            )
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://agent1", "model": "agent1-model", "api_key": None, "provider": "ollama"}
+        # team default
+        return dict(MODEL_CONFIG)
+
+    from gotg.fileguard import FileGuard
+    fg = FileGuard(tmp_path, {"writable_paths": ["src/**"], "max_file_size_bytes": 100000, "max_files_per_turn": 10})
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+        model_resolver=resolver,
+    )
+
+    events = _collect(run_implementation(
+        agents=AGENTS[:1], tasks=tasks, current_layer=0,
+        iteration=ITERATION, iter_dir=iter_dir,
+        model_config=MODEL_CONFIG, deps=deps,
+        history=[], policy=_make_policy(fileguard=fg),
+    ))
+    # Drift check should have been called with team default, not agent model
+    assert len(captured_drift_configs) == 1
+    assert captured_drift_configs[0]["model"] == "test-model"
+    assert captured_drift_configs[0]["base_url"] == "http://localhost:11434"

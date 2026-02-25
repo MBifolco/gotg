@@ -311,6 +311,7 @@ class ChatScreen(Screen):
                     coach_completion=chat_completion,
                     single_completion=raw_completion,
                     stream_completion=raw_completion_stream if streaming_enabled else None,
+                    model_resolver=ctx.model_resolver,
                 )
 
                 setup = prepare_session(
@@ -343,6 +344,7 @@ class ChatScreen(Screen):
                     coach_completion=chat_completion,
                     single_completion=raw_completion,
                     stream_completion=raw_completion_stream if streaming_enabled else None,
+                    model_resolver=ctx.model_resolver,
                 )
 
                 setup = prepare_grooming_session(

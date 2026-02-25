@@ -55,6 +55,7 @@ def run_conversation(
     worktree_map: dict | None = None,
     diffs_summary: str | None = None,
     streaming: bool = False,
+    model_resolver=None,
 ) -> None:
     from gotg.session import prepare_session, run_and_persist
 
@@ -64,6 +65,7 @@ def run_conversation(
         coach_completion=chat_completion,
         single_completion=raw_completion,
         stream_completion=raw_completion_stream,
+        model_resolver=model_resolver,
     )
 
     setup = prepare_session(
@@ -118,7 +120,7 @@ def cmd_run(args):
         max_turns_override=args.max_turns, coach=ctx.coach,
         fileguard=infra.fileguard, approval_store=infra.approval_store,
         worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
-        streaming=infra.streaming,
+        streaming=infra.streaming, model_resolver=ctx.model_resolver,
     )
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
@@ -263,7 +265,7 @@ def cmd_continue(args):
         max_turns_override=target_total, coach=ctx.coach,
         fileguard=infra.fileguard, approval_store=infra.approval_store,
         worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
-        streaming=infra.streaming,
+        streaming=infra.streaming, model_resolver=ctx.model_resolver,
     )
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
@@ -794,7 +796,7 @@ def cmd_groom_start(args):
     run_grooming_conversation(
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=topic, coach=coach, max_turns_override=max_turns,
-        streaming=streaming,
+        streaming=streaming, model_resolver=ctx.model_resolver,
     )
 
 
@@ -848,7 +850,7 @@ def cmd_groom_continue(args):
     run_grooming_conversation(
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=metadata["topic"], coach=coach, max_turns_override=target_total,
-        streaming=streaming,
+        streaming=streaming, model_resolver=ctx.model_resolver,
     )
 
 

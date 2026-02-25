@@ -106,6 +106,25 @@ def test_context_is_frozen(team_dir):
         ctx.agents = []
 
 
+def test_from_team_dir_model_resolver_present(team_dir):
+    ctx = TeamContext.from_team_dir(team_dir)
+    assert ctx.model_resolver is not None
+    # Unknown agent returns team default
+    cfg = ctx.model_resolver("nonexistent")
+    assert cfg["model"] == "qwen2.5-coder:7b"
+
+
+def test_from_team_dir_invalid_model_override_raises_systemexit(team_dir):
+    """Cross-provider without base_url should give a clean SystemExit, not a traceback."""
+    _write_team_json(team_dir, agents=[
+        {"name": "agent-1", "role": "Engineer",
+         "model": {"provider": "openai", "model": "gpt-4o"}},
+        {"name": "agent-2", "role": "Engineer"},
+    ])
+    with pytest.raises(SystemExit, match="invalid model override"):
+        TeamContext.from_team_dir(team_dir)
+
+
 # --- IterationStore tests ---
 
 def test_iteration_store_get_current(team_dir):

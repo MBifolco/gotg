@@ -141,6 +141,7 @@ def run_grooming_conversation(
     coach: dict | None = None,
     max_turns_override: int | None = None,
     streaming: bool = False,
+    model_resolver=None,
 ) -> None:
     """Run a grooming conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
@@ -153,6 +154,7 @@ def run_grooming_conversation(
         agent_completion=agentic_completion,
         coach_completion=chat_completion,
         stream_completion=raw_completion_stream if streaming else None,
+        model_resolver=model_resolver,
     )
 
     setup = prepare_grooming_session(
