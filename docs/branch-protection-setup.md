@@ -42,12 +42,19 @@ Override repo/branch:
 REPO=owner/repo BRANCH=main scripts/ops/configure_branch_protection.sh
 ```
 
+Require one approving review (team mode):
+
+```bash
+REQUIRED_APPROVING_REVIEW_COUNT=1 scripts/ops/configure_branch_protection.sh
+```
+
 ## Notes
 
 1. The script enforces up-to-date branches (`strict: true`).
-2. It enables review requirements with `required_approving_review_count=1`.
-3. It enforces admin protection.
-4. The script writes required checks via `required_status_checks.checks` (no legacy `contexts`).
-5. Required checks are exact string matches against `check_runs[].name` (from the GitHub API), not the decorated label shown in the PR UI.
-6. If results still look duplicated/mismatched after applying branch protection, check repository Rulesets for additional required checks configured there.
-7. If pinning to a specific app, set `REQUIRED_CHECK_APP_ID=<id>`; otherwise leave it unset so any app can satisfy the check.
+2. It enables review requirements with `required_approving_review_count=0` by default (solo-friendly).
+3. For team mode, set `REQUIRED_APPROVING_REVIEW_COUNT=1` (or higher) when running the script.
+4. It enforces admin protection.
+5. The script writes required checks via `required_status_checks.checks` (no legacy `contexts`).
+6. Required checks are exact string matches against `check_runs[].name` (from the GitHub API), not the decorated label shown in the PR UI.
+7. If results still look duplicated/mismatched after applying branch protection, check repository Rulesets for additional required checks configured there.
+8. If pinning to a specific app, set `REQUIRED_CHECK_APP_ID=<id>`; otherwise leave it unset so any app can satisfy the check.

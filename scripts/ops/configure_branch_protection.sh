@@ -11,6 +11,7 @@ set -euo pipefail
 #   BRANCH=main
 #   REQUIRED_CHECKS_CSV="tests,tui-tests,guard"
 #   REQUIRED_CHECK_APP_ID=        # optional numeric GitHub App ID; empty = any app
+#   REQUIRED_APPROVING_REVIEW_COUNT=0
 #   DRY_RUN=1
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -22,7 +23,13 @@ DRY_RUN="${DRY_RUN:-0}"
 BRANCH="${BRANCH:-main}"
 REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-tests,tui-tests,guard}"
 REQUIRED_CHECK_APP_ID="${REQUIRED_CHECK_APP_ID:-}"
+REQUIRED_APPROVING_REVIEW_COUNT="${REQUIRED_APPROVING_REVIEW_COUNT:-0}"
 REPO="${REPO:-}"
+
+if ! [[ "${REQUIRED_APPROVING_REVIEW_COUNT}" =~ ^[0-9]+$ ]]; then
+  echo "Error: REQUIRED_APPROVING_REVIEW_COUNT must be a non-negative integer." >&2
+  exit 2
+fi
 
 if [[ -z "${REPO}" ]]; then
   remote_url="$(git config --get remote.origin.url || true)"
@@ -57,7 +64,7 @@ payload="$(cat <<JSON
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,
     "require_code_owner_reviews": false,
-    "required_approving_review_count": 1
+    "required_approving_review_count": ${REQUIRED_APPROVING_REVIEW_COUNT}
   },
   "restrictions": null
 }
