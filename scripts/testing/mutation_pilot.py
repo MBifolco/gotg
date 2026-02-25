@@ -5,7 +5,6 @@ This avoids third-party mutation tooling by applying a small curated set of
 source mutations and verifying that targeted tests fail (mutants are killed).
 """
 
-#this is a test for a pr
 
 from __future__ import annotations
 
