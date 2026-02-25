@@ -142,6 +142,13 @@ def test_validate_raises_missing_tasks_json(tmp_path):
         validate_iteration_for_run(iteration, tmp_path, _agents())
 
 
+def test_validate_raises_domain_error_for_unknown_phase(tmp_path):
+    """A typo'd phase in iteration.json produces SessionSetupError, not raw ValueError."""
+    iteration = {"id": "i", "description": "d", "status": "in-progress", "phase": "bogus"}
+    with pytest.raises(SessionSetupError, match="Unknown phase 'bogus'"):
+        validate_iteration_for_run(iteration, tmp_path, _agents())
+
+
 # ── build_file_infra ─────────────────────────────────────────
 
 
@@ -185,6 +192,17 @@ def test_setup_worktrees_skips_refinement(tmp_path):
     }))
     result, warnings = setup_worktrees(team, [], None, None, {"phase": "refinement"})
     assert result is None
+
+
+def test_setup_worktrees_unknown_phase(tmp_path):
+    """A typo'd phase with worktrees enabled produces SessionSetupError."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    (team / "team.json").write_text(json.dumps({
+        "model": {}, "agents": [], "worktrees": {"enabled": True},
+    }))
+    with pytest.raises(SessionSetupError, match="Unknown phase 'bogus'"):
+        setup_worktrees(team, [], None, None, {"phase": "bogus"})
 
 
 def test_setup_worktrees_warns_no_fileguard(tmp_path):

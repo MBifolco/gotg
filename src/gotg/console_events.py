@@ -47,8 +47,11 @@ def print_phase_complete(phase: str | None) -> None:
     """Print phase-specific completion message."""
     from gotg.config import PHASE_ORDER
 
+    from gotg.phases import get_phase_caps_safe
+    caps = get_phase_caps_safe(phase)
+
     print("---")
-    if phase == "code-review":
+    if caps.phase_complete_shows_review_hint:
         print("Coach signals code review complete.")
         print("Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.")
     elif phase == PHASE_ORDER[-1]:

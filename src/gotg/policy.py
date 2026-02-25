@@ -82,9 +82,9 @@ def iteration_policy(
     tasks_summary = None
     if tasks_path.exists():
         tasks_data = load_tasks_file(tasks_path)
-        impl_layer = None
-        if iteration.get("phase") == "implementation":
-            impl_layer = iteration.get("current_layer")
+        from gotg.phases import get_phase_caps_safe
+        caps = get_phase_caps_safe(iteration.get("phase"))
+        impl_layer = iteration.get("current_layer") if caps.filter_tasks_by_layer else None
         tasks_summary = format_tasks_summary(tasks_data, layer=impl_layer)
 
     # Pre-compute kickoff

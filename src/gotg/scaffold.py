@@ -91,18 +91,18 @@ def format_phase_kickoff(
     current_layer = iteration.get("current_layer", 0)
 
     # Build agent task assignments
+    from gotg.phases import get_phase_caps_safe
+    caps = get_phase_caps_safe(phase)
     agent_task_assignments = ""
-    if iter_dir:
-        if phase in ("implementation", "code-review"):
-            agent_task_assignments = format_agent_task_assignments(
-                iter_dir, agents, current_layer,
-            )
-        elif phase == "pre-code-review":
-            agent_task_assignments = format_agent_task_assignments(iter_dir, agents)
+    if iter_dir and caps.include_task_assignments_kickoff:
+        layer_arg = current_layer if caps.scope_kickoff_to_layer else None
+        agent_task_assignments = format_agent_task_assignments(
+            iter_dir, agents, layer_arg,
+        )
 
     # Build writable paths info
     writable_paths_info = ""
-    if fileguard and phase in ("implementation", "code-review"):
+    if fileguard and caps.inject_writable_paths_kickoff:
         writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
         writable_paths_info = (
             f"File access: you can read project files and write to: {writable}. "

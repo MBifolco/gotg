@@ -323,9 +323,14 @@ def prepare_session(
 
     # Phase routing: implementation phase uses dedicated executor
     # Needs at least one completion callable (single or stream) for the tool loop
+    from gotg.phases import get_phase_caps
+    try:
+        caps = get_phase_caps(iteration.get("phase"))
+    except ValueError as e:
+        raise SessionSetupError(str(e)) from e
     tasks_path = iter_dir / "tasks.json"
     use_implementation = (
-        iteration.get("phase") == "implementation"
+        caps.use_implementation_executor
         and tasks_path.exists()
         and (deps.single_completion is not None or deps.stream_completion is not None)
     )
@@ -423,7 +428,12 @@ def validate_iteration_for_run(iteration: dict, iter_dir: Path, agents: list[dic
         raise SessionSetupError("Need at least 2 agents in .team/team.json.")
 
     phase = iteration.get("phase", "refinement")
-    if phase not in ("pre-code-review", "implementation"):
+    from gotg.phases import get_phase_caps
+    try:
+        caps = get_phase_caps(phase)
+    except ValueError as e:
+        raise SessionSetupError(str(e)) from e
+    if not caps.requires_tasks:
         return
 
     tasks_path = iter_dir / "tasks.json"
@@ -434,13 +444,13 @@ def validate_iteration_for_run(iteration: dict, iter_dir: Path, agents: list[dic
     from gotg.tasks import load_tasks_file
     tasks = load_tasks_file(tasks_path)
     current_layer = iteration.get("current_layer")
-    if phase == "implementation" and current_layer is not None:
+    if caps.filter_tasks_by_layer and current_layer is not None:
         tasks = [t for t in tasks if t.get("layer") == current_layer]
     unassigned = [t["id"] for t in tasks if not t.get("assigned_to")]
     if unassigned:
         scope = (
             f"layer {current_layer} tasks"
-            if phase == "implementation" and current_layer is not None
+            if caps.filter_tasks_by_layer and current_layer is not None
             else "all tasks"
         )
         raise SessionSetupError(
@@ -482,7 +492,12 @@ def setup_worktrees(
         return None, []
 
     phase = iteration.get("phase", "refinement")
-    if phase not in ("implementation", "code-review"):
+    from gotg.phases import get_phase_caps
+    try:
+        caps = get_phase_caps(phase)
+    except ValueError as e:
+        raise SessionSetupError(str(e)) from e
+    if not caps.enable_worktrees:
         return None, []
 
     warnings: list[str] = []
@@ -518,7 +533,7 @@ def setup_worktrees(
 
     # For implementation phase, only create worktrees for agents with current-layer tasks
     agents_to_setup = agents
-    if phase == "implementation":
+    if caps.filter_worktree_agents_by_tasks:
         tasks_path = team_dir.parent / ".team" / "iterations"
         # Find iter_dir from the team_dir layout
         from gotg.config import get_current_iteration
@@ -998,7 +1013,12 @@ def validate_next_layer(
         )
 
     current_phase = iteration.get("phase", "refinement")
-    if current_phase not in ("implementation", "code-review"):
+    from gotg.phases import get_phase_caps
+    try:
+        caps = get_phase_caps(current_phase)
+    except ValueError as e:
+        raise ReviewError(str(e)) from e
+    if not caps.supports_next_layer:
         raise ReviewError(
             f"next-layer requires implementation or code-review phase, currently in '{current_phase}'."
         )

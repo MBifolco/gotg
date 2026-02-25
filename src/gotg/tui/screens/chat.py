@@ -169,7 +169,8 @@ class ChatScreen(Screen):
         if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            if phase == "code-review":
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(phase).phase_complete_shows_review_hint:
                 self.query_one("#action-bar", ActionBar).show(
                     "Code review complete. Press D to review diffs and merge."
                 )
@@ -201,8 +202,9 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        # Detect task assignment needed (pre-code-review/implementation with unassigned tasks)
-        if phase in ("pre-code-review", "implementation"):
+        # Detect task assignment needed
+        from gotg.phases import get_phase_caps_safe
+        if get_phase_caps_safe(phase).show_task_status_bar:
             self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────
@@ -476,7 +478,8 @@ class ChatScreen(Screen):
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            if event.phase == "code-review":
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(event.phase).phase_complete_shows_review_hint:
                 self.query_one("#action-bar", ActionBar).show(
                     "Code review complete. Press D to review diffs and merge."
                 )
@@ -518,7 +521,8 @@ class ChatScreen(Screen):
             # Patch metadata for display only — R → run reloads from disk
             self.metadata["phase"] = event.to_phase
             self.query_one("#info-tile", InfoTile).update_phase(event.to_phase)
-            if event.to_phase == "pre-code-review":
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(event.to_phase).auto_open_task_assign_on_advance:
                 self.query_one("#action-bar", ActionBar).show(
                     "Assigning tasks..."
                 )
@@ -704,8 +708,8 @@ class ChatScreen(Screen):
             return
         if self._session_kind != "iteration":
             return
-        phase = self.metadata.get("phase")
-        if phase not in ("pre-code-review", "implementation"):
+        from gotg.phases import get_phase_caps_safe
+        if not get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
             return
         self._open_task_assign()
 
@@ -743,7 +747,8 @@ class ChatScreen(Screen):
             return
         if self._session_kind != "iteration":
             return
-        if self.metadata.get("phase") not in ("implementation", "code-review"):
+        from gotg.phases import get_phase_caps_safe
+        if not get_phase_caps_safe(self.metadata.get("phase")).can_open_review_screen:
             return
         from gotg.context import TeamContext
         ctx = TeamContext.from_team_dir(self.app.team_dir)
@@ -755,8 +760,8 @@ class ChatScreen(Screen):
         """Refresh state when returning from pushed screens."""
         if self.session_state == SessionState.VIEWING:
             # Returning from TaskAssignScreen or similar
-            phase = self.metadata.get("phase")
-            if phase in ("pre-code-review", "implementation"):
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
                 self._update_task_status_bar()
             return
 
