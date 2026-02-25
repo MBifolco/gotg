@@ -831,13 +831,14 @@ def advance_next_layer(
     )
 
     # Log transition with boundary marker
+    from_phase = iteration.get("phase", "implementation")
     log_path = iter_dir / "conversation.jsonl"
     boundary_msg = {
         "from": "system",
         "iteration": iteration["id"],
         "content": "--- HISTORY BOUNDARY ---",
         "phase_boundary": True,
-        "from_phase": "code-review",
+        "from_phase": from_phase,
         "to_phase": "implementation",
         "layer": next_layer,
     }

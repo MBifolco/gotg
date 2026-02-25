@@ -405,6 +405,36 @@ async def test_settings_validation_empty_model(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_settings_blank_model_remains_valid_after_provider_change(tmp_path):
+    """Blank model selection remains legal after model options are refreshed."""
+    team_dir = _make_team_dir(tmp_path)
+    from gotg.tui.app import GotgApp
+    from gotg.tui.screens.settings import SettingsScreen
+    from textual.widgets import Select
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(SettingsScreen())
+        await pilot.pause()
+        await pilot.pause()
+
+        # Force option rebuild path.
+        app.screen.query_one("#set-provider", Select).value = "anthropic"
+        await pilot.pause()
+        await pilot.pause()
+
+        # Regression contract: this assignment must never raise.
+        app.screen.query_one("#set-model-name", Select).value = Select.BLANK
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+
+        assert isinstance(app.screen, SettingsScreen)
+        saved = json.loads((team_dir / "team.json").read_text())
+        assert saved["model"]["model"] == "qwen2.5-coder:7b"
+
+
+@pytest.mark.asyncio
 async def test_settings_validation_invalid_file_size(tmp_path):
     """Ctrl+S with non-numeric max file size does not save."""
     team_dir = _make_team_dir(tmp_path)

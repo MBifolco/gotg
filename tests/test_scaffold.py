@@ -118,6 +118,14 @@ def test_init_commits_gitignore(git_project):
     assert "gotg" in result.stdout.lower()
 
 
+def test_init_tolerates_missing_git_identity(tmp_path):
+    """CLI init path may run without repo-level git user config in CI."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True, check=True)
+    init_project(tmp_path)
+    assert (tmp_path / ".team").is_dir()
+    assert (tmp_path / ".gitignore").exists()
+
+
 def test_default_system_prompt_mentions_pushback():
     """The default system prompt should tell agents not to just agree."""
     from gotg.scaffold import DEFAULT_SYSTEM_PROMPT

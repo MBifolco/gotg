@@ -20,7 +20,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-tui = ["textual>=0.80"]
+tui = [
+    "textual>=7.5,<7.6",
+]
 
 [project.scripts]
 gotg = "gotg.cli:main"

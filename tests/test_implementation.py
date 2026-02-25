@@ -284,6 +284,117 @@ def test_handle_report_blocked_success(tmp_path):
     assert "parser contract" in blocked["blocked_reason"]
 
 
+def test_handle_report_blocked_empty_ids(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": [], "reason": "stuck"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "task_ids is empty" in result
+    assert blocked_ids is None
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    assert all(t["status"] == "pending" for t in saved)
+
+
+def test_handle_report_blocked_reason_required(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a"], "reason": "  "},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "reason is required" in result
+    assert blocked_ids is None
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    assert all(t["status"] == "pending" for t in saved)
+
+
+def test_handle_report_blocked_wrong_layer(tmp_path):
+    tasks = _make_tasks(layer=0)
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a"], "reason": "blocked"},
+        "agent-1", tasks, 1, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "not in layer" in result
+    assert blocked_ids is None
+
+
+def test_handle_report_blocked_wrong_agent(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a"], "reason": "blocked"},
+        "agent-2", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "not assigned to you" in result
+    assert blocked_ids is None
+
+
+def test_handle_report_blocked_rejects_done_task(tmp_path):
+    tasks = _make_tasks()
+    tasks[0]["status"] = "done"
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a"], "reason": "blocked"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "already done" in result
+    assert blocked_ids is None
+
+
+def test_handle_report_blocked_atomic_on_mixed_valid_and_invalid_ids(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a", "missing-task"], "reason": "blocked"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "not in layer" in result
+    assert blocked_ids is None
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
+
+
+def test_handle_report_blocked_atomic_on_mixed_own_and_foreign_ids(tmp_path):
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a", "task-b"], "reason": "blocked"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "not assigned to you" in result
+    assert blocked_ids is None
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
+    assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
+
+
+def test_handle_report_blocked_atomic_on_mixed_done_and_pending_ids(tmp_path):
+    tasks = _make_tasks()
+    tasks[0]["status"] = "done"
+    tasks[1]["assigned_to"] = "agent-1"
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    result, blocked_ids = _handle_report_blocked(
+        {"task_ids": ["task-a", "task-b"], "reason": "blocked"},
+        "agent-1", tasks, 0, iter_dir,
+    )
+    assert result.startswith("Error:")
+    assert "already done" in result
+    assert blocked_ids is None
+    saved = json.loads((iter_dir / "tasks.json").read_text())
+    assert next(t for t in saved if t["id"] == "task-a")["status"] == "done"
+    assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
+
+
 # --- Integration tests for run_implementation ---
 
 
