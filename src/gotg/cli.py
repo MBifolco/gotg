@@ -26,7 +26,7 @@ from gotg.groom import (
 )
 from gotg.scaffold import init_project
 from gotg.session import (
-    SessionSetupError, persist_event, resolve_layer, validate_iteration_for_run,
+    SessionSetupError, resolve_layer, validate_iteration_for_run,
     build_file_infra, setup_worktrees, load_diffs_for_review,
 )
 from gotg.transitions import (
@@ -95,9 +95,7 @@ def run_conversation(
     diffs_summary: str | None = None,
     streaming: bool = False,
 ) -> None:
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
-    history = read_phase_history(log_path)
+    from gotg.session import prepare_session, run_and_persist
 
     # Build deps from module-level imports (bridge pattern — preserves mock targets)
     deps = SessionDeps(
@@ -107,47 +105,27 @@ def run_conversation(
         stream_completion=raw_completion_stream,
     )
 
-    # Build policy from iteration state (factory exercised in production)
-    from gotg.policy import iteration_policy
-    policy = iteration_policy(
-        agents=agents, iteration=iteration, iter_dir=iter_dir,
-        history=history, coach=coach, fileguard=fileguard,
-        approval_store=approval_store, worktree_map=worktree_map,
-        diffs_summary=diffs_summary, max_turns_override=max_turns_override,
+    setup = prepare_session(
+        iter_dir, agents, iteration, model_config, deps,
+        max_turns_override=max_turns_override, coach=coach,
+        fileguard=fileguard, approval_store=approval_store,
+        worktree_map=worktree_map, diffs_summary=diffs_summary,
         streaming=streaming,
     )
 
-    # Route to implementation executor or discussion engine
-    # Implementation executor requires tasks.json + single_completion
-    tasks_path = iter_dir / "tasks.json"
-    use_impl = (
-        iteration.get("phase") == "implementation"
-        and tasks_path.exists()
-        and deps.single_completion is not None
-    )
-    if use_impl:
-        _run_implementation_phase(
-            agents, iteration, iter_dir, model_config, deps, history, policy,
-            log_path, debug_path,
-        )
-    else:
-        _run_discussion_phase(
-            agents, iteration, model_config, deps, history, policy,
-            log_path, debug_path,
-        )
+    _handle_cli_events(run_and_persist(setup), setup.use_implementation)
 
 
-def _run_discussion_phase(
-    agents, iteration, model_config, deps, history, policy,
-    log_path, debug_path,
-):
-    """Handle discussion phases (refinement, planning, pre-code-review, code-review)."""
-    _suppress_agent_append: str | None = None  # agent name to suppress
+def _handle_cli_events(events, use_implementation: bool = False) -> None:
+    """Unified CLI event handler for both discussion and implementation phases.
 
-    for event in run_session(
-        agents=agents, iteration=iteration, model_config=model_config,
-        deps=deps, history=history, policy=policy,
-    ):
+    Args:
+        events: Iterator of engine/implementation events (from run_and_persist or direct).
+        use_implementation: True for implementation phase (changes SessionComplete message).
+    """
+    _suppress_agent_append: str | None = None
+
+    for event in events:
         if isinstance(event, SessionStarted):
             _print_session_header(event)
         elif isinstance(event, TextDelta):
@@ -160,7 +138,7 @@ def _run_discussion_phase(
         elif isinstance(event, ToolCallProgress):
             _print_tool_progress(event)
         elif isinstance(event, (AppendMessage, AppendDebug)):
-            persist_event(event, log_path, debug_path)
+            # Already persisted by run_and_persist — display only
             if isinstance(event, AppendMessage):
                 if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
                     _suppress_agent_append = None
@@ -187,9 +165,22 @@ def _run_discussion_phase(
             else:
                 print("Reply with: gotg continue -m 'your answer'")
             break
+        elif isinstance(event, TaskBlocked):
+            print("---")
+            blocked = ", ".join(event.task_ids)
+            print(f"Blocked by {event.agent} (layer {event.layer}): {blocked}")
+            print(f"Reason: {event.reason}")
+        elif isinstance(event, LayerComplete):
+            print("---")
+            print(f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks).")
+            print("Run `gotg merge all` then `gotg next-layer`.")
+            break
         elif isinstance(event, SessionComplete):
             print("---")
-            print(f"Conversation complete ({event.total_turns} turns)")
+            if use_implementation:
+                print(f"Implementation session complete ({event.total_turns} agent(s) dispatched).")
+            else:
+                print(f"Conversation complete ({event.total_turns} turns)")
         else:
             raise AssertionError(f"Unhandled event: {event!r}")
 
@@ -211,66 +202,49 @@ def _print_tool_progress(event: ToolCallProgress) -> None:
         print(f"  [{event.agent}] {event.tool_name} {event.path}", file=sys.stderr)
 
 
+def _run_discussion_phase(
+    agents, iteration, model_config, deps, history, policy,
+    log_path, debug_path,
+):
+    """Backward-compatible wrapper — delegates to _handle_cli_events."""
+    from gotg.session import persist_event
+
+    def _gen():
+        for event in run_session(
+            agents=agents, iteration=iteration, model_config=model_config,
+            deps=deps, history=history, policy=policy,
+        ):
+            if isinstance(event, (AppendMessage, AppendDebug)):
+                persist_event(event, log_path, debug_path)
+            yield event
+
+    _handle_cli_events(_gen(), use_implementation=False)
+
+
 def _run_implementation_phase(
     agents, iteration, iter_dir, model_config, deps, history, policy,
     log_path, debug_path,
 ):
-    """Handle implementation phase with dedicated executor."""
+    """Backward-compatible wrapper — delegates to _handle_cli_events."""
     import json
     from gotg.implementation import run_implementation
+    from gotg.session import persist_event
 
     tasks_path = iter_dir / "tasks.json"
     tasks_data = json.loads(tasks_path.read_text())
     current_layer = iteration.get("current_layer", 0)
 
-    # Track streaming state to suppress double-printing
-    _suppress_agent_append: str | None = None
+    def _gen():
+        for event in run_implementation(
+            agents=agents, tasks=tasks_data, current_layer=current_layer,
+            iteration=iteration, iter_dir=iter_dir, model_config=model_config,
+            deps=deps, history=history, policy=policy,
+        ):
+            if isinstance(event, (AppendMessage, AppendDebug)):
+                persist_event(event, log_path, debug_path)
+            yield event
 
-    for event in run_implementation(
-        agents=agents, tasks=tasks_data, current_layer=current_layer,
-        iteration=iteration, iter_dir=iter_dir, model_config=model_config,
-        deps=deps, history=history, policy=policy,
-    ):
-        if isinstance(event, SessionStarted):
-            _print_session_header(event)
-        elif isinstance(event, TextDelta):
-            sys.stdout.write(event.text)
-            sys.stdout.flush()
-        elif isinstance(event, AgentTurnComplete):
-            sys.stdout.write("\n\n")
-            sys.stdout.flush()
-            _suppress_agent_append = event.agent
-        elif isinstance(event, (AppendMessage, AppendDebug)):
-            persist_event(event, log_path, debug_path)
-            if isinstance(event, AppendMessage):
-                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
-                    _suppress_agent_append = None
-                else:
-                    print(render_message(event.msg))
-                    print()
-        elif isinstance(event, ToolCallProgress):
-            _print_tool_progress(event)
-        elif isinstance(event, TaskBlocked):
-            print("---")
-            blocked = ", ".join(event.task_ids)
-            print(f"Blocked by {event.agent} (layer {event.layer}): {blocked}")
-            print(f"Reason: {event.reason}")
-        elif isinstance(event, PauseForApprovals):
-            print("---")
-            print(f"Paused: {event.pending_count} pending approval(s).")
-            print("Run 'gotg approvals' to review, then 'gotg approve <id>' or 'gotg deny <id> -m reason'.")
-            print("Resume with 'gotg continue'.")
-            break
-        elif isinstance(event, LayerComplete):
-            print("---")
-            print(f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks).")
-            print("Run `gotg merge all` then `gotg next-layer`.")
-            break
-        elif isinstance(event, SessionComplete):
-            print("---")
-            print(f"Implementation session complete ({event.total_turns} agent(s) dispatched).")
-        else:
-            raise AssertionError(f"Unhandled event: {event!r}")
+    _handle_cli_events(_gen(), use_implementation=True)
 
 
 def cmd_init(args):

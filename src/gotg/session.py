@@ -7,10 +7,12 @@ import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from gotg.conversation import append_debug, append_message
+from gotg.engine import SessionDeps
 from gotg.events import AppendDebug, AppendMessage
+from gotg.policy import SessionPolicy
 
 
 class SessionSetupError(Exception):
@@ -114,6 +116,152 @@ class AiResolutionResult:
     path: str
     resolved_content: str
     explanation: str
+
+
+@dataclass
+class SessionSetup:
+    """Everything needed to run a session.
+
+    Built by prepare_session() or manually by consumers with different
+    policy factories (e.g. grooming uses grooming_policy, not iteration_policy).
+    """
+    agents: list[dict]
+    iteration: dict
+    iter_dir: Path
+    model_config: dict
+    history: list[dict]
+    policy: SessionPolicy
+    deps: SessionDeps
+    log_path: Path
+    debug_path: Path
+    use_implementation: bool
+    tasks_data: list[dict] | None
+    current_layer: int
+    fileguard: object | None
+    approval_store: object | None
+    worktree_map: dict | None
+    warnings: list[str] = field(default_factory=list)
+
+
+def refresh_history(setup: SessionSetup) -> None:
+    """Re-read phase history from disk into setup.history.
+
+    Call after approval injection or human message injection
+    to ensure the engine sees injected messages.
+    Uses slice assignment to mutate in-place (references stay valid).
+    """
+    from gotg.conversation import read_phase_history
+    setup.history[:] = read_phase_history(setup.log_path)
+
+
+def prepare_session(
+    iter_dir: Path,
+    agents: list[dict],
+    iteration: dict,
+    model_config: dict,
+    deps: SessionDeps,
+    *,
+    max_turns_override: int | None = None,
+    coach: dict | None = None,
+    fileguard=None,
+    approval_store=None,
+    worktree_map: dict | None = None,
+    diffs_summary: str | None = None,
+    streaming: bool = False,
+) -> SessionSetup:
+    """Build everything needed to run a session.
+
+    Single setup path for all consumers (CLI, TUI).
+    Reads phase history, builds policy, resolves phase routing.
+    Caller provides deps (preserves mock targets — bridge pattern).
+    """
+    from gotg.conversation import read_phase_history
+    from gotg.policy import iteration_policy
+
+    log_path = iter_dir / "conversation.jsonl"
+    debug_path = iter_dir / "debug.jsonl"
+    history = read_phase_history(log_path)
+
+    policy = iteration_policy(
+        agents=agents, iteration=iteration, iter_dir=iter_dir,
+        history=history, coach=coach, fileguard=fileguard,
+        approval_store=approval_store, worktree_map=worktree_map,
+        diffs_summary=diffs_summary, max_turns_override=max_turns_override,
+        streaming=streaming,
+    )
+
+    # Phase routing: implementation phase uses dedicated executor
+    # Needs at least one completion callable (single or stream) for the tool loop
+    tasks_path = iter_dir / "tasks.json"
+    use_implementation = (
+        iteration.get("phase") == "implementation"
+        and tasks_path.exists()
+        and (deps.single_completion is not None or deps.stream_completion is not None)
+    )
+    tasks_data = None
+    if use_implementation:
+        tasks_data = json.loads(tasks_path.read_text())
+
+    current_layer = iteration.get("current_layer", 0)
+
+    return SessionSetup(
+        agents=agents,
+        iteration=iteration,
+        iter_dir=iter_dir,
+        model_config=model_config,
+        history=history,
+        policy=policy,
+        deps=deps,
+        log_path=log_path,
+        debug_path=debug_path,
+        use_implementation=use_implementation,
+        tasks_data=tasks_data,
+        current_layer=current_layer,
+        fileguard=fileguard,
+        approval_store=approval_store,
+        worktree_map=worktree_map,
+    )
+
+
+def run_and_persist(setup: SessionSetup) -> Iterator:
+    """Run engine/implementation generator AND persist events.
+
+    Contract:
+    - Only AppendMessage and AppendDebug are persisted (via persist_event)
+    - Persistence happens BEFORE yielding (persist-then-emit)
+    - If persistence raises, event is NOT yielded (hard guarantee)
+    - All other event types are yielded without persistence
+    - Phase routing (implementation vs discussion) is handled internally
+    """
+    if setup.use_implementation:
+        # Validate deps can support the implementation tool loop
+        has_non_streaming = setup.deps.single_completion is not None
+        has_streaming = setup.policy.streaming and setup.deps.stream_completion is not None
+        if not has_non_streaming and not has_streaming:
+            raise SessionSetupError(
+                "Implementation phase requires single_completion or "
+                "stream_completion (with streaming enabled)."
+            )
+        from gotg.implementation import run_implementation
+        gen = run_implementation(
+            agents=setup.agents, tasks=setup.tasks_data,
+            current_layer=setup.current_layer,
+            iteration=setup.iteration, iter_dir=setup.iter_dir,
+            model_config=setup.model_config, deps=setup.deps,
+            history=setup.history, policy=setup.policy,
+        )
+    else:
+        from gotg.engine import run_session
+        gen = run_session(
+            agents=setup.agents, iteration=setup.iteration,
+            model_config=setup.model_config, deps=setup.deps,
+            history=setup.history, policy=setup.policy,
+        )
+
+    for event in gen:
+        if isinstance(event, (AppendMessage, AppendDebug)):
+            persist_event(event, setup.log_path, setup.debug_path)
+        yield event
 
 
 def persist_event(event: object, log_path: Path, debug_path: Path) -> None:

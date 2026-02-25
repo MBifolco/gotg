@@ -29,7 +29,6 @@ from gotg.events import (
     TextDelta,
     ToolCallProgress,
 )
-from gotg.session import persist_event
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
 from gotg.tui.messages import EngineEvent, SessionError, TextDeltaMsg, ToolProgress
 from gotg.tui.widgets.action_bar import ActionBar
@@ -267,7 +266,7 @@ class ChatScreen(Screen):
         """Runs in worker thread. Posts EngineEvent messages to main thread."""
         try:
             from gotg.context import TeamContext
-            from gotg.engine import SessionDeps, run_session
+            from gotg.engine import SessionDeps
             from gotg.model import (
                 agentic_completion,
                 chat_completion,
@@ -275,12 +274,10 @@ class ChatScreen(Screen):
                 raw_completion_stream,
             )
             from gotg.session import (
-                SessionSetupError,
-                build_file_infra,
-                load_diffs_for_review,
-                resolve_layer,
-                setup_worktrees,
-                validate_iteration_for_run,
+                SessionSetup, SessionSetupError,
+                build_file_infra, load_diffs_for_review,
+                prepare_session, run_and_persist,
+                setup_worktrees, validate_iteration_for_run,
             )
 
             ctx = TeamContext.from_team_dir(self.app.team_dir)
@@ -301,6 +298,7 @@ class ChatScreen(Screen):
                 )
 
                 # Apply approved writes and inject denials before resuming
+                # (Phase 1 exception — stays in adapter for per-message UI posting)
                 if approval_store:
                     from gotg.session import apply_and_inject
                     inject_msgs = apply_and_inject(
@@ -316,6 +314,7 @@ class ChatScreen(Screen):
                         ))
                         return
 
+                # Compute max_turns (needs history before injection — same as cmd_continue)
                 history = read_phase_history(self._log_path)
                 coach_name = ctx.coach["name"] if ctx.coach else None
                 current_agent_turns = sum(
@@ -325,17 +324,25 @@ class ChatScreen(Screen):
                 from gotg.config import load_streaming_config
                 streaming_enabled = load_streaming_config(ctx.team_dir)
 
-                from gotg.policy import iteration_policy
-                policy = iteration_policy(
-                    agents=ctx.agents, iteration=iteration, iter_dir=iter_dir,
-                    history=history, coach=ctx.coach, fileguard=fileguard,
-                    approval_store=approval_store, worktree_map=worktree_map,
-                    diffs_summary=diffs_summary, max_turns_override=max_turns,
+                deps = SessionDeps(
+                    agent_completion=agentic_completion,
+                    coach_completion=chat_completion,
+                    single_completion=raw_completion,
+                    stream_completion=raw_completion_stream if streaming_enabled else None,
+                )
+
+                setup = prepare_session(
+                    iter_dir, ctx.agents, iteration, ctx.model_config, deps,
+                    max_turns_override=max_turns, coach=ctx.coach,
+                    fileguard=fileguard, approval_store=approval_store,
+                    worktree_map=worktree_map, diffs_summary=diffs_summary,
                     streaming=streaming_enabled,
                 )
             else:
-                # Grooming session
+                # Grooming session — uses grooming_policy (not iteration_policy)
                 from gotg.groom import load_grooming_metadata
+                from gotg.policy import grooming_policy
+
                 groom_meta, groom_dir = load_grooming_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
                 )
@@ -351,7 +358,12 @@ class ChatScreen(Screen):
                 from gotg.config import load_streaming_config as _load_streaming
                 streaming_enabled = _load_streaming(ctx.team_dir)
 
-                from gotg.policy import grooming_policy
+                deps = SessionDeps(
+                    agent_completion=agentic_completion,
+                    coach_completion=chat_completion,
+                    single_completion=raw_completion,
+                    stream_completion=raw_completion_stream if streaming_enabled else None,
+                )
                 policy = grooming_policy(
                     agents=ctx.agents,
                     topic=groom_meta.get("topic", ""),
@@ -361,32 +373,16 @@ class ChatScreen(Screen):
                     streaming=streaming_enabled,
                 )
 
-            deps = SessionDeps(
-                agent_completion=agentic_completion,
-                coach_completion=chat_completion,
-                single_completion=raw_completion,
-                stream_completion=raw_completion_stream if streaming_enabled else None,
-            )
-
-            # Route: implementation phase uses dedicated executor
-            if self._session_kind == "iteration" and iteration.get("phase") == "implementation":
-                import json as _json
-                from gotg.implementation import run_implementation
-                tasks_path = iter_dir / "tasks.json"
-                tasks_data = _json.loads(tasks_path.read_text())
-                current_layer = iteration.get("current_layer", 0)
-                event_gen = run_implementation(
-                    agents=ctx.agents, tasks=tasks_data, current_layer=current_layer,
-                    iteration=iteration, iter_dir=iter_dir, model_config=ctx.model_config,
-                    deps=deps, history=history, policy=policy,
-                )
-            else:
-                event_gen = run_session(
-                    agents=ctx.agents, iteration=iteration,
-                    model_config=ctx.model_config, deps=deps,
-                    history=history, policy=policy,
+                setup = SessionSetup(
+                    agents=ctx.agents, iteration=iteration, iter_dir=iter_dir,
+                    model_config=ctx.model_config, history=history, policy=policy,
+                    deps=deps, log_path=self._log_path,
+                    debug_path=self._debug_path,
+                    use_implementation=False, tasks_data=None, current_layer=0,
+                    fileguard=None, approval_store=None, worktree_map=None,
                 )
 
+            # Unified event loop — run_and_persist handles persistence + phase routing
             import time
             _stream_buffer: list[str] = []
             _stream_turn_id: str | None = None
@@ -402,7 +398,7 @@ class ChatScreen(Screen):
                     _stream_buffer = []
                     _last_flush = time.monotonic()
 
-            for event in event_gen:
+            for event in run_and_persist(setup):
                 if self._cancel_requested:
                     _flush_stream_buffer()
                     break
@@ -424,9 +420,7 @@ class ChatScreen(Screen):
                 # Flush any pending stream data before non-delta events
                 _flush_stream_buffer()
 
-                # Persist BEFORE posting to UI — if app crashes between the two,
-                # message is saved but not displayed (recoverable on reload).
-                persist_event(event, self._log_path, self._debug_path)
+                # Already persisted by run_and_persist — just post to UI
                 if isinstance(event, ToolCallProgress):
                     self.post_message(ToolProgress(event))
                 else:

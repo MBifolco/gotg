@@ -435,3 +435,380 @@ def test_advance_without_coach_skips_extraction(tmp_path):
     assert result.to_phase == "planning"
     assert not (iter_dir / "refinement_summary.md").exists()
     assert result.checkpoint_number is not None
+
+
+# ── SessionSetup / prepare_session / run_and_persist / refresh_history ──
+
+from unittest.mock import patch, MagicMock
+from gotg.engine import SessionDeps
+from gotg.events import SessionComplete, TextDelta
+from gotg.session import SessionSetup, prepare_session, run_and_persist, refresh_history
+
+
+def _make_deps(**overrides):
+    """Build a minimal SessionDeps with no-op callables."""
+    defaults = dict(
+        agent_completion=lambda **kw: {"content": "ok", "operations": []},
+        coach_completion=lambda **kw: "ok",
+        single_completion=lambda **kw: MagicMock(),
+        stream_completion=lambda **kw: MagicMock(),
+    )
+    defaults.update(overrides)
+    return SessionDeps(**defaults)
+
+
+def _make_iter_dir(tmp_path, phase="refinement", with_tasks=False):
+    """Create a minimal iteration directory for prepare_session tests."""
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    (iter_dir / "conversation.jsonl").touch()
+    if with_tasks:
+        tasks = [
+            {"id": "t1", "title": "Task 1", "description": "Do stuff",
+             "done_criteria": "It works", "assigned_to": "agent-1",
+             "depends_on": [], "layer": 0},
+        ]
+        (iter_dir / "tasks.json").write_text(json.dumps(tasks))
+    return iter_dir
+
+
+def test_prepare_session_basic(tmp_path):
+    """prepare_session returns SessionSetup with correct fields for refinement."""
+    iter_dir = _make_iter_dir(tmp_path)
+    agents = [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}]
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress",
+                 "phase": "refinement", "max_turns": 10}
+    deps = _make_deps()
+
+    setup = prepare_session(iter_dir, agents, iteration, {"provider": "test"}, deps)
+
+    assert isinstance(setup, SessionSetup)
+    assert setup.agents == agents
+    assert setup.iteration == iteration
+    assert setup.use_implementation is False
+    assert setup.tasks_data is None
+    assert setup.log_path == iter_dir / "conversation.jsonl"
+    assert setup.debug_path == iter_dir / "debug.jsonl"
+    assert setup.policy is not None
+
+
+def test_prepare_session_implementation_phase(tmp_path):
+    """prepare_session sets use_implementation=True and loads tasks for implementation."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+    agents = [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}]
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress",
+                 "phase": "implementation", "max_turns": 10, "current_layer": 0}
+    deps = _make_deps()
+
+    setup = prepare_session(iter_dir, agents, iteration, {"provider": "test"}, deps)
+
+    assert setup.use_implementation is True
+    assert setup.tasks_data is not None
+    assert len(setup.tasks_data) == 1
+    assert setup.current_layer == 0
+
+
+def test_prepare_session_no_completion_callables(tmp_path):
+    """Without single_completion or stream_completion, implementation falls back to discussion."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+    agents = [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}]
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress",
+                 "phase": "implementation", "max_turns": 10}
+    deps = _make_deps(single_completion=None, stream_completion=None)
+
+    setup = prepare_session(iter_dir, agents, iteration, {"provider": "test"}, deps)
+
+    assert setup.use_implementation is False
+
+
+def test_prepare_session_stream_only_routes_to_implementation(tmp_path):
+    """With stream_completion but no single_completion, implementation still routes correctly."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+    agents = [{"name": "agent-1", "role": "SE"}, {"name": "agent-2", "role": "SE"}]
+    iteration = {"id": "iter-1", "description": "test", "status": "in-progress",
+                 "phase": "implementation", "max_turns": 10, "current_layer": 0}
+    deps = _make_deps(single_completion=None)  # stream_completion still set
+
+    setup = prepare_session(iter_dir, agents, iteration, {"provider": "test"}, deps)
+
+    assert setup.use_implementation is True
+    assert setup.tasks_data is not None
+
+
+def test_run_and_persist_rejects_stream_only_without_streaming_policy(tmp_path):
+    """stream_completion without streaming=True and no single_completion raises early."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+        streaming=False,  # streaming disabled
+    )
+    # stream_completion present but single_completion is None
+    deps = _make_deps(single_completion=None)
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i", "phase": "implementation"},
+        iter_dir=iter_dir, model_config={}, history=[], policy=policy,
+        deps=deps, log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=True,
+        tasks_data=[{"id": "t1"}],
+        current_layer=0, fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with pytest.raises(SessionSetupError, match="single_completion or stream_completion"):
+        list(run_and_persist(setup))
+
+
+def test_run_and_persist_discussion(tmp_path):
+    """run_and_persist yields events and persists AppendMessage to disk."""
+    iter_dir = _make_iter_dir(tmp_path)
+    msg = {"from": "agent-1", "content": "hello"}
+    events_in = [
+        SessionStarted(iteration_id="i", description="d", phase="refinement",
+                       current_layer=None, agents=["a1"], coach=None,
+                       has_file_tools=False, writable_paths=None,
+                       worktree_count=0, turn=0, max_turns=10),
+        AppendMessage(msg),
+        SessionComplete(total_turns=1),
+    ]
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=[], policy=policy, deps=_make_deps(),
+        log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with patch("gotg.engine.run_session", return_value=iter(events_in)):
+        result = list(run_and_persist(setup))
+
+    assert len(result) == 3
+    assert isinstance(result[0], SessionStarted)
+    assert isinstance(result[1], AppendMessage)
+    assert isinstance(result[2], SessionComplete)
+    # Verify persisted to disk
+    lines = setup.log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["content"] == "hello"
+
+
+def test_run_and_persist_implementation(tmp_path):
+    """run_and_persist routes to run_implementation when use_implementation=True."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+    msg = {"from": "agent-1", "content": "impl"}
+    events_in = [AppendMessage(msg), SessionComplete(total_turns=1)]
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i", "phase": "implementation"},
+        iter_dir=iter_dir, model_config={}, history=[], policy=policy,
+        deps=_make_deps(), log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=True,
+        tasks_data=[{"id": "t1", "title": "x"}],
+        current_layer=0, fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with patch("gotg.implementation.run_implementation", return_value=iter(events_in)):
+        result = list(run_and_persist(setup))
+
+    assert len(result) == 2
+    lines = setup.log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["content"] == "impl"
+
+
+def test_run_and_persist_only_persists_append_events(tmp_path):
+    """TextDelta, SessionStarted, SessionComplete are NOT persisted to disk."""
+    iter_dir = _make_iter_dir(tmp_path)
+    events_in = [
+        SessionStarted(iteration_id="i", description="d", phase="refinement",
+                       current_layer=None, agents=["a1"], coach=None,
+                       has_file_tools=False, writable_paths=None,
+                       worktree_count=0, turn=0, max_turns=10),
+        TextDelta(agent="agent-1", turn_id="t1", text="chunk"),
+        SessionComplete(total_turns=1),
+    ]
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=[], policy=policy, deps=_make_deps(),
+        log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with patch("gotg.engine.run_session", return_value=iter(events_in)):
+        result = list(run_and_persist(setup))
+
+    assert len(result) == 3
+    # No JSONL lines — nothing to persist
+    assert not setup.log_path.exists() or setup.log_path.read_text().strip() == ""
+
+
+def test_run_and_persist_patch_target_compat(tmp_path):
+    """patch('gotg.engine.run_session') still intercepts through run_and_persist."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=[], policy=policy, deps=_make_deps(),
+        log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    sentinel = SessionComplete(total_turns=42)
+    with patch("gotg.engine.run_session", return_value=iter([sentinel])) as mock_rs:
+        result = list(run_and_persist(setup))
+        mock_rs.assert_called_once()
+        assert result[0].total_turns == 42
+
+
+def test_run_and_persist_impl_patch_target_compat(tmp_path):
+    """patch('gotg.implementation.run_implementation') intercepts through run_and_persist."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i", "phase": "implementation"},
+        iter_dir=iter_dir, model_config={}, history=[], policy=policy,
+        deps=_make_deps(), log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=True,
+        tasks_data=[{"id": "t1"}],
+        current_layer=0, fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    sentinel = SessionComplete(total_turns=99)
+    with patch("gotg.implementation.run_implementation", return_value=iter([sentinel])) as mock_ri:
+        result = list(run_and_persist(setup))
+        mock_ri.assert_called_once()
+        assert result[0].total_turns == 99
+
+
+def test_refresh_history_updates_in_place(tmp_path):
+    """After appending to log, refresh_history updates setup.history via slice assignment."""
+    iter_dir = _make_iter_dir(tmp_path)
+    log_path = iter_dir / "conversation.jsonl"
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    history = []
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=history, policy=policy, deps=_make_deps(),
+        log_path=log_path, debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    # Verify empty initially
+    assert len(setup.history) == 0
+    assert setup.history is history  # same object
+
+    # Append a message to disk
+    conv_append_message(log_path, {"from": "system", "content": "injected"})
+
+    # Refresh
+    refresh_history(setup)
+
+    assert len(setup.history) == 1
+    assert setup.history[0]["content"] == "injected"
+    assert setup.history is history  # still the same list object
+
+
+def test_run_and_persist_debug_events(tmp_path):
+    """AppendDebug events are persisted to the debug log."""
+    iter_dir = _make_iter_dir(tmp_path)
+    debug_entry = {"turn": 1, "agent": "agent-1", "model": "test"}
+    events_in = [AppendDebug(debug_entry), SessionComplete(total_turns=1)]
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=[], policy=policy, deps=_make_deps(),
+        log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with patch("gotg.engine.run_session", return_value=iter(events_in)):
+        result = list(run_and_persist(setup))
+
+    assert len(result) == 2
+    # Debug log should have the entry
+    debug_lines = setup.debug_path.read_text().strip().splitlines()
+    assert len(debug_lines) == 1
+    assert json.loads(debug_lines[0])["turn"] == 1
+    # Conversation log should be empty
+    assert not setup.log_path.exists() or setup.log_path.read_text().strip() == ""

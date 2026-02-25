@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from gotg.conversation import append_message, append_debug, read_log, render_message
-from gotg.engine import SessionDeps, run_session
+from gotg.engine import SessionDeps
 from gotg.events import (
     AgentTurnComplete,
     AppendDebug,
@@ -21,7 +21,7 @@ from gotg.events import (
     ToolCallProgress,
 )
 from gotg.policy import grooming_policy
-from gotg.session import persist_event
+from gotg.session import SessionSetup, run_and_persist
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -180,12 +180,17 @@ def run_grooming_conversation(
         streaming=streaming,
     )
 
+    setup = SessionSetup(
+        agents=agents, iteration=iteration, iter_dir=groom_dir,
+        model_config=model_config, history=history, policy=policy,
+        deps=deps, log_path=log_path, debug_path=debug_path,
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
     _suppress_agent_append: str | None = None
 
-    for event in run_session(
-        agents=agents, iteration=iteration, model_config=model_config,
-        deps=deps, history=history, policy=policy,
-    ):
+    for event in run_and_persist(setup):
         if isinstance(event, SessionStarted):
             _print_grooming_header(event, topic)
         elif isinstance(event, TextDelta):
@@ -198,7 +203,7 @@ def run_grooming_conversation(
         elif isinstance(event, ToolCallProgress):
             pass  # grooming has no file tools
         elif isinstance(event, (AppendMessage, AppendDebug)):
-            persist_event(event, log_path, debug_path)
+            # Already persisted by run_and_persist — display only
             if isinstance(event, AppendMessage):
                 if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
                     _suppress_agent_append = None
