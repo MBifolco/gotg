@@ -49,3 +49,4 @@ REPO=owner/repo BRANCH=main scripts/ops/configure_branch_protection.sh
 3. It enforces admin protection.
 4. The script writes required checks via `required_status_checks.checks` and clears legacy `contexts` to avoid duplicate "Expected" rows.
 5. GitHub UI may display run labels with `(pull_request)`; do not include that suffix in configured required check names.
+6. If pinning to a specific app, set `REQUIRED_CHECK_APP_ID=<id>`; otherwise leave it unset so any app can satisfy the check.
