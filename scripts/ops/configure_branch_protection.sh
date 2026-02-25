@@ -9,7 +9,8 @@ set -euo pipefail
 # Optional env vars:
 #   REPO=owner/name
 #   BRANCH=main
-#   REQUIRED_CHECKS_CSV="core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)"
+#   REQUIRED_CHECKS_CSV="core-non-tui / tests,tui-pty / tui-tests,behavior-map-guard / guard"
+#   REQUIRED_CHECK_APP_ID=null   # null=any app, or numeric GitHub App ID
 #   DRY_RUN=1
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -19,7 +20,8 @@ fi
 
 DRY_RUN="${DRY_RUN:-0}"
 BRANCH="${BRANCH:-main}"
-REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)}"
+REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-core-non-tui / tests,tui-pty / tui-tests,behavior-map-guard / guard}"
+REQUIRED_CHECK_APP_ID="${REQUIRED_CHECK_APP_ID:-null}"
 REPO="${REPO:-}"
 
 if [[ -z "${REPO}" ]]; then
@@ -33,18 +35,23 @@ fi
 
 IFS=',' read -r -a required_checks <<< "${REQUIRED_CHECKS_CSV}"
 
-checks_json="["
+contexts_json="["
+checks_obj_json="["
 for check in "${required_checks[@]}"; do
   trimmed="$(echo "${check}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  checks_json="${checks_json}\"${trimmed}\","
+  escaped="$(printf '%s' "${trimmed}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  contexts_json="${contexts_json}\"${escaped}\","
+  checks_obj_json="${checks_obj_json}{\"context\":\"${escaped}\",\"app_id\":${REQUIRED_CHECK_APP_ID}},"
 done
-checks_json="${checks_json%,}]"
+contexts_json="${contexts_json%,}]"
+checks_obj_json="${checks_obj_json%,}]"
 
 payload="$(cat <<JSON
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ${checks_json}
+    "contexts": [],
+    "checks": ${checks_obj_json}
   },
   "enforce_admins": true,
   "required_pull_request_reviews": {

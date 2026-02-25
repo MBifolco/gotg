@@ -8,11 +8,11 @@ This repo uses CI lanes that should be required for merges to `main`.
 2. `tui-pty / tui-tests`
 3. `behavior-map-guard / guard`
 
-For API-driven setup we require the PR-specific check contexts:
+For API-driven setup, configure check names without event suffix:
 
-1. `core-non-tui / tests (pull_request)`
-2. `tui-pty / tui-tests (pull_request)`
-3. `behavior-map-guard / guard (pull_request)`
+1. `core-non-tui / tests`
+2. `tui-pty / tui-tests`
+3. `behavior-map-guard / guard`
 
 `nightly-replay` and `mutation-pilot` are scheduled/manual lanes and should not be required PR checks by default.
 
@@ -47,3 +47,5 @@ REPO=owner/repo BRANCH=main scripts/ops/configure_branch_protection.sh
 1. The script enforces up-to-date branches (`strict: true`).
 2. It enables review requirements with `required_approving_review_count=1`.
 3. It enforces admin protection.
+4. The script writes required checks via `required_status_checks.checks` and clears legacy `contexts` to avoid duplicate "Expected" rows.
+5. GitHub UI may display run labels with `(pull_request)`; do not include that suffix in configured required check names.
