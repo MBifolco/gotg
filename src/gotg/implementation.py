@@ -19,8 +19,8 @@ from gotg.events import (
     SessionStarted,
     TaskBlocked,
     TextDelta,
-    ToolCallProgress,
 )
+from gotg.tools import classify_tool_result, make_tool_progress
 from gotg.policy import SessionPolicy
 from gotg.prompts import COMPLETE_TASKS_TOOL, DRIFT_CHECK_PROMPT, REPORT_BLOCKED_TOOL
 from gotg.tasks import load_tasks_file, save_tasks_file
@@ -28,15 +28,6 @@ from gotg.transitions import strip_code_fences
 
 _STATE_FILE = "implementation_state.json"
 _READ_ONLY_TOOLS = {"file_read", "file_list"}
-
-
-def _classify_result(result_str: str) -> str:
-    """Derive status from tool result string prefix."""
-    if result_str.startswith("Error:"):
-        return "error"
-    if result_str.startswith("Pending approval"):
-        return "pending_approval"
-    return "ok"
 
 
 def _load_tasks(iter_dir: Path) -> list[dict]:
@@ -684,7 +675,7 @@ def run_implementation(
                     agent_file_contents[tc_input.get("path", "")] = tc_input.get("content", "")
 
                 # Drift check after successful complete_tasks
-                if tc_name == "complete_tasks" and not result.startswith("Error:"):
+                if tc_name == "complete_tasks" and classify_tool_result(result) != "error":
                     drift_cfg = resolve_model_config(deps.model_resolver, model_config, None)
                     checks = _run_drift_check(
                         agent_file_contents,
@@ -722,20 +713,9 @@ def run_implementation(
                             yield AppendMessage(warn_msg)
                             history.append(warn_msg)
 
-                status = _classify_result(result)
-                content_size = None
-                if tc_name == "file_write":
-                    content_size = len(tc_input.get("content", "").encode())
-                error_msg = result if status == "error" else None
-
-                yield ToolCallProgress(
-                    agent=agent_name,
-                    tool_name=tc_name,
-                    path=tc_input.get("path", ""),
-                    status=status,
-                    bytes=content_size,
-                    error=error_msg,
-                )
+                progress = make_tool_progress(agent_name, tc_name, tc_input, result)
+                yield progress
+                status = progress.status
 
                 if tc_name in {"complete_tasks", "report_blocked"}:
                     op_msg = {

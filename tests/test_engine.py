@@ -1,6 +1,7 @@
 import json
 
-from gotg.engine import SessionDeps, run_session, _classify_tool_result
+from gotg.engine import SessionDeps, run_session
+from gotg.tools import classify_tool_result
 from gotg.events import (
     AgentTurnComplete,
     AppendDebug,
@@ -640,16 +641,16 @@ def test_streaming_history_mutation():
     assert agent_msgs[0]["content"] == "hello"
 
 
-# --- _classify_tool_result ---
+# --- classify_tool_result (now in gotg.tools) ---
 
 def test_classify_tool_result_ok():
-    assert _classify_tool_result("File content here") == "ok"
+    assert classify_tool_result("File content here") == "ok"
 
 def test_classify_tool_result_error():
-    assert _classify_tool_result("Error: file not found") == "error"
+    assert classify_tool_result("Error: file not found") == "error"
 
 def test_classify_tool_result_pending():
-    assert _classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"
+    assert classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"
 
 
 # --- Per-agent model routing ---

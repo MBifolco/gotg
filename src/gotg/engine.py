@@ -18,7 +18,7 @@ from gotg.events import (
     ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
-from gotg.tools import execute_file_tool, format_agent_tool_operation
+from gotg.tools import execute_file_tool, format_agent_tool_operation, make_tool_progress
 
 
 @dataclass
@@ -244,15 +244,6 @@ def _process_agent_result(
         history.append(msg)
 
 
-def _classify_tool_result(result_str: str) -> str:
-    """Derive status from tool result string prefix."""
-    if result_str.startswith("Error:"):
-        return "error"
-    if result_str.startswith("Pending approval"):
-        return "pending_approval"
-    return "ok"
-
-
 def _do_streaming_agent_turn(
     agent: dict,
     iteration: dict,
@@ -299,18 +290,7 @@ def _do_streaming_agent_turn(
             operations.append({"name": tc["name"], "input": tc["input"], "result": result})
             tool_results.append({"id": tc["id"], "result": result})
 
-            status = _classify_tool_result(result)
-            content_size = None
-            if tc["name"] == "file_write":
-                content_size = len(tc["input"].get("content", "").encode())
-            yield ToolCallProgress(
-                agent=agent["name"],
-                tool_name=tc["name"],
-                path=tc["input"].get("path", ""),
-                status=status,
-                bytes=content_size,
-                error=result if status == "error" else None,
-            )
+            yield make_tool_progress(agent["name"], tc["name"], tc["input"], result)
 
         # Build continuation for next round
         continuation = rnd.build_continuation(tool_results)

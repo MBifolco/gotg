@@ -4,9 +4,11 @@ import pytest
 
 from gotg.fileguard import FileGuard
 from gotg.tools import (
+    classify_tool_result,
     execute_file_tool,
     format_agent_tool_operation,
     format_tool_operation,
+    make_tool_progress,
 )
 
 
@@ -294,3 +296,39 @@ def test_write_without_approval_store_unchanged(project):
     result = execute_file_tool("file_write", {"path": "Dockerfile", "content": "FROM python"}, guard)
     assert result.startswith("Error:")
     assert not (project / "Dockerfile").exists()
+
+
+# --- classify_tool_result ---
+
+def test_classify_ok():
+    assert classify_tool_result("File content here") == "ok"
+
+def test_classify_error():
+    assert classify_tool_result("Error: file not found") == "error"
+
+def test_classify_pending():
+    assert classify_tool_result("Pending approval [a1]: write to Dockerfile") == "pending_approval"
+
+
+# --- make_tool_progress ---
+
+def test_make_tool_progress_file_write():
+    p = make_tool_progress("agent-1", "file_write", {"path": "src/main.py", "content": "hello"}, "Written: src/main.py (5 bytes)")
+    assert p.agent == "agent-1"
+    assert p.tool_name == "file_write"
+    assert p.path == "src/main.py"
+    assert p.status == "ok"
+    assert p.bytes == 5
+    assert p.error is None
+
+def test_make_tool_progress_file_read():
+    p = make_tool_progress("agent-1", "file_read", {"path": "src/main.py"}, "print('hello')")
+    assert p.status == "ok"
+    assert p.bytes is None
+    assert p.error is None
+
+def test_make_tool_progress_error():
+    p = make_tool_progress("agent-1", "file_write", {"path": "bad.py", "content": "x"}, "Error: not in writable paths")
+    assert p.status == "error"
+    assert p.error == "Error: not in writable paths"
+    assert p.bytes == 1
