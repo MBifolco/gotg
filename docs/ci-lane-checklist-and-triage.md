@@ -15,8 +15,8 @@ Use this during PR review and when CI fails.
 Branch protection setup reference:
 - `docs/branch-protection-setup.md`
 
-Note: configure required checks by canonical job names (no event suffix). GitHub may append
-`(pull_request)` in the UI for individual runs.
+Note: required checks are exact string matches. In this repo they should use the
+`(pull_request)` suffixed names shown in PR check runs.
 
 ## Lanes
 
