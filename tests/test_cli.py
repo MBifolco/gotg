@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _auto_checkpoint
+from gotg.cli import main, find_team_dir, run_conversation, _auto_checkpoint
 from gotg.session import validate_iteration_for_run, resolve_layer, setup_worktrees, SessionSetupError
 from gotg.conversation import read_log, read_phase_history, append_message
 
