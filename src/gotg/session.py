@@ -195,15 +195,94 @@ class SessionSetup:
     warnings: list[str] = field(default_factory=list)
 
 
-def refresh_history(setup: SessionSetup) -> None:
-    """Re-read phase history from disk into setup.history.
+def prepare_grooming_session(
+    groom_dir: Path,
+    agents: list[dict],
+    iteration: dict,
+    model_config: dict,
+    deps: SessionDeps,
+    *,
+    topic: str,
+    coach: dict | None = None,
+    max_turns: int = 30,
+    streaming: bool = False,
+) -> SessionSetup:
+    """Build everything needed to run a grooming session.
 
-    Call after approval injection or human message injection
-    to ensure the engine sees injected messages.
-    Uses slice assignment to mutate in-place (references stay valid).
+    Parallel to prepare_session() but uses grooming_policy.
+    Caller provides deps (preserves mock targets — bridge pattern).
+    """
+    from gotg.conversation import read_log
+    from gotg.policy import grooming_policy
+
+    log_path = groom_dir / "conversation.jsonl"
+    debug_path = groom_dir / "debug.jsonl"
+    history = read_log(log_path)
+
+    policy = grooming_policy(
+        agents=agents, topic=topic, history=history,
+        coach=coach, max_turns=max_turns, streaming=streaming,
+    )
+
+    return SessionSetup(
+        agents=agents, iteration=iteration, iter_dir=groom_dir,
+        model_config=model_config, history=history, policy=policy,
+        deps=deps, log_path=log_path, debug_path=debug_path,
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+
+@dataclass
+class ContinueContext:
+    """Pre-computed data for a continue operation."""
+    injected_messages: list[dict]
+    has_pending_approvals: bool
+    pending_count: int
+    current_agent_turns: int
+
+
+def prepare_continue(
+    infra: SessionInfra,
+    iteration: dict,
+    log_path: Path,
+    coach_name: str | None = None,
+) -> ContinueContext:
+    """Prepare approval injection + turn counting for a continue operation.
+
+    Side effect: calls apply_and_inject() which persists to log_path.
+    Caller renders injected_messages and decides whether to bail on has_pending_approvals.
+    Caller applies its own max_turns semantics using current_agent_turns.
     """
     from gotg.conversation import read_phase_history
-    setup.history[:] = read_phase_history(setup.log_path)
+
+    injected: list[dict] = []
+    pending_count = 0
+    has_pending = False
+
+    if infra.approval_store:
+        injected = apply_and_inject(
+            infra.approval_store, infra.fileguard, iteration, log_path,
+            worktree_map=infra.worktree_map,
+        )
+        remaining = infra.approval_store.get_pending()
+        if remaining:
+            has_pending = True
+            pending_count = len(remaining)
+
+    # Count current engineering agent turns (not human/coach/system)
+    history = read_phase_history(log_path)
+    non_agent = {"human", "system"}
+    if coach_name:
+        non_agent.add(coach_name)
+    current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
+
+    return ContinueContext(
+        injected_messages=injected,
+        has_pending_approvals=has_pending,
+        pending_count=pending_count,
+        current_agent_turns=current_agent_turns,
+    )
 
 
 def prepare_session(

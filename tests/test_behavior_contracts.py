@@ -393,3 +393,83 @@ def test_contract_layer_dispatch_only_affects_current_layer(tmp_path):
     assert call_count["single"] == 1
     assert t0["status"] == "done"
     assert t1["status"] == "pending"
+
+
+# ── max_turns behavior contracts ──────────────────────────────────
+
+
+def test_cli_continue_max_turns_absolute_ceiling(tmp_path, capsys, monkeypatch):
+    """CLI default: max_turns_override = iteration['max_turns'] (absolute, not additive)."""
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.chdir(tmp_path)
+
+    team_dir = tmp_path / ".team"
+    team_dir.mkdir()
+    (team_dir / "team.json").write_text(json.dumps({
+        "agents": [
+            {"name": "agent-1", "role": "SE"},
+            {"name": "agent-2", "role": "SE"},
+        ],
+        "model": {"provider": "ollama", "model": "test", "base_url": "http://localhost:11434"},
+    }))
+    iteration = {
+        "id": "iter-1", "description": "test", "status": "in-progress",
+        "phase": "refinement", "max_turns": 15,
+    }
+    (team_dir / "iteration.json").write_text(json.dumps({
+        "iterations": [iteration], "current": "iter-1",
+    }))
+    iter_dir = team_dir / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    # Seed 5 agent turns so current_agent_turns=5
+    log = iter_dir / "conversation.jsonl"
+    for i in range(5):
+        from gotg.conversation import append_message as _am
+        _am(log, {"from": "agent-1", "content": f"turn {i}"})
+
+    args = MagicMock()
+    args.max_turns = None  # No --max-turns flag → use absolute ceiling
+    args.message = None
+    args.layer = None
+
+    with patch("gotg.cli.run_conversation") as mock_run, \
+         patch("gotg.cli._auto_checkpoint"):
+        from gotg.cli import cmd_continue
+        cmd_continue(args)
+        # CLI passes iteration["max_turns"] (15) as absolute ceiling
+        call_kwargs = mock_run.call_args
+        assert call_kwargs[1]["max_turns_override"] == 15
+
+
+def test_tui_continue_max_turns_additive():
+    """TUI: max_turns = current_agent_turns + iteration.max_turns (always additive).
+
+    This documents the current TUI behavior. The TUI always adds iteration max_turns
+    on top of current turns, while the CLI uses iteration max_turns as an absolute ceiling.
+    """
+    # This behavior is verified by reading tui/screens/chat.py:
+    # max_turns = cont.current_agent_turns + iteration.get("max_turns", 30)
+    # which is always additive. We test it via the prepare_continue return value.
+    from gotg.session import prepare_continue, SessionInfra
+    from gotg.conversation import append_message as _am
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path
+        iter_dir = Path(td)
+        log_path = iter_dir / "conversation.jsonl"
+        for i in range(5):
+            _am(log_path, {"from": "agent-1", "content": f"turn {i}"})
+
+        infra = SessionInfra(
+            fileguard=None, approval_store=None, worktree_map=None,
+            diffs_summary=None, streaming=False,
+        )
+        cont = prepare_continue(infra, {"id": "iter-1"}, log_path)
+
+        # TUI would compute: cont.current_agent_turns + iteration["max_turns"]
+        iteration_max_turns = 15
+        tui_max = cont.current_agent_turns + iteration_max_turns
+        assert cont.current_agent_turns == 5
+        assert tui_max == 20  # additive: 5 + 15 = 20

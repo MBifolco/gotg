@@ -8,16 +8,12 @@ from gotg.config import (
     load_agents, load_coach, load_model_config, load_file_access,
     load_worktree_config, ensure_dotenv_key, read_dotenv,
     get_current_iteration, save_model_config,
-    save_iteration_phase, save_iteration_fields, PHASE_ORDER,
+    save_iteration_fields,
 )
 from gotg.context import TeamContext
-from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
+from gotg.conversation import append_message, read_log, render_message
 from gotg.engine import SessionDeps
-from gotg.events import (
-    AgentTurnComplete, AppendDebug, AppendMessage, CoachAskedPM,
-    LayerComplete, PauseForApprovals, PhaseCompleteSignaled,
-    SessionComplete, SessionStarted, TaskBlocked, TextDelta, ToolCallProgress,
-)
+from gotg.console_events import handle_console_events
 from gotg.model import chat_completion, agentic_completion, raw_completion, raw_completion_stream
 from gotg.groom import (
     generate_slug, validate_slug, existing_slugs,
@@ -28,10 +24,6 @@ from gotg.scaffold import init_project
 from gotg.session import (
     SessionSetupError, resolve_layer, validate_iteration_for_run,
     build_session_infra,
-)
-from gotg.transitions import (
-    extract_refinement_summary, extract_tasks, extract_task_notes,
-    auto_commit_layer_worktrees, build_transition_messages,
 )
 
 
@@ -49,37 +41,6 @@ def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach")
         print(f"Checkpoint {number} created (auto)")
     except Exception as e:
         print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
-
-
-def _print_session_header(event: SessionStarted) -> None:
-    """Print conversation session header from SessionStarted event."""
-    print(f"Starting conversation: {event.iteration_id}")
-    print(f"Task: {event.description}")
-    if event.current_layer is not None:
-        print(f"Phase: {event.phase} (layer {event.current_layer})")
-    else:
-        print(f"Phase: {event.phase}")
-    if event.coach:
-        print(f"Coach: {event.coach} (facilitating)")
-    if event.has_file_tools:
-        print(f"File tools: enabled (writable: {event.writable_paths or 'none'})")
-    if event.worktree_count:
-        print(f"Worktrees: {event.worktree_count} active")
-    print(f"Turns: {event.turn}/{event.max_turns}")
-    print("---")
-
-
-def _print_phase_complete(phase: str | None) -> None:
-    """Print phase-specific completion message."""
-    print("---")
-    if phase == "code-review":
-        print("Coach signals code review complete.")
-        print("Next: `gotg review` to inspect diffs, `gotg merge all` to merge, then `gotg next-layer`.")
-    elif phase == PHASE_ORDER[-1]:
-        print("Coach signals phase complete. This is the final phase — iteration is done.")
-        print("Run `gotg continue` to keep discussing if needed.")
-    else:
-        print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
 
 
 def run_conversation(
@@ -113,93 +74,10 @@ def run_conversation(
         streaming=streaming,
     )
 
-    _handle_cli_events(run_and_persist(setup), setup.use_implementation)
-
-
-def _handle_cli_events(events, use_implementation: bool = False) -> None:
-    """Unified CLI event handler for both discussion and implementation phases.
-
-    Args:
-        events: Iterator of engine/implementation events (from run_and_persist or direct).
-        use_implementation: True for implementation phase (changes SessionComplete message).
-    """
-    _suppress_agent_append: str | None = None
-
-    for event in events:
-        if isinstance(event, SessionStarted):
-            _print_session_header(event)
-        elif isinstance(event, TextDelta):
-            sys.stdout.write(event.text)
-            sys.stdout.flush()
-        elif isinstance(event, AgentTurnComplete):
-            sys.stdout.write("\n\n")
-            sys.stdout.flush()
-            _suppress_agent_append = event.agent
-        elif isinstance(event, ToolCallProgress):
-            _print_tool_progress(event)
-        elif isinstance(event, (AppendMessage, AppendDebug)):
-            # Already persisted by run_and_persist — display only
-            if isinstance(event, AppendMessage):
-                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
-                    _suppress_agent_append = None
-                else:
-                    print(render_message(event.msg))
-                    print()
-        elif isinstance(event, PauseForApprovals):
-            print("---")
-            print(f"Paused: {event.pending_count} pending approval(s).")
-            print("Run 'gotg approvals' to review, then 'gotg approve <id>' or 'gotg deny <id> -m reason'.")
-            print("Resume with 'gotg continue'.")
-            break
-        elif isinstance(event, PhaseCompleteSignaled):
-            _print_phase_complete(event.phase)
-            break
-        elif isinstance(event, CoachAskedPM):
-            print("---")
-            print(f"Coach asks: {event.question}")
-            if event.options:
-                for i, option in enumerate(event.options, 1):
-                    print(f"  {i}. {option}")
-                print(f"  {len(event.options) + 1}. None of these (send a message)")
-                print("Reply with: gotg continue -m '<number or message>'")
-            else:
-                print("Reply with: gotg continue -m 'your answer'")
-            break
-        elif isinstance(event, TaskBlocked):
-            print("---")
-            blocked = ", ".join(event.task_ids)
-            print(f"Blocked by {event.agent} (layer {event.layer}): {blocked}")
-            print(f"Reason: {event.reason}")
-        elif isinstance(event, LayerComplete):
-            print("---")
-            print(f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks).")
-            print("Run `gotg merge all` then `gotg next-layer`.")
-            break
-        elif isinstance(event, SessionComplete):
-            print("---")
-            if use_implementation:
-                print(f"Implementation session complete ({event.total_turns} agent(s) dispatched).")
-            else:
-                print(f"Conversation complete ({event.total_turns} turns)")
-        else:
-            raise AssertionError(f"Unhandled event: {event!r}")
-
-
-def _print_tool_progress(event: ToolCallProgress) -> None:
-    """Print tool call progress to stderr."""
-    import sys
-    if event.status == "error":
-        print(f"  [{event.agent}] {event.tool_name} {event.path} FAIL", file=sys.stderr)
-    elif event.status == "pending_approval":
-        print(f"  [{event.agent}] {event.tool_name} {event.path} PENDING", file=sys.stderr)
-    elif event.tool_name == "file_write" and event.bytes:
-        print(f"  [{event.agent}] {event.tool_name} {event.path} ({event.bytes}b)", file=sys.stderr)
-    elif event.tool_name == "complete_tasks":
-        print(f"  [{event.agent}] complete_tasks", file=sys.stderr)
-    elif event.tool_name == "report_blocked":
-        print(f"  [{event.agent}] report_blocked", file=sys.stderr)
-    else:
-        print(f"  [{event.agent}] {event.tool_name} {event.path}", file=sys.stderr)
+    handle_console_events(
+        run_and_persist(setup),
+        use_implementation=setup.use_implementation,
+    )
 
 
 def cmd_init(args):
@@ -349,29 +227,19 @@ def cmd_continue(args):
         print(f"Code review: diffs loaded for layer {layer}")
 
     log_path = iter_dir / "conversation.jsonl"
-    history = read_phase_history(log_path)
 
-    # Apply approved writes and inject denials before resuming
-    if infra.approval_store:
-        from gotg.session import apply_and_inject
-        messages = apply_and_inject(
-            infra.approval_store, infra.fileguard, iteration, log_path,
-            worktree_map=infra.worktree_map,
-        )
-        for msg in messages:
-            print(render_message(msg))
-            print()
-
-        remaining = infra.approval_store.get_pending()
-        if remaining:
-            print(f"Warning: {len(remaining)} approval(s) still pending. Resolve before continuing.")
-            print("Run 'gotg approvals' to review.")
-
-    # Count current engineering agent turns (not human/coach/system)
-    non_agent = {"human", "system"}
-    if ctx.coach:
-        non_agent.add(ctx.coach["name"])
-    current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
+    # Apply approved writes, inject denials, count turns
+    from gotg.session import prepare_continue
+    cont = prepare_continue(
+        infra, iteration, log_path,
+        coach_name=ctx.coach["name"] if ctx.coach else None,
+    )
+    for msg in cont.injected_messages:
+        print(render_message(msg))
+        print()
+    if cont.has_pending_approvals:
+        print(f"Warning: {cont.pending_count} approval(s) still pending. Resolve before continuing.")
+        print("Run 'gotg approvals' to review.")
 
     # Inject human message if provided
     if args.message:
@@ -386,7 +254,7 @@ def cmd_continue(args):
 
     # Calculate target total agent turns
     if args.max_turns is not None:
-        target_total = current_agent_turns + args.max_turns
+        target_total = cont.current_agent_turns + args.max_turns
     else:
         target_total = iteration["max_turns"]
 

@@ -488,7 +488,7 @@ class TestImplementationStreaming:
 class TestCliStreaming:
     def test_text_delta_printed_inline(self, capsys):
         """TextDelta events are written to stdout."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -499,7 +499,7 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=True)
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # Text deltas printed inline
@@ -507,7 +507,7 @@ class TestCliStreaming:
 
     def test_double_print_suppression(self, capsys):
         """AppendMessage is not printed when streaming is active."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -517,7 +517,7 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=True)
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # "Streamed" should appear only once (from TextDelta), not twice
@@ -526,7 +526,7 @@ class TestCliStreaming:
 
     def test_non_streaming_append_still_prints(self, capsys):
         """AppendMessage prints normally when no streaming is active."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -534,14 +534,14 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=True)
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         assert "Normal message" in captured.out
 
     def test_streamed_turn_id_cleared_after_complete(self, capsys):
         """After AgentTurnComplete, subsequent AppendMessage prints normally."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -553,7 +553,7 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=True)
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         assert "Task done" in captured.out
@@ -1123,7 +1123,7 @@ class TestTextDeltaMsg:
 class TestCliDiscussionStreaming:
     def test_text_delta_printed_inline(self, capsys):
         """TextDelta events are written to stdout in discussion phase."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1134,14 +1134,14 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=False)
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "Hello discussion" in captured.out
 
     def test_agent_name_suppression_passes_tool_ops(self, capsys):
         """Agent message suppressed but tool op system messages still print."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1154,7 +1154,7 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=False)
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         # Tool op should appear
@@ -1164,7 +1164,7 @@ class TestCliDiscussionStreaming:
 
     def test_non_streaming_discussion_unchanged(self, capsys):
         """When no TextDelta events, all AppendMessages print normally."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1172,14 +1172,14 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=False)
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "Normal response" in captured.out
 
     def test_tool_progress_printed_to_stderr(self, capsys):
         """ToolCallProgress events go to stderr in discussion phase."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1190,7 +1190,7 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=False)
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "file_read" in captured.err
@@ -1223,7 +1223,7 @@ class TestGroomingStreaming:
 class TestImplNameBasedSuppression:
     def test_tool_op_messages_pass_through(self, capsys):
         """After AgentTurnComplete, system tool op messages still print."""
-        from gotg.cli import _handle_cli_events
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1238,7 +1238,7 @@ class TestImplNameBasedSuppression:
             LayerComplete(0, ("task-a",)),
         ]
 
-        _handle_cli_events(iter(events), use_implementation=True)
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # System messages should print

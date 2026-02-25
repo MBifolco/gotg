@@ -6,22 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from gotg.conversation import append_message, append_debug, read_log, render_message
-from gotg.engine import SessionDeps
-from gotg.events import (
-    AgentTurnComplete,
-    AppendDebug,
-    AppendMessage,
-    CoachAskedPM,
-    PauseForApprovals,
-    PhaseCompleteSignaled,
-    SessionComplete,
-    SessionStarted,
-    TextDelta,
-    ToolCallProgress,
-)
-from gotg.policy import grooming_policy
-from gotg.session import SessionSetup, run_and_persist
+from gotg.events import SessionStarted
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -159,11 +144,10 @@ def run_grooming_conversation(
 ) -> None:
     """Run a grooming conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
+    from gotg.console_events import handle_console_events
+    from gotg.engine import SessionDeps
     from gotg.model import agentic_completion, chat_completion, raw_completion_stream
-
-    log_path = groom_dir / "conversation.jsonl"
-    debug_path = groom_dir / "debug.jsonl"
-    history = read_log(log_path)
+    from gotg.session import prepare_grooming_session, run_and_persist
 
     deps = SessionDeps(
         agent_completion=agentic_completion,
@@ -171,61 +155,17 @@ def run_grooming_conversation(
         stream_completion=raw_completion_stream if streaming else None,
     )
 
-    policy = grooming_policy(
-        agents=agents,
-        topic=topic,
-        history=history,
-        coach=coach,
+    setup = prepare_grooming_session(
+        groom_dir, agents, iteration, model_config, deps,
+        topic=topic, coach=coach,
         max_turns=max_turns_override or iteration.get("max_turns", 30),
         streaming=streaming,
     )
 
-    setup = SessionSetup(
-        agents=agents, iteration=iteration, iter_dir=groom_dir,
-        model_config=model_config, history=history, policy=policy,
-        deps=deps, log_path=log_path, debug_path=debug_path,
-        use_implementation=False, tasks_data=None, current_layer=0,
-        fileguard=None, approval_store=None, worktree_map=None,
+    slug = iteration["id"]
+    handle_console_events(
+        run_and_persist(setup),
+        on_started=lambda e: _print_grooming_header(e, topic),
+        resume_hint=f"gotg groom continue {slug}",
+        complete_label="Grooming",
     )
-
-    _suppress_agent_append: str | None = None
-
-    for event in run_and_persist(setup):
-        if isinstance(event, SessionStarted):
-            _print_grooming_header(event, topic)
-        elif isinstance(event, TextDelta):
-            sys.stdout.write(event.text)
-            sys.stdout.flush()
-        elif isinstance(event, AgentTurnComplete):
-            sys.stdout.write("\n\n")
-            sys.stdout.flush()
-            _suppress_agent_append = event.agent
-        elif isinstance(event, ToolCallProgress):
-            pass  # grooming has no file tools
-        elif isinstance(event, (AppendMessage, AppendDebug)):
-            # Already persisted by run_and_persist — display only
-            if isinstance(event, AppendMessage):
-                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
-                    _suppress_agent_append = None
-                else:
-                    print(render_message(event.msg))
-                    print()
-        elif isinstance(event, CoachAskedPM):
-            print("---")
-            print(f"Coach asks: {event.question}")
-            slug = iteration["id"]
-            if event.options:
-                for i, option in enumerate(event.options, 1):
-                    print(f"  {i}. {option}")
-                print(f"  {len(event.options) + 1}. None of these (send a message)")
-                print(f"Reply with: gotg groom continue {slug} -m '<number or message>'")
-            else:
-                print(f"Reply with: gotg groom continue {slug} -m 'your answer'")
-            break
-        elif isinstance(event, (PauseForApprovals, PhaseCompleteSignaled)):
-            pass  # cannot fire under grooming_policy
-        elif isinstance(event, SessionComplete):
-            print("---")
-            print(f"Grooming complete ({event.total_turns} turns)")
-        else:
-            raise AssertionError(f"Unhandled event: {event!r}")

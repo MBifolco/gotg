@@ -11,7 +11,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input
 
-from gotg.conversation import append_message, read_log, read_phase_history
+from gotg.conversation import append_message, read_log
 from gotg.events import (
     AdvanceComplete,
     AdvanceError,
@@ -274,7 +274,7 @@ class ChatScreen(Screen):
                 raw_completion_stream,
             )
             from gotg.session import (
-                SessionSetup, SessionSetupError,
+                SessionSetupError,
                 build_session_infra,
                 prepare_session, run_and_persist,
                 validate_iteration_for_run,
@@ -289,30 +289,21 @@ class ChatScreen(Screen):
 
                 infra = build_session_infra(ctx, iteration, iter_dir)
 
-                # Apply approved writes and inject denials before resuming
-                # (Phase 1 exception — stays in adapter for per-message UI posting)
-                if infra.approval_store:
-                    from gotg.session import apply_and_inject
-                    inject_msgs = apply_and_inject(
-                        infra.approval_store, infra.fileguard, iteration,
-                        self._log_path, worktree_map=infra.worktree_map,
-                    )
-                    for msg in inject_msgs:
-                        self.post_message(EngineEvent(AppendMessage(msg)))
-                    remaining = infra.approval_store.get_pending()
-                    if remaining:
-                        self.post_message(EngineEvent(
-                            PauseForApprovals(pending_count=len(remaining))
-                        ))
-                        return
-
-                # Compute max_turns (needs history before injection — same as cmd_continue)
-                history = read_phase_history(self._log_path)
-                coach_name = ctx.coach["name"] if ctx.coach else None
-                current_agent_turns = sum(
-                    1 for msg in history if is_agent_turn(msg, coach_name)
+                # Apply approved writes, inject denials, count turns
+                from gotg.session import prepare_continue
+                cont = prepare_continue(
+                    infra, iteration, self._log_path,
+                    coach_name=ctx.coach["name"] if ctx.coach else None,
                 )
-                max_turns = current_agent_turns + iteration.get("max_turns", 30)
+                for msg in cont.injected_messages:
+                    self.post_message(EngineEvent(AppendMessage(msg)))
+                if cont.has_pending_approvals:
+                    self.post_message(EngineEvent(
+                        PauseForApprovals(pending_count=cont.pending_count)
+                    ))
+                    return
+
+                max_turns = cont.current_agent_turns + iteration.get("max_turns", 30)
                 streaming_enabled = infra.streaming
 
                 deps = SessionDeps(
@@ -330,9 +321,9 @@ class ChatScreen(Screen):
                     streaming=streaming_enabled,
                 )
             else:
-                # Grooming session — uses grooming_policy (not iteration_policy)
+                # Grooming session — uses prepare_grooming_session
                 from gotg.groom import load_grooming_metadata
-                from gotg.policy import grooming_policy
+                from gotg.session import prepare_grooming_session
 
                 groom_meta, groom_dir = load_grooming_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
@@ -342,8 +333,6 @@ class ChatScreen(Screen):
                     "description": groom_meta.get("topic", ""),
                     "phase": None,
                 }
-                iter_dir = groom_dir
-                history = read_log(self._log_path)
                 coach = ctx.coach if groom_meta.get("coach") else None
 
                 from gotg.config import load_streaming_config as _load_streaming
@@ -355,22 +344,13 @@ class ChatScreen(Screen):
                     single_completion=raw_completion,
                     stream_completion=raw_completion_stream if streaming_enabled else None,
                 )
-                policy = grooming_policy(
-                    agents=ctx.agents,
+
+                setup = prepare_grooming_session(
+                    groom_dir, ctx.agents, iteration, ctx.model_config, deps,
                     topic=groom_meta.get("topic", ""),
-                    history=history,
                     coach=coach,
                     max_turns=groom_meta.get("max_turns", 30),
                     streaming=streaming_enabled,
-                )
-
-                setup = SessionSetup(
-                    agents=ctx.agents, iteration=iteration, iter_dir=iter_dir,
-                    model_config=ctx.model_config, history=history, policy=policy,
-                    deps=deps, log_path=self._log_path,
-                    debug_path=self._debug_path,
-                    use_implementation=False, tasks_data=None, current_layer=0,
-                    fileguard=None, approval_store=None, worktree_map=None,
                 )
 
             # Unified event loop — run_and_persist handles persistence + phase routing

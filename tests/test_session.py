@@ -437,12 +437,12 @@ def test_advance_without_coach_skips_extraction(tmp_path):
     assert result.checkpoint_number is not None
 
 
-# ── SessionSetup / prepare_session / run_and_persist / refresh_history ──
+# ── SessionSetup / prepare_session / run_and_persist ──
 
 from unittest.mock import patch, MagicMock
 from gotg.engine import SessionDeps
 from gotg.events import SessionComplete, TextDelta
-from gotg.session import SessionSetup, prepare_session, run_and_persist, refresh_history
+from gotg.session import SessionSetup, prepare_session, run_and_persist
 
 
 def _make_deps(**overrides):
@@ -740,44 +740,6 @@ def test_run_and_persist_impl_patch_target_compat(tmp_path):
         assert result[0].total_turns == 99
 
 
-def test_refresh_history_updates_in_place(tmp_path):
-    """After appending to log, refresh_history updates setup.history via slice assignment."""
-    iter_dir = _make_iter_dir(tmp_path)
-    log_path = iter_dir / "conversation.jsonl"
-
-    from gotg.policy import SessionPolicy
-    policy = SessionPolicy(
-        max_turns=10, coach=None, coach_cadence=None,
-        stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
-        tasks_summary=None, diffs_summary=None, kickoff_text=None,
-        fileguard=None, approval_store=None, worktree_map=None,
-        system_supplement=None, coach_system_prompt=None,
-    )
-    history = []
-    setup = SessionSetup(
-        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
-        model_config={}, history=history, policy=policy, deps=_make_deps(),
-        log_path=log_path, debug_path=iter_dir / "debug.jsonl",
-        use_implementation=False, tasks_data=None, current_layer=0,
-        fileguard=None, approval_store=None, worktree_map=None,
-    )
-
-    # Verify empty initially
-    assert len(setup.history) == 0
-    assert setup.history is history  # same object
-
-    # Append a message to disk
-    conv_append_message(log_path, {"from": "system", "content": "injected"})
-
-    # Refresh
-    refresh_history(setup)
-
-    assert len(setup.history) == 1
-    assert setup.history[0]["content"] == "injected"
-    assert setup.history is history  # still the same list object
-
-
 def test_run_and_persist_debug_events(tmp_path):
     """AppendDebug events are persisted to the debug log."""
     iter_dir = _make_iter_dir(tmp_path)
@@ -938,3 +900,220 @@ def test_no_double_persistence_after_wrapper_deletion(tmp_path):
     assert len(lines) == 2  # Exactly 2 AppendMessage events, each persisted once
     assert json.loads(lines[0])["content"] == "hello"
     assert json.loads(lines[1])["content"] == "world"
+
+
+# ── prepare_grooming_session ──────────────────────────────────────
+
+from gotg.session import prepare_grooming_session
+
+
+def test_prepare_grooming_session_basic(tmp_path):
+    """Returns SessionSetup with grooming defaults."""
+    groom_dir = tmp_path / "groom"
+    groom_dir.mkdir()
+    (groom_dir / "conversation.jsonl").touch()
+    agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
+    iteration = {"id": "test-topic", "description": "test", "phase": None}
+    deps = _make_deps()
+
+    setup = prepare_grooming_session(
+        groom_dir, agents, iteration, {"provider": "test"}, deps,
+        topic="test topic",
+    )
+
+    assert setup.use_implementation is False
+    assert setup.tasks_data is None
+    assert setup.fileguard is None
+    assert setup.log_path == groom_dir / "conversation.jsonl"
+    assert setup.policy.streaming is False
+
+
+def test_prepare_grooming_session_with_coach(tmp_path):
+    """Policy includes coach when provided."""
+    groom_dir = tmp_path / "groom"
+    groom_dir.mkdir()
+    (groom_dir / "conversation.jsonl").touch()
+    agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
+    iteration = {"id": "slug", "description": "test", "phase": None}
+    coach = {"name": "coach", "role": "Coach"}
+    deps = _make_deps()
+
+    setup = prepare_grooming_session(
+        groom_dir, agents, iteration, {"provider": "test"}, deps,
+        topic="test", coach=coach,
+    )
+
+    assert setup.policy.coach == coach
+
+
+def test_prepare_grooming_session_reads_existing_history(tmp_path):
+    """History is populated from existing conversation log."""
+    groom_dir = tmp_path / "groom"
+    groom_dir.mkdir()
+    log_path = groom_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "a1", "content": "hello"})
+    conv_append_message(log_path, {"from": "a2", "content": "hi"})
+    agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
+    iteration = {"id": "slug", "description": "test", "phase": None}
+    deps = _make_deps()
+
+    setup = prepare_grooming_session(
+        groom_dir, agents, iteration, {"provider": "test"}, deps,
+        topic="test",
+    )
+
+    assert len(setup.history) == 2
+    assert setup.history[0]["content"] == "hello"
+
+
+# ── prepare_continue ──────────────────────────────────────────────
+
+from gotg.session import ContinueContext, prepare_continue, SessionInfra
+
+
+def _make_infra(**overrides):
+    """Build a minimal SessionInfra."""
+    defaults = dict(
+        fileguard=None, approval_store=None, worktree_map=None,
+        diffs_summary=None, streaming=False,
+    )
+    defaults.update(overrides)
+    return SessionInfra(**defaults)
+
+
+def test_prepare_continue_no_approvals(tmp_path):
+    """No approval store → empty injected messages, correct turn count."""
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "agent-1", "content": "hello"})
+    conv_append_message(log_path, {"from": "agent-2", "content": "world"})
+
+    infra = _make_infra()
+    iteration = {"id": "iter-1"}
+    cont = prepare_continue(infra, iteration, log_path)
+
+    assert cont.injected_messages == []
+    assert cont.has_pending_approvals is False
+    assert cont.pending_count == 0
+    assert cont.current_agent_turns == 2
+
+
+def test_prepare_continue_with_approvals_and_pending(tmp_path):
+    """Injection messages returned and pending flag set when approvals pending."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "src").mkdir()
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+
+    from gotg.approvals import ApprovalStore
+    from gotg.fileguard import FileGuard
+
+    file_access = {"writable_paths": ["**"], "enable_approvals": True}
+    guard = FileGuard(project, file_access)
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    # One approved, one still pending
+    store.add_request("src/good.py", "good code", "agent-1", {})
+    store.add_request("src/pending.py", "pending code", "agent-2", {})
+    store.approve("a1")
+
+    infra = _make_infra(fileguard=guard, approval_store=store)
+    iteration = {"id": "iter-1"}
+    cont = prepare_continue(infra, iteration, log_path)
+
+    assert len(cont.injected_messages) == 1
+    assert "APPROVED" in cont.injected_messages[0]["content"]
+    assert cont.has_pending_approvals is True
+    assert cont.pending_count == 1
+
+
+def test_prepare_continue_excludes_coach_from_turns(tmp_path):
+    """Coach messages not counted as agent turns."""
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+    conv_append_message(log_path, {"from": "agent-1", "content": "hello"})
+    conv_append_message(log_path, {"from": "coach", "content": "guidance"})
+    conv_append_message(log_path, {"from": "agent-2", "content": "world"})
+    conv_append_message(log_path, {"from": "human", "content": "thanks"})
+
+    infra = _make_infra()
+    iteration = {"id": "iter-1"}
+    cont = prepare_continue(infra, iteration, log_path, coach_name="coach")
+
+    assert cont.current_agent_turns == 2  # agent-1 + agent-2, not coach/human
+
+
+def test_prepare_continue_idempotent(tmp_path):
+    """Calling twice without state changes does not duplicate injected messages."""
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+
+    infra = _make_infra()
+    iteration = {"id": "iter-1"}
+
+    cont1 = prepare_continue(infra, iteration, log_path)
+    cont2 = prepare_continue(infra, iteration, log_path)
+
+    assert cont1.injected_messages == cont2.injected_messages == []
+
+
+def test_prepare_continue_injection_order_matches_persistence(tmp_path):
+    """Injected messages returned in the same order they were persisted to disk."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "src").mkdir()
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    log_path = iter_dir / "conversation.jsonl"
+
+    from gotg.approvals import ApprovalStore
+    from gotg.fileguard import FileGuard
+
+    file_access = {"writable_paths": ["**"], "enable_approvals": True}
+    guard = FileGuard(project, file_access)
+    store = ApprovalStore(iter_dir / "approvals.json")
+
+    store.add_request("src/a.py", "content a", "agent-1", {})
+    store.add_request("src/b.py", "content b", "agent-2", {})
+    store.approve("a1")
+    store.deny("a2", "nope")
+
+    infra = _make_infra(fileguard=guard, approval_store=store)
+    iteration = {"id": "iter-1"}
+    cont = prepare_continue(infra, iteration, log_path)
+
+    # 2 messages: one approved, one denied
+    assert len(cont.injected_messages) == 2
+    # Verify they match what was persisted
+    persisted = json.loads(log_path.read_text().strip().splitlines()[0])
+    assert cont.injected_messages[0]["content"] == persisted["content"]
+
+
+# ── console_events grooming contract ──────────────────────────────
+
+
+def test_grooming_console_events_resume_hint(capsys):
+    """handle_console_events uses custom resume_hint for grooming."""
+    from gotg.console_events import handle_console_events
+    from gotg.events import CoachAskedPM
+
+    events = [
+        SessionStarted("test-slug", "test topic", None, None, ["a1"], None,
+                       False, None, 0, 0, 30),
+        CoachAskedPM(question="What do you think?", options=None),
+    ]
+
+    handle_console_events(
+        iter(events),
+        resume_hint="gotg groom continue test-slug",
+        complete_label="Grooming",
+    )
+
+    captured = capsys.readouterr()
+    assert "gotg groom continue test-slug" in captured.out
+    assert "your answer" in captured.out
