@@ -975,3 +975,122 @@ def test_dispatch_stream_openai(mock_fn):
     chunks = list(result)
     assert "hello" in chunks
     mock_fn.assert_called_once()
+
+
+# --- Guard tests: body shape invariants ---
+
+@patch("gotg.model.anthropic.httpx.post")
+def test_anthropic_completion_body_shape(mock_post):
+    """Pin exact body structure: system block with cache_control on first part
+    only, messages without system, cache_control on second-to-last message."""
+    mock_post.return_value = _mock_anthropic_response("ok")
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "system", "content": "sys1"},
+            {"role": "system", "content": "sys2"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    # System block: first part has cache_control, second does not
+    assert len(body["system"]) == 2
+    assert "cache_control" in body["system"][0]
+    assert "cache_control" not in body["system"][1]
+    assert body["system"][0]["text"] == "sys1"
+    assert body["system"][1]["text"] == "sys2"
+    # No system messages in messages array
+    assert all(m["role"] != "system" for m in body["messages"])
+    assert len(body["messages"]) == 3
+    # Second-to-last message gets cache_control
+    assert isinstance(body["messages"][1]["content"], list)
+    assert body["messages"][1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    # Last message stays plain string
+    assert isinstance(body["messages"][2]["content"], str)
+
+
+@patch("gotg.model.anthropic.httpx.post")
+def test_anthropic_raw_body_shape(mock_post):
+    """raw_completion with Anthropic has same body structure as completion path."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {},
+    }
+    mock_post.return_value = resp
+    raw_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "second"},
+        ],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    body = mock_post.call_args[1]["json"]
+    # System block with cache_control
+    assert len(body["system"]) == 1
+    assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
+    # Messages without system, second-to-last cached
+    assert len(body["messages"]) == 3
+    assert isinstance(body["messages"][1]["content"], list)
+    # max_tokens present
+    assert body["max_tokens"] == 16384
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_openai_extract_tool_calls_malformed_propagates(mock_post):
+    """Malformed tool_call arguments JSON should propagate json.JSONDecodeError."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": "text",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "my_tool", "arguments": "NOT VALID JSON"},
+                }],
+            }
+        }]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+    with pytest.raises(json.JSONDecodeError):
+        chat_completion(
+            "http://localhost", "m",
+            [{"role": "user", "content": "hi"}],
+            tools=SAMPLE_TOOLS,
+        )
+
+
+@patch("gotg.model.anthropic.httpx.post")
+def test_anthropic_cache_log_only_when_nonzero(mock_post, capsys):
+    """Cache log should NOT appear when both cache token counts are zero."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "usage": {"cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+    chat_completion(
+        base_url="https://api.anthropic.com",
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        api_key="sk-ant-test",
+        provider="anthropic",
+    )
+    captured = capsys.readouterr()
+    assert "[cache]" not in captured.err

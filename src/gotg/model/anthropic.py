@@ -10,52 +10,53 @@ from gotg.model.types import CompletionRound
 from gotg.model.helpers import _check_response
 
 
-def _anthropic_completion(
-    base_url: str,
-    model: str,
-    messages: list[dict],
-    api_key: str | None = None,
-    tools: list[dict] | None = None,
-) -> str | dict:
-    url = f"{base_url.rstrip('/')}/v1/messages"
-    headers = {
+# ---------------------------------------------------------------------------
+# Private helpers — DRY blocks shared across the 4 public functions
+# ---------------------------------------------------------------------------
+
+def _build_headers(api_key: str | None) -> dict:
+    return {
         "x-api-key": api_key or "",
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
 
-    # Anthropic: system is a top-level field, not a message.
-    # All system messages are collected into the `system` parameter as
-    # separate text blocks.  The first block (the main prompt) is cached;
-    # later blocks (nudges, reminders) are ephemeral additions.
+
+def _extract_system_and_messages(
+    messages: list[dict],
+) -> tuple[list[str], list[dict]]:
+    """Split system messages from chat messages.
+
+    Skips messages with empty/missing content (preserves existing guard).
+    """
     system_parts: list[str] = []
-    chat_messages = []
+    chat_messages: list[dict] = []
     for msg in messages:
         if msg["role"] == "system":
             system_parts.append(msg["content"])
         elif msg.get("content"):
             chat_messages.append({"role": msg["role"], "content": msg["content"]})
+    return system_parts, chat_messages
 
-    body = {
-        "model": model,
-        "max_tokens": 4096,
-        "messages": chat_messages,
-    }
-    if system_parts:
-        body["system"] = [
-            {
-                "type": "text",
-                "text": system_parts[0],
-                "cache_control": {"type": "ephemeral"},
-            }
-        ] + [
-            {"type": "text", "text": part}
-            for part in system_parts[1:]
-        ]
-    if tools:
-        body["tools"] = tools
 
-    # Prompt caching: mark second-to-last message for cache breakpoint
+def _build_system_block(system_parts: list[str]) -> list[dict] | None:
+    """Build Anthropic system parameter with cache control on first block."""
+    if not system_parts:
+        return None
+    return [
+        {
+            "type": "text",
+            "text": system_parts[0],
+            "cache_control": {"type": "ephemeral"},
+        }
+    ] + [
+        {"type": "text", "text": part}
+        for part in system_parts[1:]
+    ]
+
+
+def _apply_message_cache_control(chat_messages: list[dict]) -> None:
+    """Mark second-to-last message for prompt caching (mutates in-place)."""
     if len(chat_messages) >= 2:
         msg = chat_messages[-2]
         if isinstance(msg["content"], str) and msg["content"]:
@@ -67,12 +68,9 @@ def _anthropic_completion(
                 }
             ]
 
-    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
-    _check_response(resp)
-    data = resp.json()
 
-    # Log cache usage if present (for observability)
-    usage = data.get("usage", {})
+def _log_cache_usage(usage: dict) -> None:
+    """Log cache stats to stderr when non-zero."""
     cache_created = usage.get("cache_creation_input_tokens", 0)
     cache_read = usage.get("cache_read_input_tokens", 0)
     if cache_created or cache_read:
@@ -80,6 +78,41 @@ def _anthropic_completion(
             f"  [cache] created={cache_created} read={cache_read}",
             file=sys.stderr,
         )
+
+
+# ---------------------------------------------------------------------------
+# Public provider functions
+# ---------------------------------------------------------------------------
+
+def _anthropic_completion(
+    base_url: str,
+    model: str,
+    messages: list[dict],
+    api_key: str | None = None,
+    tools: list[dict] | None = None,
+) -> str | dict:
+    url = f"{base_url.rstrip('/')}/v1/messages"
+    headers = _build_headers(api_key)
+    system_parts, chat_messages = _extract_system_and_messages(messages)
+
+    body = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": chat_messages,
+    }
+    system_block = _build_system_block(system_parts)
+    if system_block:
+        body["system"] = system_block
+    if tools:
+        body["tools"] = tools
+
+    _apply_message_cache_control(chat_messages)
+
+    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    _check_response(resp)
+    data = resp.json()
+
+    _log_cache_usage(data.get("usage", {}))
 
     if tools:
         text_parts = []
@@ -98,46 +131,12 @@ def _anthropic_agentic(
     base_url, model, messages, api_key, tools, tool_executor, max_rounds,
 ):
     url = f"{base_url.rstrip('/')}/v1/messages"
-    headers = {
-        "x-api-key": api_key or "",
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
+    headers = _build_headers(api_key)
+    system_parts, chat_messages = _extract_system_and_messages(messages)
 
-    # Extract system from messages (same logic as _anthropic_completion).
-    # All system messages collected into system parameter as text blocks.
-    system_parts: list[str] = []
-    chat_messages = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_parts.append(msg["content"])
-        elif msg.get("content"):
-            chat_messages.append({"role": msg["role"], "content": msg["content"]})
+    _apply_message_cache_control(chat_messages)
 
-    # Apply cache control to second-to-last message
-    if len(chat_messages) >= 2:
-        msg = chat_messages[-2]
-        if isinstance(msg["content"], str) and msg["content"]:
-            msg["content"] = [
-                {
-                    "type": "text",
-                    "text": msg["content"],
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-
-    system_block = None
-    if system_parts:
-        system_block = [
-            {
-                "type": "text",
-                "text": system_parts[0],
-                "cache_control": {"type": "ephemeral"},
-            }
-        ] + [
-            {"type": "text", "text": part}
-            for part in system_parts[1:]
-        ]
+    system_block = _build_system_block(system_parts)
 
     operations = []
     last_text = ""
@@ -157,15 +156,7 @@ def _anthropic_agentic(
         _check_response(resp)
         data = resp.json()
 
-        # Log cache usage
-        usage = data.get("usage", {})
-        cache_created = usage.get("cache_creation_input_tokens", 0)
-        cache_read = usage.get("cache_read_input_tokens", 0)
-        if cache_created or cache_read:
-            print(
-                f"  [cache] created={cache_created} read={cache_read}",
-                file=sys.stderr,
-            )
+        _log_cache_usage(data.get("usage", {}))
 
         # Parse response content blocks
         content_blocks = data.get("content", [])
@@ -216,68 +207,27 @@ def _anthropic_raw(
     max_tokens: int = 16384,
 ) -> CompletionRound:
     url = f"{base_url.rstrip('/')}/v1/messages"
-    headers = {
-        "x-api-key": api_key or "",
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-
-    # Extract system from messages.
-    # All system messages collected into the `system` parameter as text
-    # blocks.  The first block (main prompt) is cached; later blocks
-    # (nudges, reminders) are ephemeral additions that don't overwrite it.
-    system_parts: list[str] = []
-    chat_messages = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_parts.append(msg["content"])
-        elif msg.get("content"):
-            chat_messages.append({"role": msg["role"], "content": msg["content"]})
+    headers = _build_headers(api_key)
+    system_parts, chat_messages = _extract_system_and_messages(messages)
 
     body = {
         "model": model,
         "max_tokens": max_tokens,
         "messages": chat_messages,
     }
-    if system_parts:
-        body["system"] = [
-            {
-                "type": "text",
-                "text": system_parts[0],
-                "cache_control": {"type": "ephemeral"},
-            }
-        ] + [
-            {"type": "text", "text": part}
-            for part in system_parts[1:]
-        ]
+    system_block = _build_system_block(system_parts)
+    if system_block:
+        body["system"] = system_block
     if tools:
         body["tools"] = tools
 
-    # Prompt caching
-    if len(chat_messages) >= 2:
-        msg = chat_messages[-2]
-        if isinstance(msg["content"], str) and msg["content"]:
-            msg["content"] = [
-                {
-                    "type": "text",
-                    "text": msg["content"],
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
+    _apply_message_cache_control(chat_messages)
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
     data = resp.json()
 
-    # Log cache usage
-    usage = data.get("usage", {})
-    cache_created = usage.get("cache_creation_input_tokens", 0)
-    cache_read = usage.get("cache_read_input_tokens", 0)
-    if cache_created or cache_read:
-        print(
-            f"  [cache] created={cache_created} read={cache_read}",
-            file=sys.stderr,
-        )
+    _log_cache_usage(data.get("usage", {}))
 
     content_blocks = data.get("content", [])
     stop_reason = data.get("stop_reason", "")
@@ -318,21 +268,8 @@ def _anthropic_raw_stream(
 ) -> Iterator[str]:
     """Anthropic streaming — yields text deltas, returns CompletionRound."""
     url = f"{base_url.rstrip('/')}/v1/messages"
-    headers = {
-        "x-api-key": api_key or "",
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-
-    # Extract system from messages (same logic as _anthropic_raw).
-    # All system messages collected into system parameter as text blocks.
-    system_parts: list[str] = []
-    chat_messages = []
-    for msg in messages:
-        if msg["role"] == "system":
-            system_parts.append(msg["content"])
-        elif msg.get("content"):
-            chat_messages.append({"role": msg["role"], "content": msg["content"]})
+    headers = _build_headers(api_key)
+    system_parts, chat_messages = _extract_system_and_messages(messages)
 
     body = {
         "model": model,
@@ -340,31 +277,13 @@ def _anthropic_raw_stream(
         "messages": chat_messages,
         "stream": True,
     }
-    if system_parts:
-        body["system"] = [
-            {
-                "type": "text",
-                "text": system_parts[0],
-                "cache_control": {"type": "ephemeral"},
-            }
-        ] + [
-            {"type": "text", "text": part}
-            for part in system_parts[1:]
-        ]
+    system_block = _build_system_block(system_parts)
+    if system_block:
+        body["system"] = system_block
     if tools:
         body["tools"] = tools
 
-    # Prompt caching
-    if len(chat_messages) >= 2:
-        msg = chat_messages[-2]
-        if isinstance(msg["content"], str) and msg["content"]:
-            msg["content"] = [
-                {
-                    "type": "text",
-                    "text": msg["content"],
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
+    _apply_message_cache_control(chat_messages)
 
     text_parts = []
     tool_calls = []
@@ -458,14 +377,7 @@ def _anthropic_raw_stream(
             elif event_type == "message_delta":
                 delta = event.get("delta", {})
                 stop_reason = delta.get("stop_reason", stop_reason)
-                usage = event.get("usage", {})
-                cache_created = usage.get("cache_creation_input_tokens", 0)
-                cache_read = usage.get("cache_read_input_tokens", 0)
-                if cache_created or cache_read:
-                    print(
-                        f"  [cache] created={cache_created} read={cache_read}",
-                        file=sys.stderr,
-                    )
+                _log_cache_usage(event.get("usage", {}))
 
     # Truncation guard: discard tool calls on max_tokens
     if stop_reason == "max_tokens":

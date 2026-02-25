@@ -9,6 +9,50 @@ from gotg.model.types import CompletionRound
 from gotg.model.helpers import _check_response
 
 
+# ---------------------------------------------------------------------------
+# Private helpers — DRY blocks shared across the 4 public functions
+# ---------------------------------------------------------------------------
+
+def _build_headers(api_key: str | None) -> dict:
+    if api_key:
+        return {"Authorization": f"Bearer {api_key}"}
+    return {}
+
+
+def _wrap_tools(tools: list[dict]) -> list[dict]:
+    """Convert tool schemas to OpenAI function-call format."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t["input_schema"],
+            },
+        }
+        for t in tools
+    ]
+
+
+def _extract_tool_calls(message: dict) -> list[dict]:
+    """Normalize tool calls from an OpenAI message.
+
+    json.loads exceptions propagate unchanged — no silent fallback.
+    """
+    return [
+        {
+            "name": tc["function"]["name"],
+            "input": json.loads(tc["function"]["arguments"]),
+            "id": tc["id"],
+        }
+        for tc in message.get("tool_calls") or []
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Public provider functions
+# ---------------------------------------------------------------------------
+
 def _openai_completion(
     base_url: str,
     model: str,
@@ -17,23 +61,11 @@ def _openai_completion(
     tools: list[dict] | None = None,
 ) -> str | dict:
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _build_headers(api_key)
 
     body = {"model": model, "messages": messages}
     if tools:
-        body["tools"] = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t["input_schema"],
-                },
-            }
-            for t in tools
-        ]
+        body["tools"] = _wrap_tools(tools)
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
@@ -42,14 +74,7 @@ def _openai_completion(
 
     if tools:
         content = message.get("content") or ""
-        tool_calls = [
-            {
-                "name": tc["function"]["name"],
-                "input": json.loads(tc["function"]["arguments"]),
-                "id": tc["id"],
-            }
-            for tc in message.get("tool_calls") or []
-        ]
+        tool_calls = _extract_tool_calls(message)
         return {"content": content, "tool_calls": tool_calls}
 
     return message["content"]
@@ -59,21 +84,8 @@ def _openai_agentic(
     base_url, model, messages, api_key, tools, tool_executor, max_rounds,
 ):
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    openai_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t["input_schema"],
-            },
-        }
-        for t in (tools or [])
-    ]
+    headers = _build_headers(api_key)
+    openai_tools = _wrap_tools(tools or [])
 
     chat_messages = list(messages)
     operations = []
@@ -127,23 +139,11 @@ def _openai_raw(
     max_tokens: int = 16384,
 ) -> CompletionRound:
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _build_headers(api_key)
 
     body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens}
     if tools:
-        body["tools"] = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t["input_schema"],
-                },
-            }
-            for t in tools
-        ]
+        body["tools"] = _wrap_tools(tools)
 
     resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
@@ -151,14 +151,7 @@ def _openai_raw(
     message = data["choices"][0]["message"]
 
     content = message.get("content") or ""
-    tool_calls = [
-        {
-            "name": tc["function"]["name"],
-            "input": json.loads(tc["function"]["arguments"]),
-            "id": tc["id"],
-        }
-        for tc in message.get("tool_calls") or []
-    ]
+    tool_calls = _extract_tool_calls(message)
 
     return CompletionRound(
         content=content,
@@ -178,23 +171,11 @@ def _openai_raw_stream(
 ) -> Iterator[str]:
     """OpenAI/Ollama streaming — yields text deltas, returns CompletionRound."""
     url = f"{base_url.rstrip('/')}/v1/chat/completions"
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _build_headers(api_key)
 
     body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": True}
     if tools:
-        body["tools"] = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t["input_schema"],
-                },
-            }
-            for t in tools
-        ]
+        body["tools"] = _wrap_tools(tools)
 
     text_parts: list[str] = []
     # Accumulate tool calls: {index: {"id", "name", "args_parts"}}
