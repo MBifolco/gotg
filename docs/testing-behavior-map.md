@@ -70,6 +70,16 @@ Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_coach_streaming_tool_only_phase_complete`
 - `tests/test_e2e_quality_gate.py::test_e2e_coach_streaming_mixed_text_and_tool_single_persisted_message`
 
+## TUI Settings Contracts
+
+Behavior: Model select supports explicit blank selection for validation paths.
+Tests:
+- `tests/test_tui_settings.py::test_settings_validation_empty_model`
+
+Behavior: Blank model selection remains legal after provider-triggered option refresh.
+Tests:
+- `tests/test_tui_settings.py::test_settings_blank_model_remains_valid_after_provider_change`
+
 ## Task State and Constraints
 
 Behavior: `complete_tasks` can only close tasks assigned to the acting agent in the current layer.
@@ -139,4 +149,4 @@ Tests:
 ## Known Gaps (Next Additions)
 
 1. Replay tests from additional historical `gotg-tests/test*` incidents (escape-based regression lane).
-2. PTY-enabled TUI parity tests in CI (autoscroll and streaming widget lifecycle).
+2. Automated repeated-run flake detection for the PTY lane (stability burn-in in CI).
