@@ -8,6 +8,12 @@ This repo uses CI lanes that should be required for merges to `main`.
 2. `tui-pty / tui-tests`
 3. `behavior-map-guard / guard`
 
+For API-driven setup we require the PR-specific check contexts:
+
+1. `core-non-tui / tests (pull_request)`
+2. `tui-pty / tui-tests (pull_request)`
+3. `behavior-map-guard / guard (pull_request)`
+
 `nightly-replay` and `mutation-pilot` are scheduled/manual lanes and should not be required PR checks by default.
 
 ## One-Command Setup (gh CLI)

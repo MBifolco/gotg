@@ -15,6 +15,9 @@ Use this during PR review and when CI fails.
 Branch protection setup reference:
 - `docs/branch-protection-setup.md`
 
+Note: GitHub required-check contexts are event-scoped in this repo; PR enforcement uses
+`(pull_request)` suffixed check names.
+
 ## Lanes
 
 ### `core-non-tui`

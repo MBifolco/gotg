@@ -9,7 +9,7 @@ set -euo pipefail
 # Optional env vars:
 #   REPO=owner/name
 #   BRANCH=main
-#   REQUIRED_CHECKS_CSV="core-non-tui / tests,tui-pty / tui-tests,behavior-map-guard / guard"
+#   REQUIRED_CHECKS_CSV="core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)"
 #   DRY_RUN=1
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -19,7 +19,7 @@ fi
 
 DRY_RUN="${DRY_RUN:-0}"
 BRANCH="${BRANCH:-main}"
-REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-core-non-tui / tests,tui-pty / tui-tests,behavior-map-guard / guard}"
+REQUIRED_CHECKS_CSV="${REQUIRED_CHECKS_CSV:-core-non-tui / tests (pull_request),tui-pty / tui-tests (pull_request),behavior-map-guard / guard (pull_request)}"
 REPO="${REPO:-}"
 
 if [[ -z "${REPO}" ]]; then
