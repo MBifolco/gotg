@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from gotg.prompts import (
     GROOMING_SYSTEM_SUPPLEMENT,
 )
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
-from gotg.tasks import format_tasks_summary
+from gotg.tasks import format_tasks_summary, load_tasks_file
 from gotg.tools import FILE_TOOLS
 
 
@@ -82,7 +81,7 @@ def iteration_policy(
     tasks_path = iter_dir / "tasks.json"
     tasks_summary = None
     if tasks_path.exists():
-        tasks_data = json.loads(tasks_path.read_text())
+        tasks_data = load_tasks_file(tasks_path)
         impl_layer = None
         if iteration.get("phase") == "implementation":
             impl_layer = iteration.get("current_layer")

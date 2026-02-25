@@ -388,8 +388,8 @@ def cmd_restore(args):
     state = restore_checkpoint(iter_dir, args.number)
 
     # Normalize legacy phase names before writing back
-    from gotg.config import _normalize_phase
-    restored_phase = _normalize_phase(state["phase"])
+    from gotg.migration import normalize_phase
+    restored_phase = normalize_phase(state["phase"])
 
     # Update iteration.json to match checkpoint state
     save_iteration_fields(

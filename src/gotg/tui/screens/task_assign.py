@@ -11,7 +11,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header
 
-from gotg.tasks import compute_layers
+from gotg.tasks import compute_layers, load_tasks_file, save_tasks_file
 from gotg.tui.helpers import get_selected_row_key
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.content_viewer import ContentViewer
@@ -64,7 +64,7 @@ class TaskAssignScreen(Screen):
             )
             return
 
-        self._tasks = json.loads(tasks_path.read_text())
+        self._tasks = load_tasks_file(tasks_path)
 
         # Compute layers if missing
         if self._tasks and "layer" not in self._tasks[0]:
@@ -220,7 +220,7 @@ class TaskAssignScreen(Screen):
             return
 
         tasks_path = self._iter_dir / "tasks.json"
-        tasks_path.write_text(json.dumps(self._tasks, indent=2) + "\n")
+        save_tasks_file(tasks_path, self._tasks)
         self._dirty = False
         self.notify("Tasks saved.")
         self.app.pop_screen()

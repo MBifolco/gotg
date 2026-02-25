@@ -23,6 +23,7 @@ from gotg.events import (
 )
 from gotg.policy import SessionPolicy
 from gotg.prompts import COMPLETE_TASKS_TOOL, DRIFT_CHECK_PROMPT, REPORT_BLOCKED_TOOL
+from gotg.tasks import load_tasks_file, save_tasks_file
 from gotg.transitions import strip_code_fences
 
 _STATE_FILE = "implementation_state.json"
@@ -40,14 +41,12 @@ def _classify_result(result_str: str) -> str:
 
 def _load_tasks(iter_dir: Path) -> list[dict]:
     """Read tasks.json from disk."""
-    tasks_path = iter_dir / "tasks.json"
-    return json.loads(tasks_path.read_text())
+    return load_tasks_file(iter_dir / "tasks.json")
 
 
 def _save_tasks(iter_dir: Path, tasks: list[dict]) -> None:
     """Write tasks.json to disk."""
-    tasks_path = iter_dir / "tasks.json"
-    tasks_path.write_text(json.dumps(tasks, indent=2) + "\n")
+    save_tasks_file(iter_dir / "tasks.json", tasks)
 
 
 def _layer_tasks(tasks: list[dict], layer: int) -> list[dict]:

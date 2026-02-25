@@ -6,6 +6,7 @@ import json
 import time
 from pathlib import Path
 
+from gotg.migration import migrate_iteration_data
 from gotg.tui.helpers import count_jsonl_lines
 
 
@@ -18,7 +19,7 @@ def list_iterations(team_dir: Path) -> list[dict]:
     iter_path = team_dir / "iteration.json"
     if not iter_path.exists():
         return []
-    data = json.loads(iter_path.read_text())
+    data = migrate_iteration_data(json.loads(iter_path.read_text()))
     current_id = data.get("current")
     result = []
     for it in data.get("iterations", []):

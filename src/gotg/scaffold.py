@@ -20,7 +20,8 @@ def format_agent_task_assignments(
     if not tasks_path.exists():
         return "No tasks assigned yet."
     try:
-        tasks = json.loads(tasks_path.read_text())
+        from gotg.tasks import load_tasks_file
+        tasks = load_tasks_file(tasks_path)
     except (json.JSONDecodeError, OSError):
         return "No tasks assigned yet."
     if not tasks:
@@ -176,6 +177,7 @@ def init_project(path: Path) -> None:
 
     # team.json: model config + agents
     (team_dir / "team.json").write_text(json.dumps({
+        "schema_version": 1,
         "model": {
             "provider": "ollama",
             "base_url": "http://localhost:11434",
@@ -205,6 +207,7 @@ def init_project(path: Path) -> None:
     # iteration.json: list format with current pointer
     iter_id = "iter-1"
     (team_dir / "iteration.json").write_text(json.dumps({
+        "schema_version": 1,
         "iterations": [
             {
                 "id": iter_id,

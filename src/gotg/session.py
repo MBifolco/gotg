@@ -331,7 +331,8 @@ def prepare_session(
     )
     tasks_data = None
     if use_implementation:
-        tasks_data = json.loads(tasks_path.read_text())
+        from gotg.tasks import load_tasks_file
+        tasks_data = load_tasks_file(tasks_path)
 
     current_layer = iteration.get("current_layer", 0)
 
@@ -430,7 +431,8 @@ def validate_iteration_for_run(iteration: dict, iter_dir: Path, agents: list[dic
         raise SessionSetupError(
             f"{phase} requires tasks.json. Run 'gotg advance' from planning first."
         )
-    tasks = json.loads(tasks_path.read_text())
+    from gotg.tasks import load_tasks_file
+    tasks = load_tasks_file(tasks_path)
     current_layer = iteration.get("current_layer")
     if phase == "implementation" and current_layer is not None:
         tasks = [t for t in tasks if t.get("layer") == current_layer]
@@ -524,8 +526,8 @@ def setup_worktrees(
             _, iter_dir = get_current_iteration(team_dir)
             tasks_file = iter_dir / "tasks.json"
             if tasks_file.exists():
-                import json as _json
-                tasks_data = _json.loads(tasks_file.read_text())
+                from gotg.tasks import load_tasks_file as _load_tasks
+                tasks_data = _load_tasks(tasks_file)
                 layer_tasks = [t for t in tasks_data if t.get("layer") == layer]
                 assigned_agents = {t.get("assigned_to") for t in layer_tasks if t.get("assigned_to")}
                 if assigned_agents:
@@ -703,7 +705,8 @@ def advance_phase(
         )
         if tasks is not None:
             tasks_path = iter_dir / "tasks.json"
-            tasks_path.write_text(json.dumps(tasks, indent=2) + "\n")
+            from gotg.tasks import save_tasks_file
+            save_tasks_file(tasks_path, tasks)
             _progress(f"Wrote {tasks_path}")
             tasks_written = True
         else:
@@ -721,7 +724,8 @@ def advance_phase(
                 _progress("Extracting task notes from pre-code-review...")
                 model_config = load_model_config(team_dir)
                 history = read_phase_history(log_path)
-                tasks_data = json.loads(tasks_path.read_text())
+                from gotg.tasks import load_tasks_file, save_tasks_file
+                tasks_data = load_tasks_file(tasks_path)
                 notes_map, raw_text, error = extract_task_notes(
                     history, tasks_data, model_config, coach["name"], chat_call,
                 )
@@ -729,7 +733,7 @@ def advance_phase(
                     for task in tasks_data:
                         if task["id"] in notes_map:
                             task["notes"] = notes_map[task["id"]]
-                    tasks_path.write_text(json.dumps(tasks_data, indent=2) + "\n")
+                    save_tasks_file(tasks_path, tasks_data)
                     _progress(f"Updated {tasks_path} with task notes")
                     coach_ran = True
                 else:
@@ -1083,7 +1087,8 @@ def advance_next_layer(
     tasks_path = iter_dir / "tasks.json"
     if not tasks_path.exists():
         raise ReviewError("tasks.json not found.")
-    tasks = json.loads(tasks_path.read_text())
+    from gotg.tasks import load_tasks_file
+    tasks = load_tasks_file(tasks_path)
 
     # Recompute layers if any task is missing the stored layer field
     if any("layer" not in t for t in tasks):

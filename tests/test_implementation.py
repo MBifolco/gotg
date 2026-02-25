@@ -89,7 +89,7 @@ def _make_multi_layer_tasks():
 def _setup_iter_dir(tmp_path, tasks):
     iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2))
+    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2))
     (iter_dir / "conversation.jsonl").touch()
     return iter_dir
 
@@ -204,7 +204,7 @@ def test_handle_complete_tasks_success(tmp_path):
     assert "Completed" in result
     assert "task-a" in result
     # Verify persistence
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     done_task = next(t for t in saved if t["id"] == "task-a")
     assert done_task["status"] == "done"
     assert done_task["completed_by"] == "agent-1"
@@ -263,7 +263,7 @@ def test_handle_complete_tasks_no_attestation_required(tmp_path):
         "agent-1", tasks, 0, iter_dir,
     )
     assert result.startswith("Completed tasks:")
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     done_task = next(t for t in saved if t["id"] == "task-a")
     assert done_task["status"] == "done"
 
@@ -277,7 +277,7 @@ def test_handle_report_blocked_success(tmp_path):
     )
     assert "Blocked tasks:" in result
     assert blocked_ids == ("task-a",)
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     blocked = next(t for t in saved if t["id"] == "task-a")
     assert blocked["status"] == "blocked"
     assert blocked["blocked_by"] == "agent-1"
@@ -294,7 +294,7 @@ def test_handle_report_blocked_empty_ids(tmp_path):
     assert result.startswith("Error:")
     assert "task_ids is empty" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert all(t["status"] == "pending" for t in saved)
 
 
@@ -308,7 +308,7 @@ def test_handle_report_blocked_reason_required(tmp_path):
     assert result.startswith("Error:")
     assert "reason is required" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert all(t["status"] == "pending" for t in saved)
 
 
@@ -359,7 +359,7 @@ def test_handle_report_blocked_atomic_on_mixed_valid_and_invalid_ids(tmp_path):
     assert result.startswith("Error:")
     assert "not in layer" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
 
 
@@ -373,7 +373,7 @@ def test_handle_report_blocked_atomic_on_mixed_own_and_foreign_ids(tmp_path):
     assert result.startswith("Error:")
     assert "not assigned to you" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
     assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
 
@@ -390,7 +390,7 @@ def test_handle_report_blocked_atomic_on_mixed_done_and_pending_ids(tmp_path):
     assert result.startswith("Error:")
     assert "already done" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "done"
     assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
 
@@ -584,7 +584,7 @@ def test_complete_tasks_persists_and_emits_layer_complete(tmp_path):
     assert set(layer_done[0].completed_tasks) == {"task-a", "task-b"}
 
     # Verify persistence
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     for t in saved:
         assert t["status"] == "done"
 
@@ -626,7 +626,7 @@ def test_complete_tasks_validation_rejects_wrong_agent(tmp_path):
     assert ct_progress[0].status == "error"
 
     # task-b should still be pending
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     task_b = next(t for t in saved if t["id"] == "task-b")
     assert task_b["status"] == "pending"
 

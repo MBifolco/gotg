@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from gotg.events import SessionStarted
+from gotg.migration import CURRENT_GROOMING_VERSION, migrate_grooming_metadata
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -78,6 +79,7 @@ def write_grooming_metadata(
     (groom_dir / "conversation.jsonl").touch()
 
     metadata = {
+        "schema_version": CURRENT_GROOMING_VERSION,
         "slug": slug,
         "topic": topic,
         "coach": coach,
@@ -95,7 +97,11 @@ def load_grooming_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
     if not meta_path.exists():
         print(f"Error: grooming session '{slug}' not found.", file=sys.stderr)
         raise SystemExit(1)
-    return json.loads(meta_path.read_text()), groom_dir
+    warnings: list[str] = []
+    data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+    for w in warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    return data, groom_dir
 
 
 def list_grooming_sessions(team_dir: Path) -> list[dict]:
@@ -107,7 +113,11 @@ def list_grooming_sessions(team_dir: Path) -> list[dict]:
     for d in sorted(grooming_root.iterdir()):
         meta_path = d / "grooming.json"
         if meta_path.exists():
-            sessions.append(json.loads(meta_path.read_text()))
+            warnings: list[str] = []
+            data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+            for w in warnings:
+                print(f"Warning: {w}", file=sys.stderr)
+            sessions.append(data)
     return sessions
 
 

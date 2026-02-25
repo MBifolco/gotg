@@ -386,7 +386,8 @@ def test_contract_layer_dispatch_only_affects_current_layer(tmp_path):
     )
     list(run_and_persist(setup))
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    raw_saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved_tasks = raw_saved["tasks"]
     t0 = next(t for t in saved_tasks if t["id"] == "layer0-task")
     t1 = next(t for t in saved_tasks if t["id"] == "layer1-task")
 
