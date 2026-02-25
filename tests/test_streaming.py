@@ -594,7 +594,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -630,7 +630,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -671,7 +671,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -699,7 +699,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -728,7 +728,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -759,7 +759,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -783,7 +783,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             with pytest.raises(SystemExit, match="429"):
                 result = raw_completion_stream(
                     base_url="http://localhost:11434",
@@ -807,7 +807,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -830,7 +830,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -859,7 +859,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -879,8 +879,8 @@ class TestOpenAIRawStream:
 class TestRawCompletionStreamFallback:
     def test_fallback_to_non_streaming_before_any_delta(self):
         """If stream transport fails immediately, fallback to raw_completion."""
-        with patch("gotg.model._openai_raw_stream", side_effect=httpx.StreamError("boom")), \
-             patch("gotg.model.raw_completion", return_value=_text_round("fallback")) as mock_raw:
+        with patch("gotg.model.routing._openai_raw_stream", side_effect=httpx.StreamError("boom")), \
+             patch("gotg.model.routing.raw_completion", return_value=_text_round("fallback")) as mock_raw:
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -900,8 +900,8 @@ class TestRawCompletionStreamFallback:
             yield "partial"
             raise httpx.StreamError("mid-stream boom")
 
-        with patch("gotg.model._openai_raw_stream", return_value=_gen()), \
-             patch("gotg.model.raw_completion") as mock_raw:
+        with patch("gotg.model.routing._openai_raw_stream", return_value=_gen()), \
+             patch("gotg.model.routing.raw_completion") as mock_raw:
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",

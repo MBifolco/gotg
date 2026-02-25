@@ -17,7 +17,7 @@ def _mock_response(content: str):
     return resp
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_returns_content(mock_post):
     mock_post.return_value = _mock_response("Hello from the model")
     result = chat_completion(
@@ -28,7 +28,7 @@ def test_chat_completion_returns_content(mock_post):
     assert result == "Hello from the model"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_sends_correct_url(mock_post):
     mock_post.return_value = _mock_response("ok")
     chat_completion(
@@ -40,7 +40,7 @@ def test_chat_completion_sends_correct_url(mock_post):
     assert call_args[0][0] == "http://localhost:11434/v1/chat/completions"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_sends_model_and_messages(mock_post):
     mock_post.return_value = _mock_response("ok")
     messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
@@ -54,7 +54,7 @@ def test_chat_completion_sends_model_and_messages(mock_post):
     assert body["messages"] == messages
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_no_auth_header_by_default(mock_post):
     mock_post.return_value = _mock_response("ok")
     chat_completion(
@@ -66,7 +66,7 @@ def test_chat_completion_no_auth_header_by_default(mock_post):
     assert "Authorization" not in headers
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_sends_auth_header_when_key_provided(mock_post):
     mock_post.return_value = _mock_response("ok")
     chat_completion(
@@ -81,7 +81,7 @@ def test_chat_completion_sends_auth_header_when_key_provided(mock_post):
 
 # --- API error responses ---
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_raises_on_http_error(mock_post):
     """HTTP errors (400, 500, etc.) should exit with the API error message."""
     resp = MagicMock()
@@ -92,7 +92,7 @@ def test_chat_completion_raises_on_http_error(mock_post):
         chat_completion("http://localhost:11434", "m", [])
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_raises_on_timeout(mock_post):
     """Timeout should propagate as an exception."""
     import httpx
@@ -101,7 +101,7 @@ def test_chat_completion_raises_on_timeout(mock_post):
         chat_completion("http://localhost:11434", "m", [])
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_raises_on_connection_error(mock_post):
     """Connection refused (Ollama not running) should propagate."""
     import httpx
@@ -110,7 +110,7 @@ def test_chat_completion_raises_on_connection_error(mock_post):
         chat_completion("http://localhost:11434", "m", [])
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_raises_on_empty_choices(mock_post):
     """API returning empty choices array should raise IndexError."""
     resp = MagicMock()
@@ -122,7 +122,7 @@ def test_chat_completion_raises_on_empty_choices(mock_post):
         chat_completion("http://localhost:11434", "m", [])
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_raises_on_missing_choices_key(mock_post):
     """API returning unexpected JSON structure should raise KeyError."""
     resp = MagicMock()
@@ -134,7 +134,7 @@ def test_chat_completion_raises_on_missing_choices_key(mock_post):
         chat_completion("http://localhost:11434", "m", [])
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_chat_completion_base_url_trailing_slash(mock_post):
     """Trailing slash on base_url shouldn't double up."""
     mock_post.return_value = _mock_response("ok")
@@ -155,7 +155,7 @@ def _mock_anthropic_response(text: str):
     return resp
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_returns_content(mock_post):
     mock_post.return_value = _mock_anthropic_response("Hello from Claude")
     result = chat_completion(
@@ -171,7 +171,7 @@ def test_anthropic_returns_content(mock_post):
     assert result == "Hello from Claude"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_sends_correct_url(mock_post):
     mock_post.return_value = _mock_anthropic_response("ok")
     chat_completion(
@@ -185,7 +185,7 @@ def test_anthropic_sends_correct_url(mock_post):
     assert url == "https://api.anthropic.com/v1/messages"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_extracts_system_from_messages(mock_post):
     """System message should be extracted to top-level 'system' field."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -211,7 +211,7 @@ def test_anthropic_extracts_system_from_messages(mock_post):
     assert len(body["messages"]) == 3
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_sends_api_key_header(mock_post):
     mock_post.return_value = _mock_anthropic_response("ok")
     chat_completion(
@@ -226,7 +226,7 @@ def test_anthropic_sends_api_key_header(mock_post):
     assert headers["anthropic-version"] == "2023-06-01"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_sets_max_tokens(mock_post):
     mock_post.return_value = _mock_anthropic_response("ok")
     chat_completion(
@@ -255,7 +255,7 @@ SAMPLE_TOOLS = [
 ]
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_openai_passes_tools_in_request(mock_post):
     """Tools should be wrapped in OpenAI function format in the request body."""
     mock_post.return_value = _mock_response("ok")
@@ -272,7 +272,7 @@ def test_openai_passes_tools_in_request(mock_post):
     assert body["tools"][0]["function"]["parameters"] == SAMPLE_TOOLS[0]["input_schema"]
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_openai_returns_dict_with_tool_calls(mock_post):
     """When tools are provided, response should be a dict with content and tool_calls."""
     resp = MagicMock()
@@ -309,7 +309,7 @@ def test_openai_returns_dict_with_tool_calls(mock_post):
 
 # --- Tools parameter (Anthropic) ---
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_passes_tools_in_request(mock_post):
     """Anthropic tools should be passed directly (our format matches)."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -326,7 +326,7 @@ def test_anthropic_passes_tools_in_request(mock_post):
     assert body["tools"] == SAMPLE_TOOLS
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_returns_dict_with_tool_calls(mock_post):
     """When tools are provided, Anthropic response should be parsed into dict."""
     resp = MagicMock()
@@ -357,7 +357,7 @@ def test_anthropic_returns_dict_with_tool_calls(mock_post):
 
 # --- Anthropic prompt caching ---
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_system_cache_control(mock_post):
     """System prompt should be a list with cache_control marker."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -379,7 +379,7 @@ def test_anthropic_system_cache_control(mock_post):
     assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_second_to_last_message_cache_control(mock_post):
     """Second-to-last message should get cache_control marker."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -404,7 +404,7 @@ def test_anthropic_second_to_last_message_cache_control(mock_post):
     assert isinstance(last["content"], str)
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_last_message_no_cache_control(mock_post):
     """Last message should NOT get cache_control."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -425,7 +425,7 @@ def test_anthropic_last_message_no_cache_control(mock_post):
     assert last["content"] == "latest"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_single_message_no_message_cache(mock_post):
     """With only one message, no message should get cache_control."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -443,7 +443,7 @@ def test_anthropic_single_message_no_message_cache(mock_post):
     assert isinstance(body["messages"][0]["content"], str)
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_no_system_no_system_field(mock_post):
     """Without system message, body should not have 'system' field."""
     mock_post.return_value = _mock_anthropic_response("ok")
@@ -460,7 +460,7 @@ def test_anthropic_no_system_no_system_field(mock_post):
     assert "system" not in body
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_openai_no_cache_control(mock_post):
     """OpenAI path should never add cache_control markers."""
     mock_post.return_value = _mock_response("ok")
@@ -484,7 +484,7 @@ def test_openai_no_cache_control(mock_post):
 
 # --- Tool call IDs ---
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_openai_tool_calls_include_id(mock_post):
     resp = MagicMock()
     resp.status_code = 200
@@ -505,7 +505,7 @@ def test_openai_tool_calls_include_id(mock_post):
     assert result["tool_calls"][0]["id"] == "call_abc"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_anthropic_tool_calls_include_id(mock_post):
     resp = MagicMock()
     resp.status_code = 200
@@ -558,7 +558,7 @@ def _mock_anthropic_tool_response(text, tool_uses):
     return resp
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_agentic_no_tool_calls_returns_text(mock_post):
     mock_post.return_value = _mock_anthropic_text_response("Just text")
     result = agentic_completion(
@@ -571,7 +571,7 @@ def test_agentic_no_tool_calls_returns_text(mock_post):
     assert result["operations"] == []
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_agentic_executes_tools_and_returns_final(mock_post):
     """First call returns tool_use, second returns text-only."""
     mock_post.side_effect = [
@@ -599,7 +599,7 @@ def test_agentic_executes_tools_and_returns_final(mock_post):
     assert len(calls) == 1
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_agentic_multiple_rounds(mock_post):
     """Agent calls tools twice before producing final text."""
     mock_post.side_effect = [
@@ -621,7 +621,7 @@ def test_agentic_multiple_rounds(mock_post):
     assert len(result["operations"]) == 2
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_agentic_respects_max_rounds(mock_post):
     """If max_rounds is reached, returns last text."""
     # Always return tool calls — should stop after max_rounds
@@ -640,7 +640,7 @@ def test_agentic_respects_max_rounds(mock_post):
     assert mock_post.call_count == 3
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_agentic_sends_tool_results_back(mock_post):
     """Verify tool results are sent back to the API in the correct format."""
     mock_post.side_effect = [
@@ -699,7 +699,7 @@ def _mock_openai_tool_response(text, tool_calls):
     return resp
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_agentic_openai_no_tool_calls(mock_post):
     mock_post.return_value = _mock_openai_text_response("Just text")
     result = agentic_completion(
@@ -712,7 +712,7 @@ def test_agentic_openai_no_tool_calls(mock_post):
     assert result["operations"] == []
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_agentic_openai_executes_tools(mock_post):
     mock_post.side_effect = [
         _mock_openai_tool_response("Reading...", [
@@ -778,7 +778,7 @@ def test_completion_round_build_continuation_openai():
     assert msgs[1]["content"] == "file content"
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_raw_completion_openai_returns_completion_round(mock_post):
     """raw_completion with OpenAI provider returns CompletionRound."""
     from gotg.model import raw_completion
@@ -816,7 +816,7 @@ def test_raw_completion_openai_returns_completion_round(mock_post):
 # --- max_tokens parameter plumbing ---
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_raw_completion_anthropic_max_tokens_default(mock_post):
     """raw_completion defaults to max_tokens=16384 for Anthropic."""
     from gotg.model import raw_completion
@@ -837,7 +837,7 @@ def test_raw_completion_anthropic_max_tokens_default(mock_post):
     assert body["max_tokens"] == 16384
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_raw_completion_anthropic_max_tokens_custom(mock_post):
     """raw_completion passes custom max_tokens for Anthropic."""
     from gotg.model import raw_completion
@@ -859,7 +859,7 @@ def test_raw_completion_anthropic_max_tokens_custom(mock_post):
     assert body["max_tokens"] == 4096
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.openai.httpx.post")
 def test_raw_completion_openai_max_tokens(mock_post):
     """raw_completion passes max_tokens for OpenAI."""
     from gotg.model import raw_completion
@@ -878,7 +878,7 @@ def test_raw_completion_openai_max_tokens(mock_post):
     assert body["max_tokens"] == 8192
 
 
-@patch("gotg.model.httpx.post")
+@patch("gotg.model.anthropic.httpx.post")
 def test_raw_completion_stream_max_tokens_default(mock_post):
     """raw_completion_stream defaults to max_tokens=16384."""
     from gotg.model import raw_completion_stream
@@ -894,7 +894,7 @@ def test_raw_completion_stream_max_tokens_default(mock_post):
     mock_resp.__enter__ = lambda s: s
     mock_resp.__exit__ = MagicMock(return_value=False)
 
-    with patch("gotg.model.httpx.stream", return_value=mock_resp) as mock_stream:
+    with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp) as mock_stream:
         result = raw_completion_stream(
             "https://api.anthropic.com", "m",
             [{"role": "user", "content": "hi"}],
@@ -904,3 +904,74 @@ def test_raw_completion_stream_max_tokens_default(mock_post):
 
     body = mock_stream.call_args[1]["json"]
     assert body["max_tokens"] == 16384
+
+
+# --- Routing dispatch tests ---
+
+from gotg.model import raw_completion, raw_completion_stream
+
+
+@patch("gotg.model.routing._anthropic_completion", return_value="anthropic result")
+def test_dispatch_chat_completion_anthropic(mock_fn):
+    result = chat_completion("https://api.anthropic.com", "m", [{"role": "user", "content": "hi"}], api_key="sk", provider="anthropic")
+    assert result == "anthropic result"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._openai_completion", return_value="openai result")
+def test_dispatch_chat_completion_openai(mock_fn):
+    result = chat_completion("http://localhost", "m", [{"role": "user", "content": "hi"}], provider="ollama")
+    assert result == "openai result"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._anthropic_agentic", return_value={"content": "done", "operations": []})
+def test_dispatch_agentic_anthropic(mock_fn):
+    result = agentic_completion("https://api.anthropic.com", "m", [], api_key="sk", provider="anthropic", tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "ok")
+    assert result["content"] == "done"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._openai_agentic", return_value={"content": "done", "operations": []})
+def test_dispatch_agentic_openai(mock_fn):
+    result = agentic_completion("http://localhost", "m", [], provider="ollama", tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "ok")
+    assert result["content"] == "done"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._anthropic_raw")
+def test_dispatch_raw_completion_anthropic(mock_fn):
+    mock_fn.return_value = CompletionRound(content="ok", tool_calls=[], _provider="anthropic", _raw={})
+    result = raw_completion("https://api.anthropic.com", "m", [], api_key="sk", provider="anthropic")
+    assert result.content == "ok"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._openai_raw")
+def test_dispatch_raw_completion_openai(mock_fn):
+    mock_fn.return_value = CompletionRound(content="ok", tool_calls=[], _provider="openai", _raw={})
+    result = raw_completion("http://localhost", "m", [], provider="ollama")
+    assert result.content == "ok"
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._anthropic_raw_stream")
+def test_dispatch_stream_anthropic(mock_fn):
+    def gen():
+        yield "hello"
+    mock_fn.return_value = gen()
+    result = raw_completion_stream("https://api.anthropic.com", "m", [], api_key="sk", provider="anthropic")
+    chunks = list(result)
+    assert "hello" in chunks
+    mock_fn.assert_called_once()
+
+
+@patch("gotg.model.routing._openai_raw_stream")
+def test_dispatch_stream_openai(mock_fn):
+    def gen():
+        yield "hello"
+    mock_fn.return_value = gen()
+    result = raw_completion_stream("http://localhost", "m", [], provider="ollama")
+    chunks = list(result)
+    assert "hello" in chunks
+    mock_fn.assert_called_once()
