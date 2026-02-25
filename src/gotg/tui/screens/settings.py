@@ -237,7 +237,11 @@ class SettingsScreen(Screen):
         try:
             model_select.set_options(options, allow_blank=True)
         except TypeError:
-            model_select.set_options(options)
+            # Some Textual versions expose allow_blank as positional-only.
+            try:
+                model_select.set_options(options, True)
+            except TypeError:
+                model_select.set_options(options)
         if current_model:
             model_select.value = current_model
         elif options:
