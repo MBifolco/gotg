@@ -157,10 +157,20 @@ def init_project(path: Path) -> None:
         ["git", "add", ".gitignore"],
         cwd=path, check=True, capture_output=True,
     )
-    subprocess.run(
-        ["git", "commit", "-m", "Add .gitignore for gotg"],
-        cwd=path, check=True, capture_output=True,
-    )
+    try:
+        subprocess.run(
+            ["git", "commit", "-m", "Add .gitignore for gotg"],
+            cwd=path, check=True, capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr or "")
+        benign = (
+            "nothing to commit" in stderr.lower()
+            or "author identity unknown" in stderr.lower()
+            or "unable to auto-detect email address" in stderr.lower()
+        )
+        if not benign:
+            raise
 
     team_dir.mkdir(parents=True)
 

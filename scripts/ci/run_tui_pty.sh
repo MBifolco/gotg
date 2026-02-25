@@ -8,4 +8,4 @@ if [ -x ".venv/bin/python" ]; then
   PYTHON_BIN=".venv/bin/python"
 fi
 
-timeout 420 "${PYTHON_BIN}" -m pytest tests/test_tui*.py -q --tb=short
+timeout 420 "${PYTHON_BIN}" -m pytest tests/test_tui*.py -q --tb=short -o asyncio_mode=auto
