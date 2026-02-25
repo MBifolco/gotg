@@ -119,6 +119,58 @@ class AiResolutionResult:
 
 
 @dataclass
+class SessionInfra:
+    """Infrastructure built from team config for a session."""
+    fileguard: object | None
+    approval_store: object | None
+    worktree_map: dict | None
+    diffs_summary: str | None
+    streaming: bool
+    warnings: list[str] = field(default_factory=list)
+
+
+def build_session_infra(
+    ctx,  # TeamContext — duck-typed to avoid import cycle
+    iteration: dict,
+    iter_dir: Path,
+    *,
+    layer_override: int | None = None,
+) -> SessionInfra:
+    """Build all session infrastructure from team context.
+
+    Consolidates build_file_infra + setup_worktrees + load_diffs_for_review
+    + load_streaming_config into a single call.
+
+    ctx must have: project_root, file_access, team_dir, agents attributes.
+    """
+    fileguard, approval_store = build_file_infra(
+        ctx.project_root, ctx.file_access, iter_dir
+    )
+
+    worktree_map, wt_warnings = setup_worktrees(
+        ctx.team_dir, ctx.agents, fileguard, layer_override, iteration
+    )
+
+    diffs_summary, diff_warnings = load_diffs_for_review(
+        ctx.team_dir, iteration, layer_override
+    )
+
+    from gotg.config import load_streaming_config
+    streaming = load_streaming_config(ctx.team_dir)
+
+    warnings = list(wt_warnings) + list(diff_warnings)
+
+    return SessionInfra(
+        fileguard=fileguard,
+        approval_store=approval_store,
+        worktree_map=worktree_map,
+        diffs_summary=diffs_summary,
+        streaming=streaming,
+        warnings=warnings,
+    )
+
+
+@dataclass
 class SessionSetup:
     """Everything needed to run a session.
 

@@ -12,7 +12,7 @@ from gotg.config import (
 )
 from gotg.context import TeamContext
 from gotg.conversation import append_message, append_debug, read_log, read_phase_history, render_message
-from gotg.engine import SessionDeps, run_session
+from gotg.engine import SessionDeps
 from gotg.events import (
     AgentTurnComplete, AppendDebug, AppendMessage, CoachAskedPM,
     LayerComplete, PauseForApprovals, PhaseCompleteSignaled,
@@ -27,7 +27,7 @@ from gotg.groom import (
 from gotg.scaffold import init_project
 from gotg.session import (
     SessionSetupError, resolve_layer, validate_iteration_for_run,
-    build_file_infra, setup_worktrees, load_diffs_for_review,
+    build_session_infra,
 )
 from gotg.transitions import (
     extract_refinement_summary, extract_tasks, extract_task_notes,
@@ -202,51 +202,6 @@ def _print_tool_progress(event: ToolCallProgress) -> None:
         print(f"  [{event.agent}] {event.tool_name} {event.path}", file=sys.stderr)
 
 
-def _run_discussion_phase(
-    agents, iteration, model_config, deps, history, policy,
-    log_path, debug_path,
-):
-    """Backward-compatible wrapper — delegates to _handle_cli_events."""
-    from gotg.session import persist_event
-
-    def _gen():
-        for event in run_session(
-            agents=agents, iteration=iteration, model_config=model_config,
-            deps=deps, history=history, policy=policy,
-        ):
-            if isinstance(event, (AppendMessage, AppendDebug)):
-                persist_event(event, log_path, debug_path)
-            yield event
-
-    _handle_cli_events(_gen(), use_implementation=False)
-
-
-def _run_implementation_phase(
-    agents, iteration, iter_dir, model_config, deps, history, policy,
-    log_path, debug_path,
-):
-    """Backward-compatible wrapper — delegates to _handle_cli_events."""
-    import json
-    from gotg.implementation import run_implementation
-    from gotg.session import persist_event
-
-    tasks_path = iter_dir / "tasks.json"
-    tasks_data = json.loads(tasks_path.read_text())
-    current_layer = iteration.get("current_layer", 0)
-
-    def _gen():
-        for event in run_implementation(
-            agents=agents, tasks=tasks_data, current_layer=current_layer,
-            iteration=iteration, iter_dir=iter_dir, model_config=model_config,
-            deps=deps, history=history, policy=policy,
-        ):
-            if isinstance(event, (AppendMessage, AppendDebug)):
-                persist_event(event, log_path, debug_path)
-            yield event
-
-    _handle_cli_events(_gen(), use_implementation=True)
-
-
 def cmd_init(args):
     path = Path(args.path)
     init_project(path)
@@ -268,28 +223,25 @@ def cmd_run(args):
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    fileguard, approval_store = build_file_infra(ctx.project_root, ctx.file_access, iter_dir)
-
     layer_override = getattr(args, "layer", None)
     try:
-        worktree_map, wt_warnings = setup_worktrees(ctx.team_dir, ctx.agents, fileguard, layer_override, iteration)
+        infra = build_session_infra(ctx, iteration, iter_dir, layer_override=layer_override)
     except SessionSetupError as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
-    for w in wt_warnings:
+    for w in infra.warnings:
         print(f"Warning: {w}", file=sys.stderr)
-
-    diffs_summary, diff_warnings = load_diffs_for_review(ctx.team_dir, iteration, layer_override)
-    for w in diff_warnings:
-        print(f"Warning: {w}", file=sys.stderr)
-    if diffs_summary:
+    if infra.diffs_summary:
         layer = resolve_layer(layer_override, iteration)
         print(f"Code review: diffs loaded for layer {layer}")
 
-    from gotg.config import load_streaming_config
-    streaming = load_streaming_config(team_dir)
-
-    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=args.max_turns, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary, streaming=streaming)
+    run_conversation(
+        iter_dir, ctx.agents, iteration, ctx.model_config,
+        max_turns_override=args.max_turns, coach=ctx.coach,
+        fileguard=infra.fileguard, approval_store=infra.approval_store,
+        worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
+        streaming=infra.streaming,
+    )
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 
@@ -384,21 +336,15 @@ def cmd_continue(args):
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    fileguard, approval_store = build_file_infra(ctx.project_root, ctx.file_access, iter_dir)
-
     layer_override = getattr(args, "layer", None)
     try:
-        worktree_map, wt_warnings = setup_worktrees(ctx.team_dir, ctx.agents, fileguard, layer_override, iteration)
+        infra = build_session_infra(ctx, iteration, iter_dir, layer_override=layer_override)
     except SessionSetupError as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
-    for w in wt_warnings:
+    for w in infra.warnings:
         print(f"Warning: {w}", file=sys.stderr)
-
-    diffs_summary, diff_warnings = load_diffs_for_review(ctx.team_dir, iteration, layer_override)
-    for w in diff_warnings:
-        print(f"Warning: {w}", file=sys.stderr)
-    if diffs_summary:
+    if infra.diffs_summary:
         layer = resolve_layer(layer_override, iteration)
         print(f"Code review: diffs loaded for layer {layer}")
 
@@ -406,17 +352,17 @@ def cmd_continue(args):
     history = read_phase_history(log_path)
 
     # Apply approved writes and inject denials before resuming
-    if approval_store:
+    if infra.approval_store:
         from gotg.session import apply_and_inject
         messages = apply_and_inject(
-            approval_store, fileguard, iteration, log_path,
-            worktree_map=worktree_map,
+            infra.approval_store, infra.fileguard, iteration, log_path,
+            worktree_map=infra.worktree_map,
         )
         for msg in messages:
             print(render_message(msg))
             print()
 
-        remaining = approval_store.get_pending()
+        remaining = infra.approval_store.get_pending()
         if remaining:
             print(f"Warning: {len(remaining)} approval(s) still pending. Resolve before continuing.")
             print("Run 'gotg approvals' to review.")
@@ -444,10 +390,13 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    from gotg.config import load_streaming_config
-    streaming = load_streaming_config(team_dir)
-
-    run_conversation(iter_dir, ctx.agents, iteration, ctx.model_config, max_turns_override=target_total, coach=ctx.coach, fileguard=fileguard, approval_store=approval_store, worktree_map=worktree_map, diffs_summary=diffs_summary, streaming=streaming)
+    run_conversation(
+        iter_dir, ctx.agents, iteration, ctx.model_config,
+        max_turns_override=target_total, coach=ctx.coach,
+        fileguard=infra.fileguard, approval_store=infra.approval_store,
+        worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
+        streaming=infra.streaming,
+    )
     _auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 

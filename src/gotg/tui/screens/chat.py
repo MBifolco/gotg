@@ -275,9 +275,9 @@ class ChatScreen(Screen):
             )
             from gotg.session import (
                 SessionSetup, SessionSetupError,
-                build_file_infra, load_diffs_for_review,
+                build_session_infra,
                 prepare_session, run_and_persist,
-                setup_worktrees, validate_iteration_for_run,
+                validate_iteration_for_run,
             )
 
             ctx = TeamContext.from_team_dir(self.app.team_dir)
@@ -287,27 +287,19 @@ class ChatScreen(Screen):
                 iteration, iter_dir = ctx.iteration_store.get_current()
                 validate_iteration_for_run(iteration, iter_dir, ctx.agents)
 
-                fileguard, approval_store = build_file_infra(
-                    ctx.project_root, ctx.file_access, iter_dir
-                )
-                worktree_map, _ = setup_worktrees(
-                    ctx.team_dir, ctx.agents, fileguard, None, iteration
-                )
-                diffs_summary, _ = load_diffs_for_review(
-                    ctx.team_dir, iteration, None
-                )
+                infra = build_session_infra(ctx, iteration, iter_dir)
 
                 # Apply approved writes and inject denials before resuming
                 # (Phase 1 exception — stays in adapter for per-message UI posting)
-                if approval_store:
+                if infra.approval_store:
                     from gotg.session import apply_and_inject
                     inject_msgs = apply_and_inject(
-                        approval_store, fileguard, iteration,
-                        self._log_path, worktree_map=worktree_map,
+                        infra.approval_store, infra.fileguard, iteration,
+                        self._log_path, worktree_map=infra.worktree_map,
                     )
                     for msg in inject_msgs:
                         self.post_message(EngineEvent(AppendMessage(msg)))
-                    remaining = approval_store.get_pending()
+                    remaining = infra.approval_store.get_pending()
                     if remaining:
                         self.post_message(EngineEvent(
                             PauseForApprovals(pending_count=len(remaining))
@@ -321,8 +313,7 @@ class ChatScreen(Screen):
                     1 for msg in history if is_agent_turn(msg, coach_name)
                 )
                 max_turns = current_agent_turns + iteration.get("max_turns", 30)
-                from gotg.config import load_streaming_config
-                streaming_enabled = load_streaming_config(ctx.team_dir)
+                streaming_enabled = infra.streaming
 
                 deps = SessionDeps(
                     agent_completion=agentic_completion,
@@ -334,8 +325,8 @@ class ChatScreen(Screen):
                 setup = prepare_session(
                     iter_dir, ctx.agents, iteration, ctx.model_config, deps,
                     max_turns_override=max_turns, coach=ctx.coach,
-                    fileguard=fileguard, approval_store=approval_store,
-                    worktree_map=worktree_map, diffs_summary=diffs_summary,
+                    fileguard=infra.fileguard, approval_store=infra.approval_store,
+                    worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
                     streaming=streaming_enabled,
                 )
             else:

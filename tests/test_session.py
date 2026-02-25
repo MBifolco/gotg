@@ -812,3 +812,129 @@ def test_run_and_persist_debug_events(tmp_path):
     assert json.loads(debug_lines[0])["turn"] == 1
     # Conversation log should be empty
     assert not setup.log_path.exists() or setup.log_path.read_text().strip() == ""
+
+
+# ── build_session_infra ──────────────────────────────────────────
+
+from gotg.session import SessionInfra, build_session_infra
+
+
+class _FakeCtx:
+    """Minimal duck-typed TeamContext for build_session_infra tests."""
+    def __init__(self, project_root, team_dir, file_access=None, agents=None):
+        self.project_root = project_root
+        self.team_dir = team_dir
+        self.file_access = file_access
+        self.agents = agents or []
+
+
+def _make_team_dir(tmp_path, *, worktrees=False, streaming=False):
+    """Create a minimal team dir for build_session_infra tests."""
+    team_dir = tmp_path / ".team"
+    team_dir.mkdir()
+    config = {"model": {}, "agents": []}
+    if worktrees:
+        config["worktrees"] = {"enabled": True}
+    if streaming:
+        config["streaming"] = True
+    (team_dir / "team.json").write_text(json.dumps(config))
+    return team_dir
+
+
+def test_build_session_infra_basic(tmp_path):
+    """Returns SessionInfra with correct fields, no warnings when no worktrees/diffs."""
+    team_dir = _make_team_dir(tmp_path)
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    ctx = _FakeCtx(tmp_path, team_dir)
+    iteration = {"phase": "refinement"}
+
+    infra = build_session_infra(ctx, iteration, iter_dir)
+
+    assert isinstance(infra, SessionInfra)
+    assert infra.fileguard is None
+    assert infra.approval_store is None
+    assert infra.worktree_map is None
+    assert infra.diffs_summary is None
+    assert infra.streaming is False
+    assert infra.warnings == []
+
+
+def test_build_session_infra_streaming_enabled(tmp_path):
+    """Returns streaming=True when team.json has streaming enabled."""
+    team_dir = _make_team_dir(tmp_path, streaming=True)
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    ctx = _FakeCtx(tmp_path, team_dir)
+    iteration = {"phase": "refinement"}
+
+    infra = build_session_infra(ctx, iteration, iter_dir)
+
+    assert infra.streaming is True
+
+
+def test_build_session_infra_collects_warnings(tmp_path):
+    """Warnings from worktrees + diffs combined in order."""
+    team_dir = _make_team_dir(tmp_path, worktrees=True)
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    ctx = _FakeCtx(tmp_path, team_dir)
+    # Implementation phase triggers worktree setup (but no fileguard → warning)
+    iteration = {"phase": "implementation"}
+
+    infra = build_session_infra(ctx, iteration, iter_dir)
+
+    assert any("file tools" in w for w in infra.warnings)
+
+
+def test_build_session_infra_propagates_setup_error(tmp_path):
+    """SessionSetupError from setup_worktrees propagates."""
+    team_dir = _make_team_dir(tmp_path, worktrees=True)
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    file_access = {"writable_paths": ["**"]}
+    ctx = _FakeCtx(tmp_path, team_dir, file_access=file_access)
+    iteration = {"phase": "implementation"}
+
+    # setup_worktrees will try to ensure_git_repo → fail since no git repo
+    with pytest.raises(SessionSetupError):
+        build_session_infra(ctx, iteration, iter_dir)
+
+
+def test_no_double_persistence_after_wrapper_deletion(tmp_path):
+    """AppendMessage written exactly once to conversation.jsonl when consumed via run_and_persist."""
+    iter_dir = tmp_path / "iter"
+    iter_dir.mkdir()
+    (iter_dir / "conversation.jsonl").touch()
+    msg = {"from": "agent-1", "content": "hello"}
+    events_in = [
+        AppendMessage(msg),
+        AppendMessage({"from": "agent-2", "content": "world"}),
+        SessionComplete(total_turns=1),
+    ]
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+    )
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i"}, iter_dir=iter_dir,
+        model_config={}, history=[], policy=policy, deps=_make_deps(),
+        log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=False, tasks_data=None, current_layer=0,
+        fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    with patch("gotg.engine.run_session", return_value=iter(events_in)):
+        list(run_and_persist(setup))
+
+    lines = setup.log_path.read_text().strip().splitlines()
+    assert len(lines) == 2  # Exactly 2 AppendMessage events, each persisted once
+    assert json.loads(lines[0])["content"] == "hello"
+    assert json.loads(lines[1])["content"] == "world"

@@ -1,11 +1,14 @@
 import json
 
-from gotg.cli import _run_discussion_phase, _run_implementation_phase
+from unittest.mock import patch
+
 from gotg.conversation import read_log
 from gotg.engine import SessionDeps
+from gotg.events import AppendMessage, SessionComplete
 from gotg.model import CompletionRound, StreamingResult
 from gotg.policy import SessionPolicy
 from gotg.prompts import AGENT_TOOLS
+from gotg.session import SessionSetup, run_and_persist
 
 
 AGENTS = [
@@ -65,6 +68,17 @@ def _read_jsonl(path):
     return rows
 
 
+def _make_deps(**overrides):
+    defaults = dict(
+        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
+        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
+        single_completion=None,
+        stream_completion=None,
+    )
+    defaults.update(overrides)
+    return SessionDeps(**defaults)
+
+
 def _text_round(text):
     return CompletionRound(
         content=text,
@@ -110,6 +124,29 @@ def _stream_result(chunks, final_round):
     return result
 
 
+def _make_setup(iter_dir, *, iteration, deps, policy, use_implementation=False, tasks_data=None):
+    """Build a SessionSetup for run_and_persist tests."""
+    log_path = iter_dir / "conversation.jsonl"
+    debug_path = iter_dir / "debug.jsonl"
+    return SessionSetup(
+        agents=AGENTS[:1] if use_implementation else AGENTS,
+        iteration=iteration,
+        iter_dir=iter_dir,
+        model_config=MODEL_CONFIG,
+        history=[],
+        policy=policy,
+        deps=deps,
+        log_path=log_path,
+        debug_path=debug_path,
+        use_implementation=use_implementation,
+        tasks_data=tasks_data,
+        current_layer=iteration.get("current_layer", 0),
+        fileguard=None,
+        approval_store=None,
+        worktree_map=None,
+    )
+
+
 def test_contract_implementation_non_streaming_logs_text_and_tool_ops(tmp_path):
     """Implementation run must persist both assistant text and tool operations."""
     tasks = [
@@ -124,8 +161,6 @@ def test_contract_implementation_non_streaming_logs_text_and_tool_ops(tmp_path):
         }
     ]
     iter_dir = _setup_iter_dir(tmp_path, tasks)
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
 
     def single_completion(**_kw):
         return _tool_round(
@@ -133,12 +168,7 @@ def test_contract_implementation_non_streaming_logs_text_and_tool_ops(tmp_path):
             [{"name": "complete_tasks", "id": "ct1", "input": {"task_ids": ["task-a"], "summary": "done"}}],
         )
 
-    deps = SessionDeps(
-        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
-        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
-        single_completion=single_completion,
-        stream_completion=None,
-    )
+    deps = _make_deps(single_completion=single_completion)
     policy = _make_policy(max_turns=5, streaming=False)
     iteration = {
         "id": "iter-1",
@@ -148,20 +178,14 @@ def test_contract_implementation_non_streaming_logs_text_and_tool_ops(tmp_path):
         "current_layer": 0,
     }
 
-    _run_implementation_phase(
-        [AGENTS[0]],
-        iteration,
-        iter_dir,
-        MODEL_CONFIG,
-        deps,
-        history=[],
-        policy=policy,
-        log_path=log_path,
-        debug_path=debug_path,
+    setup = _make_setup(
+        iter_dir, iteration=iteration, deps=deps, policy=policy,
+        use_implementation=True, tasks_data=tasks,
     )
+    list(run_and_persist(setup))
 
-    messages = read_log(log_path)
-    debug_rows = _read_jsonl(debug_path)
+    messages = read_log(setup.log_path)
+    debug_rows = _read_jsonl(setup.debug_path)
 
     assert any(m.get("from") == "agent-1" and "Implemented task-a" in m.get("content", "") for m in messages)
     assert any(
@@ -189,8 +213,6 @@ def test_contract_implementation_streaming_logs_text_and_tool_ops(tmp_path):
         }
     ]
     iter_dir = _setup_iter_dir(tmp_path, tasks)
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
 
     def stream_completion(**_kw):
         return _stream_result(
@@ -201,12 +223,7 @@ def test_contract_implementation_streaming_logs_text_and_tool_ops(tmp_path):
             ),
         )
 
-    deps = SessionDeps(
-        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
-        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
-        single_completion=lambda **_kw: _text_round("drift-check"),
-        stream_completion=stream_completion,
-    )
+    deps = _make_deps(stream_completion=stream_completion)
     policy = _make_policy(max_turns=5, streaming=True)
     iteration = {
         "id": "iter-1",
@@ -216,20 +233,14 @@ def test_contract_implementation_streaming_logs_text_and_tool_ops(tmp_path):
         "current_layer": 0,
     }
 
-    _run_implementation_phase(
-        [AGENTS[0]],
-        iteration,
-        iter_dir,
-        MODEL_CONFIG,
-        deps,
-        history=[],
-        policy=policy,
-        log_path=log_path,
-        debug_path=debug_path,
+    setup = _make_setup(
+        iter_dir, iteration=iteration, deps=deps, policy=policy,
+        use_implementation=True, tasks_data=tasks,
     )
+    list(run_and_persist(setup))
 
-    messages = read_log(log_path)
-    debug_rows = _read_jsonl(debug_path)
+    messages = read_log(setup.log_path)
+    debug_rows = _read_jsonl(setup.debug_path)
 
     assert any(m.get("from") == "agent-1" and m.get("content") == "Implemented task-a" for m in messages)
     assert any(
@@ -246,8 +257,6 @@ def test_contract_implementation_streaming_logs_text_and_tool_ops(tmp_path):
 def test_contract_discussion_streaming_logs_text_and_tool_ops(tmp_path):
     """Discussion streaming path must persist both operation logs and final assistant text."""
     iter_dir = _setup_iter_dir(tmp_path)
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
 
     rounds = iter([
         _tool_round(
@@ -262,12 +271,7 @@ def test_contract_discussion_streaming_logs_text_and_tool_ops(tmp_path):
         chunks = ["Reading context"] if rnd.tool_calls else ["Done with analysis"]
         return _stream_result(chunks, rnd)
 
-    deps = SessionDeps(
-        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
-        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
-        single_completion=None,
-        stream_completion=stream_completion,
-    )
+    deps = _make_deps(stream_completion=stream_completion)
     policy = _make_policy(max_turns=1, streaming=True)
     iteration = {
         "id": "iter-1",
@@ -276,19 +280,14 @@ def test_contract_discussion_streaming_logs_text_and_tool_ops(tmp_path):
         "max_turns": 1,
     }
 
-    _run_discussion_phase(
-        [AGENTS[0]],
-        iteration,
-        MODEL_CONFIG,
-        deps,
-        history=[],
-        policy=policy,
-        log_path=log_path,
-        debug_path=debug_path,
+    setup = _make_setup(
+        iter_dir, iteration=iteration, deps=deps, policy=policy,
+        use_implementation=False,
     )
+    list(run_and_persist(setup))
 
-    messages = read_log(log_path)
-    debug_rows = _read_jsonl(debug_path)
+    messages = read_log(setup.log_path)
+    debug_rows = _read_jsonl(setup.debug_path)
 
     assert any(
         m.get("from") == "system"
@@ -306,8 +305,6 @@ def test_contract_discussion_streaming_logs_text_and_tool_ops(tmp_path):
 def test_contract_pass_turn_does_not_suppress_next_agent_message(tmp_path):
     """A pass_turn streaming turn must not suppress the next agent's real response."""
     iter_dir = _setup_iter_dir(tmp_path)
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
 
     rounds = iter([
         _tool_round("", [{"name": "pass_turn", "id": "pt1", "input": {"reason": "nothing to add"}}]),
@@ -320,12 +317,7 @@ def test_contract_pass_turn_does_not_suppress_next_agent_message(tmp_path):
         chunks = ["agent-2 substantive reply"] if rnd.content else []
         return _stream_result(chunks, rnd)
 
-    deps = SessionDeps(
-        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
-        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
-        single_completion=None,
-        stream_completion=stream_completion,
-    )
+    deps = _make_deps(stream_completion=stream_completion)
     policy = _make_policy(max_turns=2, streaming=True)
     iteration = {
         "id": "iter-1",
@@ -334,18 +326,13 @@ def test_contract_pass_turn_does_not_suppress_next_agent_message(tmp_path):
         "max_turns": 2,
     }
 
-    _run_discussion_phase(
-        AGENTS,
-        iteration,
-        MODEL_CONFIG,
-        deps,
-        history=[],
-        policy=policy,
-        log_path=log_path,
-        debug_path=debug_path,
+    setup = _make_setup(
+        iter_dir, iteration=iteration, deps=deps, policy=policy,
+        use_implementation=False,
     )
+    list(run_and_persist(setup))
 
-    messages = read_log(log_path)
+    messages = read_log(setup.log_path)
     assert any(m.get("pass_turn") for m in messages)
     assert any(m.get("from") == "agent-2" and "substantive reply" in m.get("content", "") for m in messages)
 
@@ -373,8 +360,6 @@ def test_contract_layer_dispatch_only_affects_current_layer(tmp_path):
         },
     ]
     iter_dir = _setup_iter_dir(tmp_path, tasks)
-    log_path = iter_dir / "conversation.jsonl"
-    debug_path = iter_dir / "debug.jsonl"
 
     call_count = {"single": 0}
 
@@ -385,12 +370,7 @@ def test_contract_layer_dispatch_only_affects_current_layer(tmp_path):
             [{"name": "complete_tasks", "id": "ct1", "input": {"task_ids": ["layer0-task"], "summary": "done"}}],
         )
 
-    deps = SessionDeps(
-        agent_completion=lambda **_kw: {"content": "unused", "operations": []},
-        coach_completion=lambda **_kw: {"content": "unused", "tool_calls": []},
-        single_completion=single_completion,
-        stream_completion=None,
-    )
+    deps = _make_deps(single_completion=single_completion)
     policy = _make_policy(max_turns=5, streaming=False)
     iteration = {
         "id": "iter-1",
@@ -400,17 +380,11 @@ def test_contract_layer_dispatch_only_affects_current_layer(tmp_path):
         "current_layer": 0,
     }
 
-    _run_implementation_phase(
-        AGENTS,
-        iteration,
-        iter_dir,
-        MODEL_CONFIG,
-        deps,
-        history=[],
-        policy=policy,
-        log_path=log_path,
-        debug_path=debug_path,
+    setup = _make_setup(
+        iter_dir, iteration=iteration, deps=deps, policy=policy,
+        use_implementation=True, tasks_data=tasks,
     )
+    list(run_and_persist(setup))
 
     saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     t0 = next(t for t in saved_tasks if t["id"] == "layer0-task")
