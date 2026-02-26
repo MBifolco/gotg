@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gotg.conversation import ConversationStore
     from gotg.engine import SessionDeps
     from gotg.policy import SessionPolicy
 
@@ -190,6 +191,7 @@ class SessionSetup:
     fileguard: object | None
     approval_store: object | None
     worktree_map: dict | None
+    conv_store: ConversationStore | None = None
     warnings: list[str] = field(default_factory=list)
 
 

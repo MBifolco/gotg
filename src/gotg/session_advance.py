@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from gotg.conversation import append_message
+from gotg.conversation import ConversationStore
 from gotg.session_types import (
     AdvanceResult,
     NextLayerResult,
@@ -70,7 +70,6 @@ def advance_phase(
         load_coach, load_model_config, load_worktree_config,
         save_iteration_fields, save_iteration_phase,
     )
-    from gotg.conversation import read_phase_history
     from gotg.transitions import (
         auto_commit_layer_worktrees, build_phase_skeleton, build_transition_messages,
         extract_refinement_summary, extract_task_notes, extract_tasks,
@@ -82,9 +81,10 @@ def advance_phase(
 
     current_phase, next_phase = validate_advance(iteration)
     log_path = iter_dir / "conversation.jsonl"
+    store = ConversationStore(log_path)
 
     # Guard: refuse to advance if no conversation happened in this phase
-    phase_history = read_phase_history(log_path)
+    phase_history = store.read_phase_history()
     agent_messages = [m for m in phase_history if m.get("from") not in ("system", "human")]
     if not agent_messages:
         raise PhaseAdvanceError(
@@ -100,7 +100,7 @@ def advance_phase(
     if current_phase == "refinement" and next_phase == "planning" and coach:
         _progress("Summarizing refinement conversation...")
         model_config = load_model_config(team_dir)
-        history = read_phase_history(log_path)
+        history = store.read_phase_history()
         summary = extract_refinement_summary(history, model_config, coach["name"], chat_call)
         summary_path = iter_dir / "refinement_summary.md"
         summary_path.write_text(summary + "\n")
@@ -111,7 +111,7 @@ def advance_phase(
     if current_phase == "planning" and next_phase == "pre-code-review" and coach:
         _progress("Extracting tasks from planning conversation...")
         model_config = load_model_config(team_dir)
-        history = read_phase_history(log_path)
+        history = store.read_phase_history()
         summary_path = iter_dir / "refinement_summary.md"
         ref_summary = summary_path.read_text().strip() if summary_path.exists() else None
         tasks, raw_text, error = extract_tasks(
@@ -138,7 +138,7 @@ def advance_phase(
             if tasks_path.exists():
                 _progress("Extracting task notes from pre-code-review...")
                 model_config = load_model_config(team_dir)
-                history = read_phase_history(log_path)
+                history = store.read_phase_history()
                 from gotg.tasks import load_tasks_file, save_tasks_file
                 tasks_data = load_tasks_file(tasks_path)
                 notes_map, raw_text, error = extract_task_notes(
@@ -173,7 +173,7 @@ def advance_phase(
     # Capture phase history BEFORE writing boundary markers —
     # read_phase_history returns messages after the last boundary,
     # so it must be called while the current phase's content is still "last".
-    history_for_skeleton = read_phase_history(log_path)
+    history_for_skeleton = store.read_phase_history()
     coach_name_for_skeleton = coach["name"] if coach else "coach"
 
     # Save phase change + boundary markers
@@ -182,8 +182,8 @@ def advance_phase(
     boundary_msg, transition_msg = build_transition_messages(
         iteration["id"], current_phase, next_phase, tasks_written, coach_ran,
     )
-    append_message(log_path, boundary_msg)
-    append_message(log_path, transition_msg)
+    store.append(boundary_msg)
+    store.append(transition_msg)
 
     # Compute and accumulate phase skeleton from pre-boundary history
     skeleton_path = iter_dir / "phase_skeleton.md"
@@ -298,7 +298,6 @@ def advance_next_layer(
     """Advance to next layer after implementation/code-review. Raises ReviewError on failure."""
     from gotg.checkpoint import create_checkpoint
     from gotg.config import load_coach, load_worktree_config, save_iteration_fields
-    from gotg.conversation import append_message as conv_append_message
 
     def _progress(msg: str) -> None:
         if on_progress:
@@ -352,6 +351,7 @@ def advance_next_layer(
     # Log transition with boundary marker
     from_phase = iteration.get("phase", "implementation")
     log_path = iter_dir / "conversation.jsonl"
+    store = ConversationStore(log_path)
     boundary_msg = {
         "from": "system",
         "iteration": iteration["id"],
@@ -361,7 +361,7 @@ def advance_next_layer(
         "to_phase": "implementation",
         "layer": next_layer,
     }
-    conv_append_message(log_path, boundary_msg)
+    store.append(boundary_msg)
     transition_msg = {
         "from": "system",
         "iteration": iteration["id"],
@@ -370,7 +370,7 @@ def advance_next_layer(
             f"Advancing to layer {next_layer} (implementation) ---"
         ),
     }
-    conv_append_message(log_path, transition_msg)
+    store.append(transition_msg)
 
     # Auto-checkpoint
     iteration["phase"] = "implementation"

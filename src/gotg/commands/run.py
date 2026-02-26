@@ -3,7 +3,7 @@ from pathlib import Path
 
 import gotg.cli as _cli
 from gotg.context import TeamContext
-from gotg.conversation import append_message, render_message
+from gotg.conversation import ConversationStore, render_message
 from gotg.session import (
     SessionSetupError, resolve_layer, validate_iteration_for_run,
     build_session_infra,
@@ -98,7 +98,7 @@ def cmd_continue(args):
             "iteration": iteration["id"],
             "content": args.message,
         }
-        append_message(log_path, msg)
+        ConversationStore(log_path).append(msg)
         print(render_message(msg))
         print()
 

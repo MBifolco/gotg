@@ -3,7 +3,7 @@ from pathlib import Path
 
 import gotg.cli as _cli
 from gotg.context import TeamContext
-from gotg.conversation import append_message, read_log, render_message
+from gotg.conversation import ConversationStore, render_message
 from gotg.groom import (
     generate_slug, validate_slug, existing_slugs,
     write_grooming_metadata, load_grooming_metadata,
@@ -73,7 +73,8 @@ def cmd_groom_continue(args):
     coach = ctx.coach if metadata.get("coach") else None
 
     log_path = groom_dir / "conversation.jsonl"
-    history = read_log(log_path)
+    store = ConversationStore(log_path)
+    history = store.read_full()
 
     # Count current agent turns (not human/coach/system)
     non_agent = {"human", "system"}
@@ -88,7 +89,7 @@ def cmd_groom_continue(args):
             "iteration": args.slug,
             "content": args.message,
         }
-        append_message(log_path, msg)
+        store.append(msg)
         print(render_message(msg))
         print()
 
@@ -136,7 +137,7 @@ def cmd_groom_show(args):
 
     _, groom_dir = load_grooming_metadata(team_dir, args.slug)
     log_path = groom_dir / "conversation.jsonl"
-    messages = read_log(log_path)
+    messages = ConversationStore(log_path).read_full()
 
     if not messages:
         print("No messages yet.")

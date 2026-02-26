@@ -8,7 +8,7 @@ from gotg.config import (
     load_coach, get_current_iteration, save_model_config,
     save_iteration_fields, read_dotenv, ensure_dotenv_key,
 )
-from gotg.conversation import read_log, render_message
+from gotg.conversation import ConversationStore, render_message
 from gotg.scaffold import init_project
 
 
@@ -101,7 +101,7 @@ def cmd_show(args):
 
     iteration, iter_dir = get_current_iteration(team_dir)
     log_path = iter_dir / "conversation.jsonl"
-    messages = read_log(log_path)
+    messages = ConversationStore(log_path).read_full()
 
     if not messages:
         print("No messages yet.")

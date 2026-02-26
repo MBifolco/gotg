@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Iterator
 
-from gotg.conversation import append_debug, append_message
+from gotg.conversation import ConversationStore
 from gotg.engine import SessionDeps
 from gotg.events import AppendDebug, AppendMessage
 from gotg.session_types import (
@@ -91,12 +91,12 @@ def prepare_grooming_session(
     Parallel to prepare_session() but uses grooming_policy.
     Caller provides deps (preserves mock targets — bridge pattern).
     """
-    from gotg.conversation import read_log
     from gotg.policy import grooming_policy
 
     log_path = groom_dir / "conversation.jsonl"
     debug_path = groom_dir / "debug.jsonl"
-    history = read_log(log_path)
+    store = ConversationStore(log_path, debug_path)
+    history = store.read_full()
 
     policy = grooming_policy(
         agents=agents, topic=topic, history=history,
@@ -109,6 +109,7 @@ def prepare_grooming_session(
         deps=deps, log_path=log_path, debug_path=debug_path,
         use_implementation=False, tasks_data=None, current_layer=0,
         fileguard=None, approval_store=None, worktree_map=None,
+        conv_store=store,
     )
 
 
@@ -124,7 +125,7 @@ def prepare_continue(
     Caller renders injected_messages and decides whether to bail on has_pending_approvals.
     Caller applies its own max_turns semantics using current_agent_turns.
     """
-    from gotg.conversation import read_phase_history
+    store = ConversationStore(log_path)
 
     injected: list[dict] = []
     pending_count = 0
@@ -134,6 +135,7 @@ def prepare_continue(
         injected = apply_and_inject(
             infra.approval_store, infra.fileguard, iteration, log_path,
             worktree_map=infra.worktree_map,
+            store=store,
         )
         remaining = infra.approval_store.get_pending()
         if remaining:
@@ -141,7 +143,7 @@ def prepare_continue(
             pending_count = len(remaining)
 
     # Count current engineering agent turns (not human/coach/system)
-    history = read_phase_history(log_path)
+    history = store.read_phase_history()
     non_agent = {"human", "system"}
     if coach_name:
         non_agent.add(coach_name)
@@ -176,12 +178,12 @@ def prepare_session(
     Reads phase history, builds policy, resolves phase routing.
     Caller provides deps (preserves mock targets — bridge pattern).
     """
-    from gotg.conversation import read_phase_history
     from gotg.policy import iteration_policy
 
     log_path = iter_dir / "conversation.jsonl"
     debug_path = iter_dir / "debug.jsonl"
-    history = read_phase_history(log_path)
+    store = ConversationStore(log_path, debug_path)
+    history = store.read_phase_history()
 
     policy = iteration_policy(
         agents=agents, iteration=iteration, iter_dir=iter_dir,
@@ -227,6 +229,7 @@ def prepare_session(
         fileguard=fileguard,
         approval_store=approval_store,
         worktree_map=worktree_map,
+        conv_store=store,
     )
 
 
@@ -261,18 +264,42 @@ def run_and_persist(setup: SessionSetup) -> Iterator:
             history=setup.history, policy=setup.policy,
         )
 
+    store = setup.conv_store or ConversationStore(setup.log_path, setup.debug_path)
     for event in gen:
         if isinstance(event, (AppendMessage, AppendDebug)):
-            persist_event(event, setup.log_path, setup.debug_path)
+            persist_event(event, store=store)
         yield event
 
 
-def persist_event(event: object, log_path: Path, debug_path: Path) -> None:
-    """Persist AppendMessage/AppendDebug events to disk. Other event types are no-ops."""
-    if isinstance(event, AppendMessage):
-        append_message(log_path, event.msg)
-    elif isinstance(event, AppendDebug):
-        append_debug(debug_path, event.entry)
+def persist_event(
+    event: object,
+    log_path: Path | None = None,
+    debug_path: Path | None = None,
+    *,
+    store: ConversationStore | None = None,
+) -> None:
+    """Persist AppendMessage/AppendDebug events to disk. Other event types are no-ops.
+
+    Accepts either (event, log_path, debug_path) or (event, store=store).
+    """
+    if store is not None and (log_path is not None or debug_path is not None):
+        raise TypeError("persist_event: pass store= OR (log_path, debug_path), not both")
+    if store is None and log_path is None:
+        raise TypeError("persist_event: must pass store= or (log_path, debug_path)")
+    if store is None and debug_path is None:
+        raise TypeError("persist_event: legacy mode requires both log_path and debug_path")
+
+    if store is not None:
+        if isinstance(event, AppendMessage):
+            store.append(event.msg)
+        elif isinstance(event, AppendDebug):
+            store.append_debug(event.entry)
+    else:
+        from gotg.conversation import append_debug, append_message
+        if isinstance(event, AppendMessage):
+            append_message(log_path, event.msg)
+        elif isinstance(event, AppendDebug):
+            append_debug(debug_path, event.entry)
 
 
 def validate_iteration_for_run(iteration: dict, iter_dir: Path, agents: list[dict]) -> None:
@@ -429,6 +456,7 @@ def apply_and_inject(
     iteration: dict,
     log_path: Path,
     worktree_map: dict | None = None,
+    store: ConversationStore | None = None,
 ) -> list[dict]:
     """Apply approved writes and inject denial messages.
 
@@ -437,6 +465,7 @@ def apply_and_inject(
     """
     from gotg.approvals import apply_approved_writes
 
+    conv = store or ConversationStore(log_path)
     messages: list[dict] = []
 
     # Route writes to agent worktrees when available
@@ -461,7 +490,7 @@ def apply_and_inject(
                 else f"[file_write] APPROVAL FAILED: {r['message']}"
             ),
         }
-        append_message(log_path, msg)
+        conv.append(msg)
         messages.append(msg)
 
     for req in approval_store.get_denied_uninjected():
@@ -474,7 +503,7 @@ def apply_and_inject(
                 f"(Originally requested by {req['requested_by']})"
             ),
         }
-        append_message(log_path, msg)
+        conv.append(msg)
         messages.append(msg)
         approval_store.mark_injected(req["id"])
 

@@ -91,6 +91,61 @@ def test_persist_event_multiple_messages(tmp_path):
     assert len(debug_lines) == 1
 
 
+# ── persist_event (store-based) ──────────────────────────────
+
+
+def test_persist_event_with_store(tmp_path):
+    from gotg.conversation import ConversationStore
+    store = ConversationStore(tmp_path / "conv.jsonl", tmp_path / "debug.jsonl")
+    msg = {"from": "agent-1", "content": "via store"}
+    persist_event(AppendMessage(msg), store=store)
+    lines = store.log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["content"] == "via store"
+
+
+def test_persist_event_store_debug(tmp_path):
+    from gotg.conversation import ConversationStore
+    store = ConversationStore(tmp_path / "conv.jsonl", tmp_path / "debug.jsonl")
+    persist_event(AppendDebug({"turn": 1}), store=store)
+    lines = store.debug_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["turn"] == 1
+
+
+def test_persist_event_store_debug_noop_when_no_debug_path(tmp_path):
+    from gotg.conversation import ConversationStore
+    store = ConversationStore(tmp_path / "conv.jsonl")  # no debug_path
+    persist_event(AppendDebug({"turn": 1}), store=store)
+    assert not (tmp_path / "debug.jsonl").exists()
+
+
+def test_persist_event_rejects_mixed_args(tmp_path):
+    from gotg.conversation import ConversationStore
+    store = ConversationStore(tmp_path / "conv.jsonl")
+    with pytest.raises(TypeError, match="not both"):
+        persist_event(AppendMessage({"from": "a", "content": "x"}),
+                      tmp_path / "log", tmp_path / "debug", store=store)
+
+
+def test_persist_event_rejects_no_args():
+    with pytest.raises(TypeError, match="must pass"):
+        persist_event(AppendMessage({"from": "a", "content": "x"}))
+
+
+def test_persist_event_rejects_partial_legacy(tmp_path):
+    with pytest.raises(TypeError, match="legacy mode requires"):
+        persist_event(AppendMessage({"from": "a", "content": "x"}), tmp_path / "log")
+
+
+def test_persist_event_store_noop_for_other_events(tmp_path):
+    from gotg.conversation import ConversationStore
+    store = ConversationStore(tmp_path / "conv.jsonl", tmp_path / "debug.jsonl")
+    persist_event(SessionComplete(total_turns=5), store=store)
+    assert not store.log_path.exists()
+    assert not store.debug_path.exists()
+
+
 # ── resolve_layer ────────────────────────────────────────────
 
 

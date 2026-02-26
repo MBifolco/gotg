@@ -11,7 +11,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input
 
-from gotg.conversation import append_message, read_log
+from gotg.conversation import ConversationStore
 from gotg.events import (
     AdvanceComplete,
     AdvanceError,
@@ -81,6 +81,7 @@ class ChatScreen(Screen):
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
         self._debug_path = data_dir / "debug.jsonl"
+        self._conv_store = ConversationStore(self._log_path, self._debug_path)
         # Streaming state
         self._streaming_widget = None       # StreamingChatbox | None
         self._streaming_turn_id: str | None = None
@@ -107,7 +108,7 @@ class ChatScreen(Screen):
 
     def _load_initial_messages(self) -> None:
         """Parse conversation log and populate the message list."""
-        messages = read_log(self._log_path) if self._log_path.exists() else []
+        messages = self._conv_store.read_full()
 
         msg_list = self.query_one("#message-list", MessageList)
         msg_list.load_messages(messages)
@@ -232,7 +233,7 @@ class ChatScreen(Screen):
                 "iteration": iteration_id,
                 "content": human_message,
             }
-            append_message(self._log_path, msg)
+            self._conv_store.append(msg)
             msg_list = self.query_one("#message-list", MessageList)
             msg_list.append_message(msg)
 
@@ -785,7 +786,7 @@ class ChatScreen(Screen):
                     f"Advanced to layer {layer} ({new_phase}). Press R to run."
                 )
                 # Append only the new messages (boundary + transition)
-                messages = read_log(self._log_path) if self._log_path.exists() else []
+                messages = self._conv_store.read_full()
                 msg_list = self.query_one("#message-list", MessageList)
                 for m in messages[-2:]:
                     msg_list.append_message(m)
