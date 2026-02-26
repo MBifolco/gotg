@@ -2,180 +2,261 @@
 
 ## Background
 
-The codebase grew through 17 iterations of feature development plus R1–R6 refactoring rounds (TypedDict shapes, session engine, composable transitions, prompt externalization, session policies, grooming→refinement rename). The R1–R6 work established clean architectural layers but left orchestration logic duplicated across CLI, TUI, and grooming code paths. Two planning conversations (with Codex and Claude Code, Feb 2025) established this 7-phase roadmap to complete the structural cleanup.
+The codebase grew through 17 iterations of feature development, TUI iterations 1–9, streaming stages 1–2, and refactoring phases R1–R6 plus Phase 7 (phase capability table). The original 7-phase roadmap is complete:
 
-## Phase 1: SessionService — Headless Orchestration
+| Phase | Status | What it did |
+|-------|--------|-------------|
+| 1. SessionService | Complete | Headless orchestration — CLI/TUI as thin adapters over shared session.py |
+| 2. Schema Versioning | Complete | migration.py with per-schema pipelines, forward-compatible |
+| 3. Provider Split | Complete | model/ package with per-provider modules (anthropic.py, openai.py) |
+| 4. Per-Agent Model Routing | Complete | Agent-level model overrides, SessionDeps carries resolver |
+| 5. CLI Command Split | Complete | commands/ package (run, advance, review, groom, admin) |
+| 6. Shared Tool-Loop Helpers | Complete | tools.py extracts shared primitives from engine.py + implementation.py |
+| 7. Phase Capability Table | Complete | phases.py — declarative PhaseCapabilities, replaces ~16 string checks |
 
-**Status: Complete (3 sub-phases)**
+### Architecture assessment (post-Phase 7)
 
-CLI and TUI become thin I/O adapters over a shared session service that owns persistence and yields domain events.
+**Overall: 8.0 / 10** — well-structured with honestly-earned abstractions. Strengths: event-driven engine (pure generator, no I/O), bridge pattern DI (SessionDeps), immutable policies, schema migration, 1378-test suite. Key remaining risks: session.py supermodule (1,278 LOC), SystemExit in lower layers, domain logic leaking into TUI, scattered persistence I/O.
 
-### Design Principles
-- **Persist-then-emit invariant**: Service persists state first, then yields events — "committed events" only, not pre-commit intents
-- **Bridge pattern**: SessionDeps carries model callables from CLI/TUI module-level imports into engine, preserving all mock targets
-- **Duck-typed ctx**: `build_session_infra` takes `ctx` as `Any` to avoid import cycles with TeamContext
-- **Adapters only**: parse input → call service → iterate events → render
-
-### Sub-phase 1: Core Session Abstractions
-- `SessionSetup` dataclass — everything needed to run a session
-- `prepare_session()` — unified setup builder (iteration_policy + history + phase routing)
-- `run_and_persist()` — unified session runner with event persistence (persist-then-emit)
-- `persist_event()` — append AppendMessage/AppendDebug to disk
-- CLI `run_conversation()` reduced to: build deps → prepare_session → _handle_cli_events
-- TUI `_run_engine()` uses same `run_and_persist()` for its event loop
-
-### Sub-phase 2: Infrastructure Consolidation
-- Deleted backward-compat wrappers (`_run_discussion_phase`, `_run_implementation_phase`)
-- Migrated 14 test callers to use `_handle_cli_events()` or `run_and_persist()` directly
-- `build_session_infra()` consolidates: build_file_infra + setup_worktrees + load_diffs_for_review + load_streaming_config
-- `SessionInfra` dataclass holds all infrastructure state
-- `cmd_run`, `cmd_continue`, TUI `_run_engine` all use `build_session_infra()`
-
-### Sub-phase 3: Final Deduplication
-- `prepare_grooming_session()` — parallel to prepare_session for grooming conversations
-- Consolidated grooming event handler into parameterized `_handle_cli_events()`
-- `prepare_continue()` — extracts approval injection + turn counting for CLI/TUI reuse
-- Deleted `refresh_history()` dead code
-
-### Key Artifacts
-- `src/gotg/session.py` — shared session helpers (~1200 lines)
-- `src/gotg/events.py` — 10+ event dataclasses
-- `src/gotg/engine.py` — SessionDeps, run_session generator
-- `src/gotg/implementation.py` — run_implementation generator
+**Scores:**
+- Modularity: 7.5 — good adapter split, session.py still too broad
+- Extensibility: 7.8 — phase caps + events + bridge pattern are strong foundations
+- Data model durability: 7.5 — schema migration is real and forward-safe
+- Operational robustness: 7.0 — single-process assumption is fine for CLI; SystemExit leaks are the concern
+- Testability: 9.0 — standout strength, bridge pattern preserves mock targets
 
 ---
 
-## Phase 2: Schema Versioning
+## Phase 8: Split session.py by Bounded Context
 
 **Status: Not started**
 
-Add version fields to on-disk schemas + in-memory migration on load. Prevents breakage when adding fields to iteration.json, tasks.json, team.json, grooming.json.
+session.py is 1,278 LOC with 40+ functions across 8 responsibility areas. Commands already consume it in distinct clusters — this split formalizes those boundaries.
 
-### Scope
-- Add `"schema_version": 1` to each JSON schema
-- Migration functions: `migrate_iteration(data) → data` that normalize old formats
-- Apply on load (config.py load functions), never rewrite files on migration
-- Start with iteration.json (already has `_normalize_phase()` as precedent)
-- Extend to tasks.json, team.json, grooming.json
+### Target Modules
 
-### Design Considerations
-- In-memory only — don't rewrite user files on load
-- Forward-compatible: unknown fields are preserved (no strict validation)
-- Migration is a pipeline: v0 → v1 → v2 (each step is a small function)
-- `_normalize_phase()` in config.py is the existing pattern to generalize
+**session_setup.py** — preparation and validation (~400 LOC)
+- `SessionSetup`, `SessionInfra`, `ContinueContext` dataclasses
+- `validate_iteration_for_run()`, `build_file_infra()`, `setup_worktrees()`
+- `build_session_infra()`, `prepare_session()`, `prepare_grooming_session()`, `prepare_continue()`
+- `resolve_layer()`, `run_and_persist()`, `persist_event()`, `apply_and_inject()`
+- Consumed by: `commands/run.py`, `commands/groom.py`, `tui/screens/chat.py`
 
----
+**session_advance.py** — phase transitions and layer progression (~350 LOC)
+- `PhaseAdvanceError`, `AdvanceResult` dataclasses
+- `validate_advance()`, `advance_phase()`, `validate_next_layer()`, `advance_next_layer()`
+- Consumed by: `commands/advance.py`, `tui/screens/chat.py`
 
-## Phase 3: Provider Split
+**session_review.py** — review, merge, and conflict resolution (~500 LOC)
+- `ReviewError`, `BranchReview`, `ReviewResult`, `MergeResult`, `NextLayerResult` dataclasses
+- `ConflictFileInfo`, `ConflictInfo`, `AiResolutionResult`, `ResolutionStrategy`
+- `load_diffs_for_review()`, `load_review_branches()`, `merge_branches()`
+- `load_conflict_info()`, `resolve_conflict_file()`, `ai_resolve_conflict()`, `finalize_merge()`
+- Consumed by: `commands/review.py`, `tui/screens/review.py`, `tui/screens/conflict.py`
 
-**Status: Not started**
-
-Split `model.py` into a `model/` package with per-provider modules.
-
-### Scope
-- `model/__init__.py` — public API (chat_completion, agentic_completion, raw_completion, raw_completion_stream)
-- `model/anthropic.py` — Anthropic-specific completion paths + prompt caching
-- `model/openai.py` — OpenAI-compatible completion paths (also used by Ollama)
-- `model/types.py` — CompletionRound, StreamingResult, shared types
-- `model/routing.py` — provider dispatch logic
-
-### Design Considerations
-- Zero change to public API — all existing imports from `gotg.model` still work
-- `__init__.py` re-exports everything
-- Provider dispatch stays in routing.py (currently the `if provider == "anthropic"` branches)
-- Prompt caching logic stays in anthropic.py
-
----
-
-## Phase 4: Per-Agent Model Routing
-
-**Status: Not started**
-
-Allow different agents to use different models (e.g., coach on GPT-4, agents on Claude Sonnet).
-
-### Scope
-- Config extension: `team.json` agent entries get optional `"model"` override
-- Resolver with merge semantics: agent model config = team default ∪ agent override
-- SessionDeps carries resolver function instead of single model_config dict
-- Engine calls resolver per-agent before each completion
-
-### Design Considerations
-- Backwards compatible: agents without `"model"` key use team default
-- Coach can have its own model config too
-- API key resolution per-provider (agent using OpenAI needs OPENAI_API_KEY even if team default is Anthropic)
-
----
-
-## Phase 5: CLI Command Split
-
-**Status: Not started**
-
-Split `cli.py` (~1175 lines) into a `commands/` directory.
-
-### Scope
-- `cli.py` becomes pure dispatcher: argparse setup + command routing
-- `commands/run.py` — cmd_run, cmd_continue, run_conversation
-- `commands/advance.py` — cmd_advance, cmd_next_layer
-- `commands/review.py` — cmd_review, cmd_merge, cmd_worktrees, cmd_commit_worktrees
-- `commands/groom.py` — cmd_groom_start, cmd_groom_continue, cmd_groom_list, cmd_groom_show
-- `commands/admin.py` — cmd_init, cmd_model, cmd_checkpoint, cmd_checkpoints, cmd_restore, cmd_approvals, cmd_approve, cmd_deny
-
-### Design Considerations
-- Shared helpers stay in cli.py or move to a commands/helpers.py
-- `find_team_dir()`, `_auto_checkpoint()`, `_print_session_header()`, `_handle_cli_events()` are shared
-- Import structure: commands import from session.py and shared helpers, never from each other
-
----
-
-## Phase 6: Shared Tool-Loop Helpers
-
-**Status: Not started**
-
-Extract tool execution primitives shared between engine.py and implementation.py.
-
-### Scope
-- Both engine.py (`_do_streaming_agent_turn`) and implementation.py (`run_implementation`) have tool execution loops
-- Extract: tool call parsing, tool result formatting, multi-round loop scaffolding
-- Defer full unification — the loops have genuinely different semantics (round-robin vs per-agent sequential)
-
-### Design Considerations
-- Don't over-abstract: extract shared primitives, not a generic "tool loop framework"
-- implementation.py has task completion tracking that engine.py doesn't
-- engine.py has coach turn interleaving that implementation.py doesn't
-- The shared parts: tool call extraction from response, tool result formatting, safety classification
-
----
-
-## Phase 7: Phase Capability Table
-
-**Status: Deferred**
-
-Replace hardcoded phase logic with a declarative capability table.
-
-### Scope
-- Each phase declares: allowed tools, coach behavior, file access, worktree usage
-- Currently scattered across: policy.py (iteration_policy), engine.py (phase checks), session.py (setup_worktrees phase gate)
-- Deferred until configurable/custom phases are on the roadmap
-
-### Design Considerations
-- Only worth doing when users need to define custom phases
-- Current hardcoded approach is readable and well-tested
-- The phase capability table would replace ~5 different `if phase == "implementation"` checks
-
----
-
-## Architecture After All Phases
-
-```
-CLI commands/ ──→ session.py (service) ──→ engine.py (generator)
-TUI screens/  ──→ session.py (service) ──→ implementation.py (generator)
-                        ↓
-                  events.py (typed events)
-                        ↓
-              model/ (per-provider completion)
+**session.py** becomes a re-export shim for backward compatibility:
+```python
+from gotg.session_setup import *    # noqa: F401,F403
+from gotg.session_advance import *  # noqa: F401,F403
+from gotg.session_review import *   # noqa: F401,F403
 ```
 
-- **session.py**: owns persistence, setup, transitions, review/merge
-- **engine.py**: stateless generator, yields events, no I/O
-- **model/**: per-provider completion, prompt caching, streaming
+### Design Considerations
+- Re-export shim means zero test modifications — all existing `from gotg.session import X` continue to work
+- New code should import from the specific module (`from gotg.session_setup import prepare_session`)
+- `SessionSetupError` stays in session_setup.py; `ReviewError` in session_review.py; `PhaseAdvanceError` in session_advance.py
+- Cross-module dependency: `advance_phase()` calls `auto_commit_layer_worktrees()` from transitions.py and `create_checkpoint()` from checkpoint.py — those stay external, no circular deps
+- Expected blast radius: ~50 import updates in tests if we migrate them, 0 if we keep the re-export shim
+
+---
+
+## Phase 9: SessionDeps Invariant Validation
+
+**Status: Not started**
+
+SessionDeps carries 5 optional callables. The engine assumes certain invariants (e.g., `stream_completion` is set when `policy.streaming` is True) but doesn't validate them. A misconfigured SessionDeps produces an AttributeError at runtime, deep in a tool loop.
+
+### Scope
+- Add `SessionDeps.validate(policy: SessionPolicy)` method
+- Check invariants:
+  - `policy.streaming` requires `deps.stream_completion is not None`
+  - `policy.use_implementation_executor` requires `deps.single_completion is not None or deps.stream_completion is not None`
+  - `policy.coach_tools` requires `deps.coach_completion is not None`
+- Call `deps.validate(policy)` at the top of `run_session()` and `run_implementation()`
+- Raise `ValueError` with diagnostic message on violation
+
+### Design Considerations
+- Cheap to implement (~20 lines + ~10 test cases)
+- High safety payoff: catches misconfiguration at session start, not mid-conversation
+- No behavior change for correctly configured sessions
+- Validation is on the deps+policy *pair*, not on deps alone (deps are reusable across policies)
+
+---
+
+## Phase 10: Remove SystemExit from Non-Adapter Layers
+
+**Status: Not started**
+
+Lower-layer modules raise `SystemExit` in ~15 sites, which is correct for CLI but crashes TUI worker threads and blocks embedding in other runtimes (API server, test harness).
+
+### Sites to Fix
+
+**config.py** (3 sites):
+- `resolve_api_key()` line 65 — env var not found → raise `ConfigError`
+- `load_iteration()` line 155 — current ID not found → raise `ConfigError`
+- `save_iteration_fields()` line 225 — iteration ID not found → raise `ConfigError`
+
+**context.py** (1 site):
+- `TeamContext.from_team_dir()` line 49 — invalid model override → raise `ConfigError`
+
+**model/helpers.py** (1 site):
+- `_check_response()` line 16 — HTTP error → raise `ModelError`
+
+**groom.py** (1 site):
+- `load_grooming_metadata()` line 99 — session not found → raise `GroomingError`
+
+**scaffold.py** (1 site):
+- `init_project()` — init failure → raise `ConfigError`
+
+### New Exception Hierarchy
+```python
+# gotg/errors.py (new, ~15 lines)
+class GotgError(Exception):
+    """Base for all gotg domain errors."""
+
+class ConfigError(GotgError):
+    """Configuration loading/validation failure."""
+
+class ModelError(GotgError):
+    """Model/provider communication failure."""
+
+class GroomingError(GotgError):
+    """Grooming session lifecycle error."""
+```
+
+### Adapter Mapping
+Each command handler (`commands/*.py`) wraps its entry point:
+```python
+try:
+    ctx = TeamContext.from_team_dir(team_dir)
+except ConfigError as e:
+    print(f"Error: {e}", file=sys.stderr)
+    raise SystemExit(1) from e
+```
+
+### Design Considerations
+- `SessionSetupError`, `PhaseAdvanceError`, `ReviewError` already follow this pattern — they're domain errors caught by commands
+- The TUI already catches `SessionSetupError` in worker threads — extending to `ConfigError` is mechanical
+- Expected blast radius: ~20 call sites in commands, ~15 test sites that assert SystemExit behavior
+- Do NOT change the error messages — just change the exception type
+- `GotgError` base class enables `except GotgError` catch-all in adapters if desired
+
+---
+
+## Phase 11: Extract Resume-State Reconstruction
+
+**Status: Not started**
+
+TUI `chat.py:_restore_pause_state()` (~45 lines) reconstructs "what was happening when we last stopped?" by scanning persisted messages. This is domain logic that belongs in session code — a web adapter would need the same logic.
+
+### Scope
+- New function in session_setup.py: `reconstruct_session_state(history, metadata) → SessionState`
+- `SessionState` dataclass with fields:
+  - `pause_reason: PauseReason | None` — phase_complete, coach_question, approvals, or None (running/viewing)
+  - `phase_complete_data: dict | None` — phase name if paused on phase complete
+  - `ask_pm_data: dict | None` — question + options if paused on coach question
+  - `unassigned_task_count: int` — for task status bar
+- TUI `_restore_pause_state()` becomes a thin call to `reconstruct_session_state()` + UI rendering
+- CLI `cmd_continue()` could also use this to print "Resuming from phase-complete pause..." instead of silently continuing
+
+### Design Considerations
+- Only extract the *detection* logic (scanning messages for phase-complete signals, ask_pm data, etc.)
+- UI rendering (which ActionBar text to show, which modal to push) stays in chat.py — that's presentation
+- The phase gating one-liners (`get_phase_caps_safe(phase).show_task_status_bar`) are fine in chat.py — they're UI visibility decisions, not domain logic
+- Expected blast radius: 0 behavior changes — refactoring internal structure only
+
+---
+
+## Phase 12: Thin Persistence Repositories
+
+**Status: Not started**
+
+Persistence I/O is scattered across conversation.py (JSONL), config.py (iteration/team JSON), tasks.py (tasks JSON), approvals.py (approvals JSON), and checkpoint.py. Changing storage format or adding a new adapter requires touching many files.
+
+### Scope
+Centralize persistence behind repository interfaces. No locking, no infra change — just consistent access patterns.
+
+**ConversationRepo** (wraps conversation.py):
+- `append(msg)`, `append_debug(entry)`, `read_full()`, `read_phase_history()`
+- Already partially exists as `ConversationStore` — promote to primary interface
+
+**IterationRepo** (wraps config.py iteration functions):
+- `load()`, `save_fields()`, `save_phase()`, `get_current()`
+- Already partially exists as `IterationStore` — promote to primary interface
+
+**TaskRepo** (wraps tasks.py I/O):
+- `load(path)`, `save(path, tasks)`, `format_summary(layer=None)`
+- Currently: `load_tasks_file()`, manual `json.dumps()` writes in transitions.py
+
+**ApprovalRepo** (wraps approvals.py):
+- Already well-encapsulated in `ApprovalStore` — no change needed
+
+### Design Considerations
+- `ConversationStore` and `IterationStore` already exist from R1 but aren't used consistently — some callers use the store, others call free functions directly
+- Phase 1: make stores the *only* interface (deprecate free function usage)
+- Phase 2: if needed later, swap implementation (e.g., SQLite) without changing callers
+- No new abstractions for checkpoint.py — it's already self-contained
+- Expected blast radius: moderate — need to audit every `append_message()`, `read_log()`, `load_tasks_file()` call site
+
+---
+
+## Deferred: Participant Identity Model
+
+**Not scheduled — implement when multi-human collaboration is on the roadmap.**
+
+Current model: `msg["from"]` carries string sentinels ("human", "system", coach name, or agent name). This is adequate for single-PM operation and well-tested across 1378 tests.
+
+### When to do this
+- When adding multi-human support (multiple PMs, observers, approvers)
+- When adding audit logging that needs typed sender identity
+- When adding role-based permissions beyond PM/agent/coach
+
+### What it would look like
+```python
+class SenderKind(Enum):
+    HUMAN = "human"
+    AGENT = "agent"
+    COACH = "coach"
+    SYSTEM = "system"
+```
+
+A small typed abstraction that stops further spread of string-sentinel checks. The existing `msg["from"]` field stays (backward compat), but new code uses `SenderKind` for comparisons instead of raw strings.
+
+### Why defer
+- Every existing test works with strings
+- The string model is simple and readable
+- Adding a type layer before there's a concrete multi-human requirement risks over-engineering
+- The migration cost grows slowly (~2 new string checks per feature iteration)
+
+---
+
+## Architecture Target (Post-Phase 12)
+
+```
+CLI commands/ ──→ session_setup.py ──→ engine.py (generator)
+TUI screens/  ──→ session_advance.py ──→ implementation.py (generator)
+                  session_review.py        ↓
+                        ↓              events.py (typed events)
+                  repos (conversation,     ↓
+                   iteration, tasks)   model/ (per-provider)
+                        ↓
+                  phases.py (capability table)
+                  errors.py (domain exceptions)
+```
+
+- **session_*.py**: bounded contexts for setup, transitions, review
+- **engine.py / implementation.py**: stateless generators, yield events, no I/O
+- **repos**: centralized persistence semantics, swappable backends
+- **model/**: per-provider completion with routing and streaming
 - **CLI/TUI**: thin I/O adapters that iterate events and render
+- **errors.py**: domain exceptions, mapped to SystemExit only at adapter boundary
