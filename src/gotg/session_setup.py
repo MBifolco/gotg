@@ -241,14 +241,10 @@ def run_and_persist(setup: SessionSetup) -> Iterator:
     - Phase routing (implementation vs discussion) is handled internally
     """
     if setup.use_implementation:
-        # Validate deps can support the implementation tool loop
-        has_non_streaming = setup.deps.single_completion is not None
-        has_streaming = setup.policy.streaming and setup.deps.stream_completion is not None
-        if not has_non_streaming and not has_streaming:
-            raise SessionSetupError(
-                "Implementation phase requires single_completion or "
-                "stream_completion (with streaming enabled)."
-            )
+        try:
+            setup.deps.validate(setup.policy, require_raw_completion=True)
+        except ValueError as e:
+            raise SessionSetupError(str(e)) from e
         from gotg.implementation import run_implementation
         gen = run_implementation(
             agents=setup.agents, tasks=setup.tasks_data,

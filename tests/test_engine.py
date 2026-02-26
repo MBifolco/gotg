@@ -714,3 +714,119 @@ def test_session_coach_uses_coach_model_override():
     assert len(captured_coach_config) == 1
     assert captured_coach_config[0]["model"] == "coach-model"
     assert captured_coach_config[0]["base_url"] == "http://coach"
+
+
+# --- SessionDeps.validate() ---
+
+import pytest
+
+
+def test_validate_agent_completion_required():
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    with pytest.raises(ValueError, match="agent_completion is required"):
+        deps.validate(_make_policy(), require_agent_completion=True)
+
+
+def test_validate_agent_completion_not_checked_by_default():
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    deps.validate(_make_policy())  # no flags → no error
+
+
+def test_validate_coach_requires_coach_completion():
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    with pytest.raises(ValueError, match="coach_completion is required"):
+        deps.validate(_make_policy(), require_coach_completion=True)
+
+
+def test_validate_coach_not_checked_by_default():
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    deps.validate(_make_policy())  # no flags → no error
+
+
+def test_validate_implementation_requires_raw_completion():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=None, stream_completion=None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        deps.validate(_make_policy(), require_raw_completion=True)
+
+
+def test_validate_implementation_single_completion_ok():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None,
+    )
+    deps.validate(_make_policy(), require_raw_completion=True)  # no error
+
+
+def test_validate_implementation_stream_completion_ok():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        stream_completion=lambda **kw: None,
+    )
+    deps.validate(
+        _make_policy(streaming=True), require_raw_completion=True,
+    )  # no error
+
+
+def test_validate_implementation_streaming_without_stream_falls_back():
+    """streaming=True but stream_completion=None — valid if single_completion set."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None, stream_completion=None,
+    )
+    deps.validate(
+        _make_policy(streaming=True), require_raw_completion=True,
+    )  # no error — graceful fallback
+
+
+def test_validate_implementation_non_streaming_needs_single():
+    """streaming=False, only stream_completion → error (non-streaming path needs single)."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=None, stream_completion=lambda **kw: None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        deps.validate(_make_policy(streaming=False), require_raw_completion=True)
+
+
+def test_validate_no_flags_ok():
+    """No flags set, minimal deps → no error (all checks opt-in)."""
+    deps = SessionDeps(agent_completion=None, coach_completion=None)
+    deps.validate(_make_policy())
+
+
+def test_validate_all_flags_all_set_ok():
+    """All flags True, everything populated → no error."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None, stream_completion=lambda **kw: None,
+    )
+    deps.validate(
+        _make_policy(streaming=True),
+        require_agent_completion=True,
+        require_coach_completion=True,
+        require_raw_completion=True,
+    )
+
+
+def test_run_session_validates_agent_completion():
+    """run_session with agent_completion=None raises ValueError immediately."""
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    with pytest.raises(ValueError, match="agent_completion is required"):
+        _collect(run_session(
+            agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+            deps=deps, history=[], policy=_make_policy(max_turns=1),
+        ))
+
+
+def test_run_session_validates_coach_completion():
+    """run_session with coach in policy but coach_completion=None raises ValueError."""
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    with pytest.raises(ValueError, match="coach_completion is required"):
+        _collect(run_session(
+            agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+            deps=deps, history=[],
+            policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+        ))

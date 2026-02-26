@@ -579,7 +579,7 @@ def test_run_and_persist_rejects_stream_only_without_streaming_policy(tmp_path):
         current_layer=0, fileguard=None, approval_store=None, worktree_map=None,
     )
 
-    with pytest.raises(SessionSetupError, match="single_completion or stream_completion"):
+    with pytest.raises(SessionSetupError, match="single_completion.*or.*stream_completion"):
         list(run_and_persist(setup))
 
 
@@ -1135,3 +1135,34 @@ def test_grooming_console_events_resume_hint(capsys):
     captured = capsys.readouterr()
     assert "gotg groom continue test-slug" in captured.out
     assert "your answer" in captured.out
+
+
+def test_run_and_persist_translates_validate_error(tmp_path):
+    """run_and_persist catches ValueError from deps.validate and re-raises as SessionSetupError."""
+    iter_dir = _make_iter_dir(tmp_path, with_tasks=True)
+
+    from gotg.policy import SessionPolicy
+    policy = SessionPolicy(
+        max_turns=10, coach=None, coach_cadence=None,
+        stop_on_phase_complete=True, stop_on_ask_pm=True,
+        agent_tools=(), coach_tools=None, groomed_summary=None,
+        tasks_summary=None, diffs_summary=None, kickoff_text=None,
+        fileguard=None, approval_store=None, worktree_map=None,
+        system_supplement=None, coach_system_prompt=None,
+        streaming=False,
+    )
+    deps = _make_deps()
+    setup = SessionSetup(
+        agents=[], iteration={"id": "i", "phase": "implementation"},
+        iter_dir=iter_dir, model_config={}, history=[], policy=policy,
+        deps=deps, log_path=iter_dir / "conversation.jsonl",
+        debug_path=iter_dir / "debug.jsonl",
+        use_implementation=True,
+        tasks_data=[{"id": "t1"}],
+        current_layer=0, fileguard=None, approval_store=None, worktree_map=None,
+    )
+
+    # Patch validate to raise ValueError directly
+    with patch.object(setup.deps, "validate", side_effect=ValueError("test error")):
+        with pytest.raises(SessionSetupError, match="test error"):
+            list(run_and_persist(setup))

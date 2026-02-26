@@ -435,6 +435,8 @@ def run_implementation(
     Uses raw_completion for engine-driven tool loops.
     Yields events for the caller to persist and display.
     """
+    deps.validate(policy, require_raw_completion=True)
+
     if max_tool_rounds is None:
         max_tool_rounds = policy.max_turns if policy.max_turns else 25
 

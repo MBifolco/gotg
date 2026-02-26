@@ -1160,3 +1160,21 @@ def test_drift_check_uses_team_default_model(tmp_path):
     assert len(captured_drift_configs) == 1
     assert captured_drift_configs[0]["model"] == "test-model"
     assert captured_drift_configs[0]["base_url"] == "http://localhost:11434"
+
+
+# --- validate() integration ---
+
+def test_run_implementation_validates_deps(tmp_path):
+    """run_implementation with both raw completions=None raises ValueError."""
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=None, stream_completion=None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        _collect(run_implementation(
+            AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
+            deps, [], _make_policy(),
+        ))

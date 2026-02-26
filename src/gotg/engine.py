@@ -24,11 +24,35 @@ from gotg.tools import execute_file_tool, format_agent_tool_operation, make_tool
 @dataclass
 class SessionDeps:
     """Model function callables injected by the caller (bridge pattern)."""
-    agent_completion: Callable
-    coach_completion: Callable
+    agent_completion: Callable | None
+    coach_completion: Callable | None
     single_completion: Callable | None = None  # raw_completion (implementation tool loop)
     stream_completion: Callable | None = None  # raw_completion_stream (streaming)
     model_resolver: Callable | None = None     # (name: str | None) -> dict
+
+    def validate(
+        self,
+        policy: SessionPolicy,
+        *,
+        require_agent_completion: bool = False,
+        require_coach_completion: bool = False,
+        require_raw_completion: bool = False,
+    ) -> None:
+        """Validate deps satisfy policy requirements. Raises ValueError."""
+        if require_agent_completion and self.agent_completion is None:
+            raise ValueError("deps.agent_completion is required")
+        if require_coach_completion and self.coach_completion is None:
+            raise ValueError(
+                "deps.coach_completion is required (policy has coach)"
+            )
+        if require_raw_completion:
+            has_non_streaming = self.single_completion is not None
+            has_streaming = policy.streaming and self.stream_completion is not None
+            if not has_non_streaming and not has_streaming:
+                raise ValueError(
+                    "Implementation phase requires deps.single_completion "
+                    "or deps.stream_completion (with streaming enabled)"
+                )
 
 
 def run_session(
@@ -40,6 +64,11 @@ def run_session(
     policy: SessionPolicy,
 ) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | SessionComplete | TextDelta | AgentTurnComplete | ToolCallProgress]:
     """Run a conversation session, yielding events. No print, no persistence."""
+    deps.validate(
+        policy,
+        require_agent_completion=True,
+        require_coach_completion=policy.coach is not None,
+    )
 
     # Build participant list
     all_participants = [
