@@ -5,8 +5,8 @@ from pathlib import Path
 import gotg.cli as _cli
 from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
-    load_coach, get_current_iteration, save_model_config,
-    save_iteration_fields, read_dotenv, ensure_dotenv_key,
+    IterationStore, load_coach, save_model_config,
+    read_dotenv, ensure_dotenv_key,
 )
 from gotg.conversation import ConversationStore, render_message
 from gotg.scaffold import init_project
@@ -99,7 +99,7 @@ def cmd_show(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
     log_path = iter_dir / "conversation.jsonl"
     messages = ConversationStore(log_path).read_full()
 
@@ -119,7 +119,7 @@ def cmd_checkpoint(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
     coach = load_coach(team_dir)
     number = create_checkpoint(iter_dir, iteration, description=args.description, trigger="manual", coach_name=coach["name"] if coach else "coach")
     print(f"Checkpoint {number} created")
@@ -132,7 +132,7 @@ def cmd_checkpoints(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    _, iter_dir = get_current_iteration(team_dir)
+    _, iter_dir = IterationStore(team_dir).get_current()
     checkpoints = list_checkpoints(iter_dir)
 
     if not checkpoints:
@@ -155,7 +155,7 @@ def cmd_restore(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
 
     # Validate checkpoint exists before prompting
     cp_path = iter_dir / "checkpoints" / str(args.number)
@@ -182,8 +182,8 @@ def cmd_restore(args):
     restored_phase = normalize_phase(state["phase"])
 
     # Update iteration.json to match checkpoint state
-    save_iteration_fields(
-        team_dir, iteration["id"],
+    IterationStore(team_dir).save_fields(
+        iteration["id"],
         phase=restored_phase,
         max_turns=state["max_turns"],
     )
@@ -199,7 +199,7 @@ def cmd_approvals(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
 
     from gotg.approvals import ApprovalStore
     store = ApprovalStore(iter_dir / "approvals.json")
@@ -237,7 +237,7 @@ def cmd_approve(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
 
     from gotg.approvals import ApprovalStore
     store = ApprovalStore(iter_dir / "approvals.json")
@@ -268,7 +268,7 @@ def cmd_deny(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
 
     from gotg.approvals import ApprovalStore
     store = ApprovalStore(iter_dir / "approvals.json")

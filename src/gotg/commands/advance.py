@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import gotg.cli as _cli
-from gotg.config import get_current_iteration
+from gotg.config import IterationStore
 from gotg.conversation import render_message
 
 
@@ -15,7 +15,7 @@ def cmd_advance(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
     if iteration.get("status") != "in-progress":
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
@@ -46,7 +46,7 @@ def cmd_next_layer(args):
         print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
         raise SystemExit(1)
 
-    iteration, iter_dir = get_current_iteration(team_dir)
+    iteration, iter_dir = IterationStore(team_dir).get_current()
     if iteration.get("status") != "in-progress":
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)

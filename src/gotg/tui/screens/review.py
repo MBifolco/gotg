@@ -375,8 +375,8 @@ class ReviewScreen(Screen):
     def action_finish_iteration(self) -> None:
         if not self._all_layers_done:
             return
-        from gotg.config import save_iteration_fields
-        save_iteration_fields(self._team_dir, self._iteration["id"], status="done")
+        from gotg.config import IterationStore
+        IterationStore(self._team_dir).save_fields(self._iteration["id"], status="done")
         self.notify(f"Iteration {self._iteration['id']} marked as done.")
         self.app.pop_screen()
 

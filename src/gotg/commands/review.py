@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import gotg.cli as _cli
-from gotg.config import get_current_iteration
+from gotg.config import IterationStore
 
 
 def cmd_review(args):
@@ -15,7 +15,7 @@ def cmd_review(args):
 
     from gotg.session import ReviewError, load_review_branches
 
-    iteration, _ = get_current_iteration(team_dir)
+    iteration, _ = IterationStore(team_dir).get_current()
 
     if args.branch:
         # Specific branch — bypass layer discovery, diff just this branch
@@ -108,7 +108,7 @@ def cmd_merge(args):
     from gotg.session import ReviewError, merge_branches
     from gotg.worktree import is_branch_merged
 
-    iteration, _ = get_current_iteration(team_dir)
+    iteration, _ = IterationStore(team_dir).get_current()
     layer = args.layer if args.layer is not None else iteration.get("current_layer", 0)
     is_all = args.branch == "all"
 

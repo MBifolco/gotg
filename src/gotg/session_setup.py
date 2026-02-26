@@ -422,9 +422,10 @@ def setup_worktrees(
     if caps.filter_worktree_agents_by_tasks:
         tasks_path = team_dir.parent / ".team" / "iterations"
         # Find iter_dir from the team_dir layout
-        from gotg.config import get_current_iteration
+        from gotg.config import IterationStore
+        from gotg.errors import ConfigError
         try:
-            _, iter_dir = get_current_iteration(team_dir)
+            _, iter_dir = IterationStore(team_dir).get_current()
             tasks_file = iter_dir / "tasks.json"
             if tasks_file.exists():
                 from gotg.tasks import load_tasks_file as _load_tasks
@@ -433,7 +434,7 @@ def setup_worktrees(
                 assigned_agents = {t.get("assigned_to") for t in layer_tasks if t.get("assigned_to")}
                 if assigned_agents:
                     agents_to_setup = [a for a in agents if a["name"] in assigned_agents]
-        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError) as e:
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError, ConfigError) as e:
             import sys
             print(f"Warning: could not filter agents by task assignment: {e}", file=sys.stderr)
 
