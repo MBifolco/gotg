@@ -11,7 +11,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header
 
-from gotg.tasks import compute_layers
+from gotg.tasks import TaskRepo, compute_layers
 from gotg.tui.helpers import get_selected_row_key
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.content_viewer import ContentViewer
@@ -34,6 +34,7 @@ class TaskAssignScreen(Screen):
         self._agent_names = [a["name"] for a in agents]
         # Cycle options: None (unassigned) then each agent name
         self._cycle = [None] + self._agent_names
+        self._task_repo = TaskRepo(iter_dir / "tasks.json")
         self._tasks: list[dict] = []
         self._dirty = False
 
@@ -57,14 +58,13 @@ class TaskAssignScreen(Screen):
 
     def _load_tasks(self) -> None:
         """Load tasks.json and populate the table."""
-        tasks_path = self._iter_dir / "tasks.json"
-        if not tasks_path.exists():
+        if not self._task_repo.exists():
             self.query_one("#task-action-bar", ActionBar).show(
                 "No tasks.json found."
             )
             return
 
-        self._tasks = json.loads(tasks_path.read_text())
+        self._tasks = self._task_repo.load()
 
         # Compute layers if missing
         if self._tasks and "layer" not in self._tasks[0]:
@@ -219,8 +219,7 @@ class TaskAssignScreen(Screen):
             self.app.pop_screen()
             return
 
-        tasks_path = self._iter_dir / "tasks.json"
-        tasks_path.write_text(json.dumps(self._tasks, indent=2) + "\n")
+        self._task_repo.save(self._tasks)
         self._dirty = False
         self.notify("Tasks saved.")
         self.app.pop_screen()

@@ -11,7 +11,8 @@ from gotg.events import (
     SessionStarted,
 )
 from gotg.tui.app import GotgApp
-from gotg.tui.screens.chat import ChatScreen, SessionState, PauseReason
+from gotg.session_types import PauseReason
+from gotg.tui.screens.chat import ChatScreen, SessionState
 from gotg.tui.screens.review import ReviewScreen
 from gotg.tui.widgets.action_bar import ActionBar
 

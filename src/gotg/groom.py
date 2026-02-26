@@ -6,22 +6,9 @@ import re
 import sys
 from pathlib import Path
 
-from gotg.conversation import append_message, append_debug, read_log, render_message
-from gotg.engine import SessionDeps, run_session
-from gotg.events import (
-    AgentTurnComplete,
-    AppendDebug,
-    AppendMessage,
-    CoachAskedPM,
-    PauseForApprovals,
-    PhaseCompleteSignaled,
-    SessionComplete,
-    SessionStarted,
-    TextDelta,
-    ToolCallProgress,
-)
-from gotg.policy import grooming_policy
-from gotg.session import persist_event
+from gotg.errors import GroomingError
+from gotg.events import SessionStarted
+from gotg.migration import CURRENT_GROOMING_VERSION, migrate_grooming_metadata
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -93,6 +80,7 @@ def write_grooming_metadata(
     (groom_dir / "conversation.jsonl").touch()
 
     metadata = {
+        "schema_version": CURRENT_GROOMING_VERSION,
         "slug": slug,
         "topic": topic,
         "coach": coach,
@@ -108,9 +96,12 @@ def load_grooming_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
     groom_dir = _grooming_dir(team_dir, slug)
     meta_path = groom_dir / "grooming.json"
     if not meta_path.exists():
-        print(f"Error: grooming session '{slug}' not found.", file=sys.stderr)
-        raise SystemExit(1)
-    return json.loads(meta_path.read_text()), groom_dir
+        raise GroomingError(f"grooming session '{slug}' not found.")
+    warnings: list[str] = []
+    data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+    for w in warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    return data, groom_dir
 
 
 def list_grooming_sessions(team_dir: Path) -> list[dict]:
@@ -122,7 +113,11 @@ def list_grooming_sessions(team_dir: Path) -> list[dict]:
     for d in sorted(grooming_root.iterdir()):
         meta_path = d / "grooming.json"
         if meta_path.exists():
-            sessions.append(json.loads(meta_path.read_text()))
+            warnings: list[str] = []
+            data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+            for w in warnings:
+                print(f"Warning: {w}", file=sys.stderr)
+            sessions.append(data)
     return sessions
 
 
@@ -156,71 +151,33 @@ def run_grooming_conversation(
     coach: dict | None = None,
     max_turns_override: int | None = None,
     streaming: bool = False,
+    model_resolver=None,
 ) -> None:
     """Run a grooming conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
+    from gotg.console_events import handle_console_events
+    from gotg.engine import SessionDeps
     from gotg.model import agentic_completion, chat_completion, raw_completion_stream
-
-    log_path = groom_dir / "conversation.jsonl"
-    debug_path = groom_dir / "debug.jsonl"
-    history = read_log(log_path)
+    from gotg.session import prepare_grooming_session, run_and_persist
 
     deps = SessionDeps(
         agent_completion=agentic_completion,
         coach_completion=chat_completion,
         stream_completion=raw_completion_stream if streaming else None,
+        model_resolver=model_resolver,
     )
 
-    policy = grooming_policy(
-        agents=agents,
-        topic=topic,
-        history=history,
-        coach=coach,
+    setup = prepare_grooming_session(
+        groom_dir, agents, iteration, model_config, deps,
+        topic=topic, coach=coach,
         max_turns=max_turns_override or iteration.get("max_turns", 30),
         streaming=streaming,
     )
 
-    _suppress_agent_append: str | None = None
-
-    for event in run_session(
-        agents=agents, iteration=iteration, model_config=model_config,
-        deps=deps, history=history, policy=policy,
-    ):
-        if isinstance(event, SessionStarted):
-            _print_grooming_header(event, topic)
-        elif isinstance(event, TextDelta):
-            sys.stdout.write(event.text)
-            sys.stdout.flush()
-        elif isinstance(event, AgentTurnComplete):
-            sys.stdout.write("\n\n")
-            sys.stdout.flush()
-            _suppress_agent_append = event.agent
-        elif isinstance(event, ToolCallProgress):
-            pass  # grooming has no file tools
-        elif isinstance(event, (AppendMessage, AppendDebug)):
-            persist_event(event, log_path, debug_path)
-            if isinstance(event, AppendMessage):
-                if _suppress_agent_append and event.msg.get("from") == _suppress_agent_append:
-                    _suppress_agent_append = None
-                else:
-                    print(render_message(event.msg))
-                    print()
-        elif isinstance(event, CoachAskedPM):
-            print("---")
-            print(f"Coach asks: {event.question}")
-            slug = iteration["id"]
-            if event.options:
-                for i, option in enumerate(event.options, 1):
-                    print(f"  {i}. {option}")
-                print(f"  {len(event.options) + 1}. None of these (send a message)")
-                print(f"Reply with: gotg groom continue {slug} -m '<number or message>'")
-            else:
-                print(f"Reply with: gotg groom continue {slug} -m 'your answer'")
-            break
-        elif isinstance(event, (PauseForApprovals, PhaseCompleteSignaled)):
-            pass  # cannot fire under grooming_policy
-        elif isinstance(event, SessionComplete):
-            print("---")
-            print(f"Grooming complete ({event.total_turns} turns)")
-        else:
-            raise AssertionError(f"Unhandled event: {event!r}")
+    slug = iteration["id"]
+    handle_console_events(
+        run_and_persist(setup),
+        on_started=lambda e: _print_grooming_header(e, topic),
+        resume_hint=f"gotg groom continue {slug}",
+        complete_label="Grooming",
+    )

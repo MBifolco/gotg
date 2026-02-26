@@ -30,15 +30,25 @@ MessageDict = TypedDict(
 )
 
 
+class ModelOverrideDict(TypedDict, total=False):
+    """Partial model config for per-agent overrides. Merged with team default."""
+    provider: str
+    base_url: str
+    model: str
+    api_key: str | None
+
+
 class AgentDict(TypedDict):
     name: str
     role: NotRequired[str]
     system_prompt: NotRequired[str]
+    model: NotRequired[ModelOverrideDict]
 
 
 class CoachDict(TypedDict):
     name: str
     role: NotRequired[str]
+    model: NotRequired[ModelOverrideDict]
 
 
 class ModelConfigDict(TypedDict):

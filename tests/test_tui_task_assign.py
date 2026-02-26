@@ -258,8 +258,9 @@ async def test_save_writes_json(tmp_path):
         await pilot.press("ctrl+s")
         await pilot.pause()
 
-        # Verify file was updated
-        saved = json.loads((it_dir / "tasks.json").read_text())
+        # Verify file was updated (wrapped format)
+        raw_saved = json.loads((it_dir / "tasks.json").read_text())
+        saved = raw_saved["tasks"]
         assert saved[0]["assigned_to"] == "agent-1"
         assert saved[1]["assigned_to"] == "agent-2"
         assert saved[2]["assigned_to"] == "agent-1"

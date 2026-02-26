@@ -1,3 +1,4 @@
+from gotg.events import ToolCallProgress
 from gotg.fileguard import (
     FileGuard, SecurityError,
     WRITE_ALLOWED, WRITE_APPROVAL_REQUIRED, WRITE_DENIED,
@@ -177,3 +178,28 @@ def format_tool_operation(op: dict) -> str:
 def format_agent_tool_operation(agent_name: str, op: dict) -> str:
     """Format a tool operation with explicit actor attribution."""
     return f"[{agent_name}] {format_tool_operation(op)}"
+
+
+def classify_tool_result(result_str: str) -> str:
+    """Derive status from tool result string prefix."""
+    if result_str.startswith("Error:"):
+        return "error"
+    if result_str.startswith("Pending approval"):
+        return "pending_approval"
+    return "ok"
+
+
+def make_tool_progress(agent: str, tool_name: str, tool_input: dict, result: str) -> ToolCallProgress:
+    """Build a ToolCallProgress event from a tool call and its result."""
+    status = classify_tool_result(result)
+    content_size = None
+    if tool_name == "file_write":
+        content_size = len(tool_input.get("content", "").encode())
+    return ToolCallProgress(
+        agent=agent,
+        tool_name=tool_name,
+        path=tool_input.get("path", ""),
+        status=status,
+        bytes=content_size,
+        error=result if status == "error" else None,
+    )

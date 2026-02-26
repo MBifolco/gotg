@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+from gotg.errors import ConfigError
 from gotg.scaffold import init_project
 
 
@@ -16,7 +17,7 @@ def git_project(tmp_path):
 
 
 def test_init_requires_git_repo(tmp_path):
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         init_project(tmp_path)
 
 
@@ -80,7 +81,7 @@ def test_init_creates_empty_conversation_log(git_project):
 
 def test_init_refuses_if_team_exists(git_project):
     (git_project / ".team").mkdir()
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         init_project(git_project)
 
 

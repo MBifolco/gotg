@@ -1,7 +1,8 @@
 import json
 import subprocess
-import sys
 from pathlib import Path
+
+from gotg.errors import ConfigError
 
 from gotg.prompts import (  # noqa: F401 — re-export for backward compatibility
     DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS,
@@ -20,7 +21,8 @@ def format_agent_task_assignments(
     if not tasks_path.exists():
         return "No tasks assigned yet."
     try:
-        tasks = json.loads(tasks_path.read_text())
+        from gotg.tasks import TaskRepo
+        tasks = TaskRepo(tasks_path).load()
     except (json.JSONDecodeError, OSError):
         return "No tasks assigned yet."
     if not tasks:
@@ -90,18 +92,18 @@ def format_phase_kickoff(
     current_layer = iteration.get("current_layer", 0)
 
     # Build agent task assignments
+    from gotg.phases import get_phase_caps_safe
+    caps = get_phase_caps_safe(phase)
     agent_task_assignments = ""
-    if iter_dir:
-        if phase in ("implementation", "code-review"):
-            agent_task_assignments = format_agent_task_assignments(
-                iter_dir, agents, current_layer,
-            )
-        elif phase == "pre-code-review":
-            agent_task_assignments = format_agent_task_assignments(iter_dir, agents)
+    if iter_dir and caps.include_task_assignments_kickoff:
+        layer_arg = current_layer if caps.scope_kickoff_to_layer else None
+        agent_task_assignments = format_agent_task_assignments(
+            iter_dir, agents, layer_arg,
+        )
 
     # Build writable paths info
     writable_paths_info = ""
-    if fileguard and phase in ("implementation", "code-review"):
+    if fileguard and caps.inject_writable_paths_kickoff:
         writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
         writable_paths_info = (
             f"File access: you can read project files and write to: {writable}. "
@@ -141,13 +143,11 @@ def init_project(path: Path) -> None:
     team_dir = path / ".team"
 
     if team_dir.exists():
-        print(f"Error: {team_dir} already exists.", file=sys.stderr)
-        raise SystemExit(1)
+        raise ConfigError(f"{team_dir} already exists.")
 
     # Require git repo
     if not (path / ".git").exists():
-        print("Error: not a git repository. Run 'git init' first.", file=sys.stderr)
-        raise SystemExit(1)
+        raise ConfigError("not a git repository. Run 'git init' first.")
 
     # Gitignore .team/ and .env before creating them
     _ensure_gitignore(path)
@@ -176,6 +176,7 @@ def init_project(path: Path) -> None:
 
     # team.json: model config + agents
     (team_dir / "team.json").write_text(json.dumps({
+        "schema_version": 1,
         "model": {
             "provider": "ollama",
             "base_url": "http://localhost:11434",
@@ -205,6 +206,7 @@ def init_project(path: Path) -> None:
     # iteration.json: list format with current pointer
     iter_id = "iter-1"
     (team_dir / "iteration.json").write_text(json.dumps({
+        "schema_version": 1,
         "iterations": [
             {
                 "id": iter_id,

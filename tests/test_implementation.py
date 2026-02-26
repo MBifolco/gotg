@@ -89,7 +89,7 @@ def _make_multi_layer_tasks():
 def _setup_iter_dir(tmp_path, tasks):
     iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
-    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2))
+    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2))
     (iter_dir / "conversation.jsonl").touch()
     return iter_dir
 
@@ -204,7 +204,7 @@ def test_handle_complete_tasks_success(tmp_path):
     assert "Completed" in result
     assert "task-a" in result
     # Verify persistence
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     done_task = next(t for t in saved if t["id"] == "task-a")
     assert done_task["status"] == "done"
     assert done_task["completed_by"] == "agent-1"
@@ -263,7 +263,7 @@ def test_handle_complete_tasks_no_attestation_required(tmp_path):
         "agent-1", tasks, 0, iter_dir,
     )
     assert result.startswith("Completed tasks:")
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     done_task = next(t for t in saved if t["id"] == "task-a")
     assert done_task["status"] == "done"
 
@@ -277,7 +277,7 @@ def test_handle_report_blocked_success(tmp_path):
     )
     assert "Blocked tasks:" in result
     assert blocked_ids == ("task-a",)
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     blocked = next(t for t in saved if t["id"] == "task-a")
     assert blocked["status"] == "blocked"
     assert blocked["blocked_by"] == "agent-1"
@@ -294,7 +294,7 @@ def test_handle_report_blocked_empty_ids(tmp_path):
     assert result.startswith("Error:")
     assert "task_ids is empty" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert all(t["status"] == "pending" for t in saved)
 
 
@@ -308,7 +308,7 @@ def test_handle_report_blocked_reason_required(tmp_path):
     assert result.startswith("Error:")
     assert "reason is required" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert all(t["status"] == "pending" for t in saved)
 
 
@@ -359,7 +359,7 @@ def test_handle_report_blocked_atomic_on_mixed_valid_and_invalid_ids(tmp_path):
     assert result.startswith("Error:")
     assert "not in layer" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
 
 
@@ -373,7 +373,7 @@ def test_handle_report_blocked_atomic_on_mixed_own_and_foreign_ids(tmp_path):
     assert result.startswith("Error:")
     assert "not assigned to you" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "pending"
     assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
 
@@ -390,7 +390,7 @@ def test_handle_report_blocked_atomic_on_mixed_done_and_pending_ids(tmp_path):
     assert result.startswith("Error:")
     assert "already done" in result
     assert blocked_ids is None
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     assert next(t for t in saved if t["id"] == "task-a")["status"] == "done"
     assert next(t for t in saved if t["id"] == "task-b")["status"] == "pending"
 
@@ -584,7 +584,7 @@ def test_complete_tasks_persists_and_emits_layer_complete(tmp_path):
     assert set(layer_done[0].completed_tasks) == {"task-a", "task-b"}
 
     # Verify persistence
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     for t in saved:
         assert t["status"] == "done"
 
@@ -626,7 +626,7 @@ def test_complete_tasks_validation_rejects_wrong_agent(tmp_path):
     assert ct_progress[0].status == "error"
 
     # task-b should still be pending
-    saved = json.loads((iter_dir / "tasks.json").read_text())
+    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
     task_b = next(t for t in saved if t["id"] == "task-b")
     assert task_b["status"] == "pending"
 
@@ -1053,3 +1053,128 @@ def test_drift_check_empty_files_returns_empty():
     deps = SessionDeps(agent_completion=None, coach_completion=None, single_completion=None)
     result = _run_drift_check({}, [{"id": "t1", "description": "x", "done_criteria": "y"}], MODEL_CONFIG, deps)
     assert result == []
+
+
+# --- Per-agent model routing ---
+
+def test_implementation_uses_per_agent_model(tmp_path):
+    """run_implementation should call completion with agent-specific model config."""
+    captured_configs = []
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    def mock_single(**kw):
+        captured_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return _tool_round("", [{
+            "id": "tc1", "name": "complete_tasks",
+            "input": {"task_ids": ["task-a"], "summary": "Done"},
+        }])
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://agent1", "model": "agent1-model", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+        model_resolver=resolver,
+    )
+
+    events = _collect(run_implementation(
+        agents=AGENTS[:1], tasks=tasks, current_layer=0,
+        iteration=ITERATION, iter_dir=iter_dir,
+        model_config=MODEL_CONFIG, deps=deps,
+        history=[], policy=_make_policy(),
+    ))
+    assert len(captured_configs) >= 1
+    assert captured_configs[0]["model"] == "agent1-model"
+    assert captured_configs[0]["base_url"] == "http://agent1"
+
+
+def test_drift_check_uses_team_default_model(tmp_path):
+    """Drift check should use team default, not agent-specific model."""
+    captured_drift_configs = []
+    tasks = [
+        {
+            "id": "task-a", "description": "Do A", "done_criteria": "A done",
+            "depends_on": [], "assigned_to": "agent-1", "status": "pending",
+            "layer": 0,
+        },
+    ]
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    call_count = 0
+
+    def mock_single(**kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # Agent's implementation call
+            return _tool_round("", [{
+                "id": "tc1", "name": "file_write",
+                "input": {"path": "src/main.py", "content": "code"},
+            }])
+        elif call_count == 2:
+            # Agent's complete_tasks call
+            return _tool_round("", [{
+                "id": "tc2", "name": "complete_tasks",
+                "input": {"task_ids": ["task-a"], "summary": "Done"},
+            }])
+        else:
+            # Drift check call — capture the config used
+            captured_drift_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+            return CompletionRound(
+                content='[{"task_id": "task-a", "approach_ok": true, "anti_pattern_violations": [], "done_criteria_ok": true}]',
+                tool_calls=[], _provider="openai", _raw={},
+            )
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://agent1", "model": "agent1-model", "api_key": None, "provider": "ollama"}
+        # team default
+        return dict(MODEL_CONFIG)
+
+    from gotg.fileguard import FileGuard
+    fg = FileGuard(tmp_path, {"writable_paths": ["src/**"], "max_file_size_bytes": 100000, "max_files_per_turn": 10})
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+        model_resolver=resolver,
+    )
+
+    events = _collect(run_implementation(
+        agents=AGENTS[:1], tasks=tasks, current_layer=0,
+        iteration=ITERATION, iter_dir=iter_dir,
+        model_config=MODEL_CONFIG, deps=deps,
+        history=[], policy=_make_policy(fileguard=fg),
+    ))
+    # Drift check should have been called with team default, not agent model
+    assert len(captured_drift_configs) == 1
+    assert captured_drift_configs[0]["model"] == "test-model"
+    assert captured_drift_configs[0]["base_url"] == "http://localhost:11434"
+
+
+# --- validate() integration ---
+
+def test_run_implementation_validates_deps(tmp_path):
+    """run_implementation with both raw completions=None raises ValueError."""
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=None, stream_completion=None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        _collect(run_implementation(
+            AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
+            deps, [], _make_policy(),
+        ))

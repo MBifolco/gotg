@@ -70,8 +70,9 @@ def build_prompt(
                 phase_prompt = phase_prompt.format(current_layer=current_layer)
             system_parts.append(phase_prompt)
 
-    # File access info for implementation/code-review phases
-    if fileguard and phase in ("implementation", "code-review"):
+    # File access info for phases that support it
+    from gotg.phases import get_phase_caps_safe
+    if fileguard and get_phase_caps_safe(phase).inject_file_access_prompt:
         writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
         system_parts.append(
             f"FILE ACCESS: You can read project files and write to: {writable}. "

@@ -274,12 +274,12 @@ class ReviewScreen(Screen):
         if not tasks_path.exists():
             return "No task context available."
         try:
-            tasks = json.loads(tasks_path.read_text())
+            from gotg.tasks import TaskRepo, format_tasks_summary
+            tasks = TaskRepo(tasks_path).load()
             layer = self._review.layer if self._review else 0
             layer_tasks = [t for t in tasks if t.get("layer") == layer]
             if not layer_tasks:
                 layer_tasks = tasks
-            from gotg.tasks import format_tasks_summary
             return format_tasks_summary(layer_tasks)
         except Exception:
             return "Could not load task context."
@@ -375,8 +375,8 @@ class ReviewScreen(Screen):
     def action_finish_iteration(self) -> None:
         if not self._all_layers_done:
             return
-        from gotg.config import save_iteration_fields
-        save_iteration_fields(self._team_dir, self._iteration["id"], status="done")
+        from gotg.config import IterationStore
+        IterationStore(self._team_dir).save_fields(self._iteration["id"], status="done")
         self.notify(f"Iteration {self._iteration['id']} marked as done.")
         self.app.pop_screen()
 

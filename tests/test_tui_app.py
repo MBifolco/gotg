@@ -298,6 +298,6 @@ async def test_chat_phase_boundary_styling(tmp_path):
 def test_cmd_ui_no_team_dir(tmp_path, monkeypatch):
     """cmd_ui exits with error when no .team/ directory exists."""
     monkeypatch.chdir(tmp_path)
-    from gotg.cli import cmd_ui
+    from gotg.commands.admin import cmd_ui
     with pytest.raises(SystemExit):
         cmd_ui(type("Args", (), {})())

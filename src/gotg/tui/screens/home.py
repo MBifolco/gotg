@@ -242,8 +242,8 @@ class HomeScreen(Screen):
 
         # Switch current if running a non-current iteration
         if kind == "iteration" and not meta.get("is_current"):
-            from gotg.config import switch_current_iteration
-            switch_current_iteration(team_dir, meta["id"])
+            from gotg.config import IterationStore
+            IterationStore(team_dir).set_current(meta["id"])
             self.notify(f"Switched to {meta['id']}")
 
         # If iteration is pending and has no description, prompt for one
@@ -256,7 +256,7 @@ class HomeScreen(Screen):
 
     def _start_pending_iteration(self, meta: dict, data_dir: Path) -> None:
         """Handle starting a pending iteration — prompt for description if missing."""
-        from gotg.config import save_iteration_fields
+        from gotg.config import IterationStore
 
         desc = meta.get("description", "") or meta.get("title", "")
         if not desc.strip():
@@ -271,7 +271,7 @@ class HomeScreen(Screen):
         else:
             # Has description — just start it
             team_dir = self.app.team_dir
-            save_iteration_fields(team_dir, meta["id"], status="in-progress")
+            IterationStore(team_dir).save_fields(meta["id"], status="in-progress")
             meta["status"] = "in-progress"
             full_meta = load_session_metadata(team_dir, meta)
             self.app.push_screen(ChatScreen(data_dir, full_meta, mode="run", session_kind="iteration"))
@@ -280,9 +280,9 @@ class HomeScreen(Screen):
         """Callback after TextInputModal for pending iteration description."""
         if result is None:
             return
-        from gotg.config import save_iteration_fields
+        from gotg.config import IterationStore
         team_dir = self.app.team_dir
-        save_iteration_fields(team_dir, meta["id"], description=result, status="in-progress")
+        IterationStore(team_dir).save_fields(meta["id"], description=result, status="in-progress")
         meta["description"] = result
         meta["status"] = "in-progress"
         full_meta = load_session_metadata(team_dir, meta)
@@ -322,7 +322,7 @@ class HomeScreen(Screen):
     def _on_new_iteration(self, result: str | None) -> None:
         if result is None:
             return
-        from gotg.config import create_iteration
+        from gotg.config import IterationStore
         team_dir = self.app.team_dir
 
         # Auto-generate next ID
@@ -333,7 +333,7 @@ class HomeScreen(Screen):
         iter_id = f"iter-{next_num}"
 
         try:
-            create_iteration(team_dir, iter_id, description=result)
+            IterationStore(team_dir).create(iter_id, description=result)
             self.notify(f"Created {iter_id}")
             self._load_data()
         except ValueError as e:
@@ -384,8 +384,8 @@ class HomeScreen(Screen):
     def _on_edit_iteration(self, result: dict | None, iteration_id: str) -> None:
         if result is None:
             return
-        from gotg.config import save_iteration_fields
-        save_iteration_fields(self.app.team_dir, iteration_id, **result)
+        from gotg.config import IterationStore
+        IterationStore(self.app.team_dir).save_fields(iteration_id, **result)
         self.notify(f"Updated {iteration_id}")
         self._load_data()
 

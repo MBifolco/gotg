@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, cmd_continue, _auto_checkpoint
+from gotg.cli import main, find_team_dir, run_conversation, _auto_checkpoint
 from gotg.session import validate_iteration_for_run, resolve_layer, setup_worktrees, SessionSetupError
 from gotg.conversation import read_log, read_phase_history, append_message
 
@@ -730,10 +730,12 @@ def test_advance_planning_with_coach_produces_tasks_json(tmp_path):
             with patch("gotg.cli.chat_completion", return_value=tasks_response):
                 main()
 
-    # tasks.json should exist with valid JSON
+    # tasks.json should exist with valid JSON (wrapped format)
     tasks_path = iter_dir / "tasks.json"
     assert tasks_path.exists()
-    tasks_data = json.loads(tasks_path.read_text())
+    raw_data = json.loads(tasks_path.read_text())
+    assert raw_data["schema_version"] == 1
+    tasks_data = raw_data["tasks"]
     assert len(tasks_data) == 2
     assert tasks_data[0]["id"] == "build-auth"
     assert tasks_data[1]["depends_on"] == ["build-auth"]
@@ -1138,7 +1140,8 @@ def test_advance_planning_strips_code_fences(tmp_path):
 
     tasks_path = iter_dir / "tasks.json"
     assert tasks_path.exists()
-    tasks_data = json.loads(tasks_path.read_text())
+    raw_data = json.loads(tasks_path.read_text())
+    tasks_data = raw_data["tasks"]
     assert len(tasks_data) == 1
     assert tasks_data[0]["id"] == "t1"
     assert tasks_data[0]["layer"] == 0
@@ -3528,7 +3531,8 @@ def test_task_notes_extracted_on_pre_code_review_advance(tmp_path):
             with patch("gotg.cli.chat_completion", return_value=notes_response):
                 main()
 
-    updated_tasks = json.loads((iter_dir / "tasks.json").read_text())
+    raw_updated = json.loads((iter_dir / "tasks.json").read_text())
+    updated_tasks = raw_updated["tasks"]
     assert updated_tasks[0].get("notes") == "File: src/main.py. def run() -> None."
 
 
@@ -4168,3 +4172,29 @@ def test_ask_pm_resume_with_continue(tmp_path):
     human_msgs = [m for m in messages if m["from"] == "human"]
     assert len(human_msgs) == 1
     assert "Yes, include auth" in human_msgs[0]["content"]
+
+
+# --- GotgError → SystemExit boundary tests ---
+
+def test_main_converts_config_error_to_systemexit(capsys):
+    """ConfigError from any command should become SystemExit(1) with Error: prefix."""
+    from gotg.errors import ConfigError
+    with patch("sys.argv", ["gotg", "show"]):
+        with patch("gotg.commands.admin.cmd_show", side_effect=ConfigError("bad config")):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error: bad config" in captured.err
+
+
+def test_main_converts_model_error_to_systemexit(tmp_path, capsys):
+    """ModelError from run should become SystemExit(1) with Error: prefix."""
+    from gotg.errors import ModelError
+    with patch("sys.argv", ["gotg", "show"]):
+        with patch("gotg.commands.admin.cmd_show", side_effect=ModelError("API error (429): Rate limited")):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error: API error (429): Rate limited" in captured.err

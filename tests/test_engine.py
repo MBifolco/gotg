@@ -1,6 +1,7 @@
 import json
 
-from gotg.engine import SessionDeps, run_session, _classify_tool_result
+from gotg.engine import SessionDeps, run_session
+from gotg.tools import classify_tool_result
 from gotg.events import (
     AgentTurnComplete,
     AppendDebug,
@@ -640,13 +641,192 @@ def test_streaming_history_mutation():
     assert agent_msgs[0]["content"] == "hello"
 
 
-# --- _classify_tool_result ---
+# --- classify_tool_result (now in gotg.tools) ---
 
 def test_classify_tool_result_ok():
-    assert _classify_tool_result("File content here") == "ok"
+    assert classify_tool_result("File content here") == "ok"
 
 def test_classify_tool_result_error():
-    assert _classify_tool_result("Error: file not found") == "error"
+    assert classify_tool_result("Error: file not found") == "error"
 
 def test_classify_tool_result_pending():
-    assert _classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"
+    assert classify_tool_result("Pending approval (a1): /tmp/x.py") == "pending_approval"
+
+
+# --- Per-agent model routing ---
+
+def test_session_uses_per_agent_model():
+    """Each agent's completion should be called with its own model config."""
+    captured_configs = []
+
+    def mock_agent(**kw):
+        captured_configs.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return {"content": "hello", "operations": []}
+
+    def resolver(name):
+        if name == "agent-1":
+            return {"base_url": "http://a1", "model": "model-a1", "api_key": None, "provider": "ollama"}
+        if name == "agent-2":
+            return {"base_url": "http://a2", "model": "model-a2", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=mock_agent,
+        coach_completion=lambda **kw: {"content": "ok", "tool_calls": []},
+        model_resolver=resolver,
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=2),
+    ))
+    assert len(captured_configs) == 2
+    assert captured_configs[0]["model"] == "model-a1"
+    assert captured_configs[0]["base_url"] == "http://a1"
+    assert captured_configs[1]["model"] == "model-a2"
+    assert captured_configs[1]["base_url"] == "http://a2"
+
+
+def test_session_coach_uses_coach_model_override():
+    """Coach completion should use the coach-specific model config."""
+    captured_coach_config = []
+
+    def mock_agent(**kw):
+        return {"content": "hello", "operations": []}
+
+    def mock_coach(**kw):
+        captured_coach_config.append({"base_url": kw["base_url"], "model": kw["model"]})
+        return {"content": "coach says", "tool_calls": []}
+
+    def resolver(name):
+        if name == "coach":
+            return {"base_url": "http://coach", "model": "coach-model", "api_key": None, "provider": "ollama"}
+        return dict(MODEL_CONFIG)
+
+    deps = SessionDeps(
+        agent_completion=mock_agent,
+        coach_completion=mock_coach,
+        model_resolver=resolver,
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[], policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    assert len(captured_coach_config) == 1
+    assert captured_coach_config[0]["model"] == "coach-model"
+    assert captured_coach_config[0]["base_url"] == "http://coach"
+
+
+# --- SessionDeps.validate() ---
+
+import pytest
+
+
+def test_validate_agent_completion_required():
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    with pytest.raises(ValueError, match="agent_completion is required"):
+        deps.validate(_make_policy(), require_agent_completion=True)
+
+
+def test_validate_agent_completion_not_checked_by_default():
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    deps.validate(_make_policy())  # no flags → no error
+
+
+def test_validate_coach_requires_coach_completion():
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    with pytest.raises(ValueError, match="coach_completion is required"):
+        deps.validate(_make_policy(), require_coach_completion=True)
+
+
+def test_validate_coach_not_checked_by_default():
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    deps.validate(_make_policy())  # no flags → no error
+
+
+def test_validate_implementation_requires_raw_completion():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=None, stream_completion=None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        deps.validate(_make_policy(), require_raw_completion=True)
+
+
+def test_validate_implementation_single_completion_ok():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None,
+    )
+    deps.validate(_make_policy(), require_raw_completion=True)  # no error
+
+
+def test_validate_implementation_stream_completion_ok():
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        stream_completion=lambda **kw: None,
+    )
+    deps.validate(
+        _make_policy(streaming=True), require_raw_completion=True,
+    )  # no error
+
+
+def test_validate_implementation_streaming_without_stream_falls_back():
+    """streaming=True but stream_completion=None — valid if single_completion set."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None, stream_completion=None,
+    )
+    deps.validate(
+        _make_policy(streaming=True), require_raw_completion=True,
+    )  # no error — graceful fallback
+
+
+def test_validate_implementation_non_streaming_needs_single():
+    """streaming=False, only stream_completion → error (non-streaming path needs single)."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=None, stream_completion=lambda **kw: None,
+    )
+    with pytest.raises(ValueError, match="single_completion"):
+        deps.validate(_make_policy(streaming=False), require_raw_completion=True)
+
+
+def test_validate_no_flags_ok():
+    """No flags set, minimal deps → no error (all checks opt-in)."""
+    deps = SessionDeps(agent_completion=None, coach_completion=None)
+    deps.validate(_make_policy())
+
+
+def test_validate_all_flags_all_set_ok():
+    """All flags True, everything populated → no error."""
+    deps = SessionDeps(
+        agent_completion=lambda **kw: None, coach_completion=lambda **kw: None,
+        single_completion=lambda **kw: None, stream_completion=lambda **kw: None,
+    )
+    deps.validate(
+        _make_policy(streaming=True),
+        require_agent_completion=True,
+        require_coach_completion=True,
+        require_raw_completion=True,
+    )
+
+
+def test_run_session_validates_agent_completion():
+    """run_session with agent_completion=None raises ValueError immediately."""
+    deps = SessionDeps(agent_completion=None, coach_completion=lambda **kw: None)
+    with pytest.raises(ValueError, match="agent_completion is required"):
+        _collect(run_session(
+            agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+            deps=deps, history=[], policy=_make_policy(max_turns=1),
+        ))
+
+
+def test_run_session_validates_coach_completion():
+    """run_session with coach in policy but coach_completion=None raises ValueError."""
+    deps = SessionDeps(agent_completion=lambda **kw: None, coach_completion=None)
+    with pytest.raises(ValueError, match="coach_completion is required"):
+        _collect(run_session(
+            agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+            deps=deps, history=[],
+            policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+        ))

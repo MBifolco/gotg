@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from gotg.errors import ModelError
+
 from gotg.engine import SessionDeps
 from gotg.events import (
     AgentTurnComplete,
@@ -486,18 +488,10 @@ class TestImplementationStreaming:
 
 
 class TestCliStreaming:
-    def test_text_delta_printed_inline(self, tmp_path, capsys):
+    def test_text_delta_printed_inline(self, capsys):
         """TextDelta events are written to stdout."""
-        from gotg.cli import _run_implementation_phase
-        from gotg.session import persist_event
+        from gotg.console_events import handle_console_events
 
-        tasks = [_make_tasks()[0]]
-        tasks[0]["status"] = "done"
-        iter_dir = _setup_iter_dir(tmp_path, tasks)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
-
-        # Patch run_implementation to yield controlled events
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
             TextDelta("agent-1", "impl-agent-1-r0", "Hello"),
@@ -507,26 +501,15 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
-            _run_implementation_phase(
-                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
-                SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # Text deltas printed inline
         assert "Hello world" in captured.out
 
-    def test_double_print_suppression(self, tmp_path, capsys):
+    def test_double_print_suppression(self, capsys):
         """AppendMessage is not printed when streaming is active."""
-        from gotg.cli import _run_implementation_phase
-
-        tasks = [_make_tasks()[0]]
-        tasks[0]["status"] = "done"
-        iter_dir = _setup_iter_dir(tmp_path, tasks)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -536,29 +519,16 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
-            _run_implementation_phase(
-                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
-                SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # "Streamed" should appear only once (from TextDelta), not twice
         # The AppendMessage print should be suppressed
-        # Count occurrences — the TextDelta writes "Streamed" once, then "\n\n"
-        # AppendMessage would add "agent-1: Streamed\n\n" if not suppressed
         assert captured.out.count("Streamed") == 1
 
-    def test_non_streaming_append_still_prints(self, tmp_path, capsys):
+    def test_non_streaming_append_still_prints(self, capsys):
         """AppendMessage prints normally when no streaming is active."""
-        from gotg.cli import _run_implementation_phase
-
-        tasks = [_make_tasks()[0]]
-        tasks[0]["status"] = "done"
-        iter_dir = _setup_iter_dir(tmp_path, tasks)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -566,25 +536,14 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
-            _run_implementation_phase(
-                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
-                SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         assert "Normal message" in captured.out
 
-    def test_streamed_turn_id_cleared_after_complete(self, tmp_path, capsys):
+    def test_streamed_turn_id_cleared_after_complete(self, capsys):
         """After AgentTurnComplete, subsequent AppendMessage prints normally."""
-        from gotg.cli import _run_implementation_phase
-
-        tasks = [_make_tasks()[0]]
-        tasks[0]["status"] = "done"
-        iter_dir = _setup_iter_dir(tmp_path, tasks)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -596,12 +555,7 @@ class TestCliStreaming:
             LayerComplete(0, ("task-a",)),
         ]
 
-        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
-            _run_implementation_phase(
-                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
-                SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         assert "Task done" in captured.out
@@ -642,7 +596,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -678,7 +632,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -719,7 +673,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -747,7 +701,7 @@ class TestAnthropicRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.anthropic.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="https://api.anthropic.com",
                 model="test",
@@ -776,7 +730,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -807,7 +761,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -831,8 +785,8 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
-            with pytest.raises(SystemExit, match="429"):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
+            with pytest.raises(ModelError, match="429"):
                 result = raw_completion_stream(
                     base_url="http://localhost:11434",
                     model="test",
@@ -855,7 +809,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -878,7 +832,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -907,7 +861,7 @@ class TestOpenAIRawStream:
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("gotg.model.httpx.stream", return_value=mock_resp):
+        with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -927,8 +881,8 @@ class TestOpenAIRawStream:
 class TestRawCompletionStreamFallback:
     def test_fallback_to_non_streaming_before_any_delta(self):
         """If stream transport fails immediately, fallback to raw_completion."""
-        with patch("gotg.model._openai_raw_stream", side_effect=httpx.StreamError("boom")), \
-             patch("gotg.model.raw_completion", return_value=_text_round("fallback")) as mock_raw:
+        with patch("gotg.model.routing._openai_raw_stream", side_effect=httpx.StreamError("boom")), \
+             patch("gotg.model.routing.raw_completion", return_value=_text_round("fallback")) as mock_raw:
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -948,8 +902,8 @@ class TestRawCompletionStreamFallback:
             yield "partial"
             raise httpx.StreamError("mid-stream boom")
 
-        with patch("gotg.model._openai_raw_stream", return_value=_gen()), \
-             patch("gotg.model.raw_completion") as mock_raw:
+        with patch("gotg.model.routing._openai_raw_stream", return_value=_gen()), \
+             patch("gotg.model.routing.raw_completion") as mock_raw:
             result = raw_completion_stream(
                 base_url="http://localhost:11434",
                 model="test",
@@ -1169,17 +1123,9 @@ class TestTextDeltaMsg:
 
 
 class TestCliDiscussionStreaming:
-    def test_text_delta_printed_inline(self, tmp_path, capsys):
+    def test_text_delta_printed_inline(self, capsys):
         """TextDelta events are written to stdout in discussion phase."""
-        from gotg.cli import _run_discussion_phase
-        from gotg.engine import run_session
-
-        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
-        iter_dir.mkdir(parents=True)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
-        log_path.touch()
-        debug_path.touch()
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1190,26 +1136,14 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        with patch("gotg.cli.run_session", return_value=iter(events)):
-            _run_discussion_phase(
-                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
-                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "Hello discussion" in captured.out
 
-    def test_agent_name_suppression_passes_tool_ops(self, tmp_path, capsys):
+    def test_agent_name_suppression_passes_tool_ops(self, capsys):
         """Agent message suppressed but tool op system messages still print."""
-        from gotg.cli import _run_discussion_phase
-
-        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
-        iter_dir.mkdir(parents=True)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
-        log_path.touch()
-        debug_path.touch()
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1222,12 +1156,7 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        with patch("gotg.cli.run_session", return_value=iter(events)):
-            _run_discussion_phase(
-                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
-                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         # Tool op should appear
@@ -1235,16 +1164,9 @@ class TestCliDiscussionStreaming:
         # Agent content appears once (from TextDelta), not twice
         assert captured.out.count("Streamed text") == 1
 
-    def test_non_streaming_discussion_unchanged(self, tmp_path, capsys):
+    def test_non_streaming_discussion_unchanged(self, capsys):
         """When no TextDelta events, all AppendMessages print normally."""
-        from gotg.cli import _run_discussion_phase
-
-        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
-        iter_dir.mkdir(parents=True)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
-        log_path.touch()
-        debug_path.touch()
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1252,26 +1174,14 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        with patch("gotg.cli.run_session", return_value=iter(events)):
-            _run_discussion_phase(
-                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
-                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "Normal response" in captured.out
 
-    def test_tool_progress_printed_to_stderr(self, tmp_path, capsys):
+    def test_tool_progress_printed_to_stderr(self, capsys):
         """ToolCallProgress events go to stderr in discussion phase."""
-        from gotg.cli import _run_discussion_phase
-
-        iter_dir = tmp_path / ".team" / "iterations" / "iter-1"
-        iter_dir.mkdir(parents=True)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
-        log_path.touch()
-        debug_path.touch()
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "refinement", None, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1282,12 +1192,7 @@ class TestCliDiscussionStreaming:
             SessionComplete(1),
         ]
 
-        with patch("gotg.cli.run_session", return_value=iter(events)):
-            _run_discussion_phase(
-                AGENTS[:1], {"id": "iter-1", "phase": "refinement", "description": "test", "max_turns": 1},
-                MODEL_CONFIG, SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=False)
 
         captured = capsys.readouterr()
         assert "file_read" in captured.err
@@ -1318,14 +1223,9 @@ class TestGroomingStreaming:
 
 
 class TestImplNameBasedSuppression:
-    def test_tool_op_messages_pass_through(self, tmp_path, capsys):
+    def test_tool_op_messages_pass_through(self, capsys):
         """After AgentTurnComplete, system tool op messages still print."""
-        from gotg.cli import _run_implementation_phase
-
-        tasks = _make_tasks()
-        iter_dir = _setup_iter_dir(tmp_path, tasks)
-        log_path = iter_dir / "conversation.jsonl"
-        debug_path = iter_dir / "debug.jsonl"
+        from gotg.console_events import handle_console_events
 
         events = [
             SessionStarted("iter-1", "test", "implementation", 0, ["agent-1"], None, False, None, 0, 0, 1),
@@ -1340,12 +1240,7 @@ class TestImplNameBasedSuppression:
             LayerComplete(0, ("task-a",)),
         ]
 
-        with patch("gotg.implementation.run_implementation", return_value=iter(events)):
-            _run_implementation_phase(
-                [AGENTS[0]], ITERATION, iter_dir, MODEL_CONFIG,
-                SessionDeps(None, None, None), [], _make_policy(),
-                log_path, debug_path,
-            )
+        handle_console_events(iter(events), use_implementation=True)
 
         captured = capsys.readouterr()
         # System messages should print

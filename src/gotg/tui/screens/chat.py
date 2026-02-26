@@ -11,7 +11,7 @@ from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input
 
-from gotg.conversation import append_message, read_log, read_phase_history
+from gotg.conversation import ConversationStore
 from gotg.events import (
     AdvanceComplete,
     AdvanceError,
@@ -29,7 +29,7 @@ from gotg.events import (
     TextDelta,
     ToolCallProgress,
 )
-from gotg.session import persist_event
+from gotg.session_types import PauseReason
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
 from gotg.tui.messages import EngineEvent, SessionError, TextDeltaMsg, ToolProgress
 from gotg.tui.widgets.action_bar import ActionBar
@@ -44,12 +44,6 @@ class SessionState(Enum):
     PAUSED = auto()
     COMPLETE = auto()
     ADVANCING = auto()
-
-
-class PauseReason(Enum):
-    APPROVALS = auto()
-    COACH_QUESTION = auto()
-    PHASE_COMPLETE = auto()
 
 
 class ChatScreen(Screen):
@@ -87,6 +81,7 @@ class ChatScreen(Screen):
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
         self._debug_path = data_dir / "debug.jsonl"
+        self._conv_store = ConversationStore(self._log_path, self._debug_path)
         # Streaming state
         self._streaming_widget = None       # StreamingChatbox | None
         self._streaming_turn_id: str | None = None
@@ -113,7 +108,7 @@ class ChatScreen(Screen):
 
     def _load_initial_messages(self) -> None:
         """Parse conversation log and populate the message list."""
-        messages = read_log(self._log_path) if self._log_path.exists() else []
+        messages = self._conv_store.read_full()
 
         msg_list = self.query_one("#message-list", MessageList)
         msg_list.load_messages(messages)
@@ -147,30 +142,14 @@ class ChatScreen(Screen):
 
     def _restore_pause_state(self, messages: list[dict]) -> None:
         """Detect if the conversation was paused mid-session and restore UI state."""
-        # Only look at messages in the current phase (after last boundary marker)
-        phase_messages = messages
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("phase_boundary"):
-                phase_messages = messages[i + 1:]
-                break
+        from gotg.session_types import reconstruct_resume_state
 
-        # Walk backwards past pass_turn system messages to find the real last content
-        last_content_msg = None
-        for msg in reversed(phase_messages):
-            if not msg.get("pass_turn") and msg.get("from") != "system":
-                last_content_msg = msg
-                break
+        state = reconstruct_resume_state(messages, self.metadata.get("phase"))
 
-        if not last_content_msg:
-            return
-
-        phase = self.metadata.get("phase")
-
-        # Detect phase complete signal (coach message ending the session)
-        if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
+        if state.pause_reason == PauseReason.PHASE_COMPLETE:
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            if phase == "code-review":
+            if state.phase_complete_shows_review:
                 self.query_one("#action-bar", ActionBar).show(
                     "Code review complete. Press D to review diffs and merge."
                 )
@@ -181,18 +160,16 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        # Detect ask_pm (coach paused for PM input)
-        ask_pm_data = last_content_msg.get("ask_pm")
-        if ask_pm_data:
+        if state.pause_reason == PauseReason.COACH_QUESTION:
             self._pause_reason = PauseReason.COACH_QUESTION
             self.session_state = SessionState.PAUSED
             msg_list = self.query_one("#message-list", MessageList)
-            msg_list.append_coach_prompt(ask_pm_data["question"])
-            options = ask_pm_data.get("options") or []
+            msg_list.append_coach_prompt(state.ask_pm_data["question"])
+            options = state.ask_pm_data.get("options") or []
             if options:
                 from gotg.tui.modals.decision import DecisionModal
                 self.app.push_screen(
-                    DecisionModal(ask_pm_data["question"], options),
+                    DecisionModal(state.ask_pm_data["question"], options),
                     callback=self._on_decision_result,
                 )
             else:
@@ -202,8 +179,7 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        # Detect task assignment needed (pre-code-review/implementation with unassigned tasks)
-        if phase in ("pre-code-review", "implementation"):
+        if state.show_task_status_bar:
             self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────
@@ -257,7 +233,7 @@ class ChatScreen(Screen):
                 "iteration": iteration_id,
                 "content": human_message,
             }
-            append_message(self._log_path, msg)
+            self._conv_store.append(msg)
             msg_list = self.query_one("#message-list", MessageList)
             msg_list.append_message(msg)
 
@@ -267,7 +243,7 @@ class ChatScreen(Screen):
         """Runs in worker thread. Posts EngineEvent messages to main thread."""
         try:
             from gotg.context import TeamContext
-            from gotg.engine import SessionDeps, run_session
+            from gotg.engine import SessionDeps
             from gotg.model import (
                 agentic_completion,
                 chat_completion,
@@ -276,10 +252,8 @@ class ChatScreen(Screen):
             )
             from gotg.session import (
                 SessionSetupError,
-                build_file_infra,
-                load_diffs_for_review,
-                resolve_layer,
-                setup_worktrees,
+                build_session_infra,
+                prepare_session, run_and_persist,
                 validate_iteration_for_run,
             )
 
@@ -290,52 +264,45 @@ class ChatScreen(Screen):
                 iteration, iter_dir = ctx.iteration_store.get_current()
                 validate_iteration_for_run(iteration, iter_dir, ctx.agents)
 
-                fileguard, approval_store = build_file_infra(
-                    ctx.project_root, ctx.file_access, iter_dir
+                infra = build_session_infra(ctx, iteration, iter_dir)
+
+                # Apply approved writes, inject denials, count turns
+                from gotg.session import prepare_continue
+                cont = prepare_continue(
+                    infra, iteration, self._log_path,
+                    coach_name=ctx.coach["name"] if ctx.coach else None,
                 )
-                worktree_map, _ = setup_worktrees(
-                    ctx.team_dir, ctx.agents, fileguard, None, iteration
-                )
-                diffs_summary, _ = load_diffs_for_review(
-                    ctx.team_dir, iteration, None
+                for msg in cont.injected_messages:
+                    self.post_message(EngineEvent(AppendMessage(msg)))
+                if cont.has_pending_approvals:
+                    self.post_message(EngineEvent(
+                        PauseForApprovals(pending_count=cont.pending_count)
+                    ))
+                    return
+
+                max_turns = cont.current_agent_turns + iteration.get("max_turns", 30)
+                streaming_enabled = infra.streaming
+
+                deps = SessionDeps(
+                    agent_completion=agentic_completion,
+                    coach_completion=chat_completion,
+                    single_completion=raw_completion,
+                    stream_completion=raw_completion_stream if streaming_enabled else None,
+                    model_resolver=ctx.model_resolver,
                 )
 
-                # Apply approved writes and inject denials before resuming
-                if approval_store:
-                    from gotg.session import apply_and_inject
-                    inject_msgs = apply_and_inject(
-                        approval_store, fileguard, iteration,
-                        self._log_path, worktree_map=worktree_map,
-                    )
-                    for msg in inject_msgs:
-                        self.post_message(EngineEvent(AppendMessage(msg)))
-                    remaining = approval_store.get_pending()
-                    if remaining:
-                        self.post_message(EngineEvent(
-                            PauseForApprovals(pending_count=len(remaining))
-                        ))
-                        return
-
-                history = read_phase_history(self._log_path)
-                coach_name = ctx.coach["name"] if ctx.coach else None
-                current_agent_turns = sum(
-                    1 for msg in history if is_agent_turn(msg, coach_name)
-                )
-                max_turns = current_agent_turns + iteration.get("max_turns", 30)
-                from gotg.config import load_streaming_config
-                streaming_enabled = load_streaming_config(ctx.team_dir)
-
-                from gotg.policy import iteration_policy
-                policy = iteration_policy(
-                    agents=ctx.agents, iteration=iteration, iter_dir=iter_dir,
-                    history=history, coach=ctx.coach, fileguard=fileguard,
-                    approval_store=approval_store, worktree_map=worktree_map,
-                    diffs_summary=diffs_summary, max_turns_override=max_turns,
+                setup = prepare_session(
+                    iter_dir, ctx.agents, iteration, ctx.model_config, deps,
+                    max_turns_override=max_turns, coach=ctx.coach,
+                    fileguard=infra.fileguard, approval_store=infra.approval_store,
+                    worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
                     streaming=streaming_enabled,
                 )
             else:
-                # Grooming session
+                # Grooming session — uses prepare_grooming_session
                 from gotg.groom import load_grooming_metadata
+                from gotg.session import prepare_grooming_session
+
                 groom_meta, groom_dir = load_grooming_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
                 )
@@ -344,49 +311,28 @@ class ChatScreen(Screen):
                     "description": groom_meta.get("topic", ""),
                     "phase": None,
                 }
-                iter_dir = groom_dir
-                history = read_log(self._log_path)
                 coach = ctx.coach if groom_meta.get("coach") else None
 
                 from gotg.config import load_streaming_config as _load_streaming
                 streaming_enabled = _load_streaming(ctx.team_dir)
 
-                from gotg.policy import grooming_policy
-                policy = grooming_policy(
-                    agents=ctx.agents,
+                deps = SessionDeps(
+                    agent_completion=agentic_completion,
+                    coach_completion=chat_completion,
+                    single_completion=raw_completion,
+                    stream_completion=raw_completion_stream if streaming_enabled else None,
+                    model_resolver=ctx.model_resolver,
+                )
+
+                setup = prepare_grooming_session(
+                    groom_dir, ctx.agents, iteration, ctx.model_config, deps,
                     topic=groom_meta.get("topic", ""),
-                    history=history,
                     coach=coach,
                     max_turns=groom_meta.get("max_turns", 30),
                     streaming=streaming_enabled,
                 )
 
-            deps = SessionDeps(
-                agent_completion=agentic_completion,
-                coach_completion=chat_completion,
-                single_completion=raw_completion,
-                stream_completion=raw_completion_stream if streaming_enabled else None,
-            )
-
-            # Route: implementation phase uses dedicated executor
-            if self._session_kind == "iteration" and iteration.get("phase") == "implementation":
-                import json as _json
-                from gotg.implementation import run_implementation
-                tasks_path = iter_dir / "tasks.json"
-                tasks_data = _json.loads(tasks_path.read_text())
-                current_layer = iteration.get("current_layer", 0)
-                event_gen = run_implementation(
-                    agents=ctx.agents, tasks=tasks_data, current_layer=current_layer,
-                    iteration=iteration, iter_dir=iter_dir, model_config=ctx.model_config,
-                    deps=deps, history=history, policy=policy,
-                )
-            else:
-                event_gen = run_session(
-                    agents=ctx.agents, iteration=iteration,
-                    model_config=ctx.model_config, deps=deps,
-                    history=history, policy=policy,
-                )
-
+            # Unified event loop — run_and_persist handles persistence + phase routing
             import time
             _stream_buffer: list[str] = []
             _stream_turn_id: str | None = None
@@ -402,7 +348,7 @@ class ChatScreen(Screen):
                     _stream_buffer = []
                     _last_flush = time.monotonic()
 
-            for event in event_gen:
+            for event in run_and_persist(setup):
                 if self._cancel_requested:
                     _flush_stream_buffer()
                     break
@@ -424,9 +370,7 @@ class ChatScreen(Screen):
                 # Flush any pending stream data before non-delta events
                 _flush_stream_buffer()
 
-                # Persist BEFORE posting to UI — if app crashes between the two,
-                # message is saved but not displayed (recoverable on reload).
-                persist_event(event, self._log_path, self._debug_path)
+                # Already persisted by run_and_persist — just post to UI
                 if isinstance(event, ToolCallProgress):
                     self.post_message(ToolProgress(event))
                 else:
@@ -509,7 +453,8 @@ class ChatScreen(Screen):
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            if event.phase == "code-review":
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(event.phase).phase_complete_shows_review_hint:
                 self.query_one("#action-bar", ActionBar).show(
                     "Code review complete. Press D to review diffs and merge."
                 )
@@ -551,7 +496,8 @@ class ChatScreen(Screen):
             # Patch metadata for display only — R → run reloads from disk
             self.metadata["phase"] = event.to_phase
             self.query_one("#info-tile", InfoTile).update_phase(event.to_phase)
-            if event.to_phase == "pre-code-review":
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(event.to_phase).auto_open_task_assign_on_advance:
                 self.query_one("#action-bar", ActionBar).show(
                     "Assigning tasks..."
                 )
@@ -737,8 +683,8 @@ class ChatScreen(Screen):
             return
         if self._session_kind != "iteration":
             return
-        phase = self.metadata.get("phase")
-        if phase not in ("pre-code-review", "implementation"):
+        from gotg.phases import get_phase_caps_safe
+        if not get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
             return
         self._open_task_assign()
 
@@ -752,14 +698,14 @@ class ChatScreen(Screen):
 
     def _update_task_status_bar(self) -> None:
         """Update action bar with task assignment status."""
-        import json
+        from gotg.tasks import TaskRepo
 
-        tasks_path = self.data_dir / "tasks.json"
+        repo = TaskRepo(self.data_dir / "tasks.json")
         bar = self.query_one("#action-bar", ActionBar)
-        if not tasks_path.exists():
+        if not repo.exists():
             bar.show("Press R to run, T to assign tasks.")
             return
-        tasks = json.loads(tasks_path.read_text())
+        tasks = repo.load()
         unassigned = sum(1 for t in tasks if not t.get("assigned_to"))
         if unassigned:
             bar.show(
@@ -776,7 +722,8 @@ class ChatScreen(Screen):
             return
         if self._session_kind != "iteration":
             return
-        if self.metadata.get("phase") not in ("implementation", "code-review"):
+        from gotg.phases import get_phase_caps_safe
+        if not get_phase_caps_safe(self.metadata.get("phase")).can_open_review_screen:
             return
         from gotg.context import TeamContext
         ctx = TeamContext.from_team_dir(self.app.team_dir)
@@ -788,8 +735,8 @@ class ChatScreen(Screen):
         """Refresh state when returning from pushed screens."""
         if self.session_state == SessionState.VIEWING:
             # Returning from TaskAssignScreen or similar
-            phase = self.metadata.get("phase")
-            if phase in ("pre-code-review", "implementation"):
+            from gotg.phases import get_phase_caps_safe
+            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
                 self._update_task_status_bar()
             return
 
@@ -839,7 +786,7 @@ class ChatScreen(Screen):
                     f"Advanced to layer {layer} ({new_phase}). Press R to run."
                 )
                 # Append only the new messages (boundary + transition)
-                messages = read_log(self._log_path) if self._log_path.exists() else []
+                messages = self._conv_store.read_full()
                 msg_list = self.query_one("#message-list", MessageList)
                 for m in messages[-2:]:
                     msg_list.append_message(m)

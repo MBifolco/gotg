@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+from typing import Callable
+
+from gotg.errors import ConfigError
+from gotg.migration import migrate_iteration_data, migrate_team_config
 
 
 def read_dotenv(dotenv_path: Path) -> dict[str, str]:
@@ -43,47 +48,113 @@ def ensure_dotenv_key(dotenv_path: Path, key: str) -> None:
         dotenv_path.write_text(f"{key}=\n")
 
 
-def load_model_config(team_dir: Path) -> dict:
-    team_config = json.loads((team_dir / "team.json").read_text())
-    config = dict(team_config["model"])
-    # Resolve api_key: if it starts with $, read from .env then environment
+def _resolve_api_key(config: dict, team_dir: Path) -> dict:
+    """Resolve $VAR api_key references via .env and os.environ.
+
+    Returns a new dict with api_key resolved. Raises ConfigError if
+    a $VAR reference cannot be resolved.
+    """
+    config = dict(config)
     api_key = config.get("api_key")
     if api_key and api_key.startswith("$"):
         env_var = api_key[1:]
-        # Check .env file first (in project root, parent of .team/)
         dotenv_path = team_dir.parent / ".env"
         dotenv_vars = read_dotenv(dotenv_path)
         resolved = dotenv_vars.get(env_var) or os.environ.get(env_var)
         config["api_key"] = resolved
         if not config["api_key"]:
-            raise SystemExit(
-                f"Error: environment variable {env_var} is not set "
+            raise ConfigError(
+                f"environment variable {env_var} is not set "
                 f"(referenced in .team/team.json model.api_key). "
                 f"Add it to .env or export it in your shell."
             )
     return config
 
 
+def load_model_config(team_dir: Path) -> dict:
+    team_config = load_team_config(team_dir)
+    config = dict(team_config["model"])
+    return _resolve_api_key(config, team_dir)
+
+
+def build_model_resolver(
+    team_default: dict,
+    agents: list[dict],
+    coach: dict | None,
+    team_dir: Path,
+) -> Callable[[str | None], dict]:
+    """Build a resolver: agent_name -> merged model config.
+
+    None or unknown name -> team default.
+    Pre-computes + caches per-agent configs with API key resolution.
+    """
+    overrides: dict[str, dict] = {}
+    entries = list(agents)
+    if coach:
+        entries.append(coach)
+
+    for entry in entries:
+        agent_model = entry.get("model")
+        if not agent_model:
+            continue
+        name = entry["name"]
+        merged = {**team_default, **agent_model}
+        # Cross-provider validation: changing provider without base_url is likely a mistake
+        if (
+            "provider" in agent_model
+            and agent_model["provider"] != team_default.get("provider")
+            and "base_url" not in agent_model
+        ):
+            raise ValueError(
+                f"Agent '{name}' overrides provider to '{agent_model['provider']}' "
+                f"but does not specify base_url. "
+                f"Add base_url to the model override or remove the provider override."
+            )
+        overrides[name] = _resolve_api_key(merged, team_dir)
+
+    # Pre-resolve the team default too (already resolved by load_model_config,
+    # but callers may pass raw config in tests)
+    resolved_default = _resolve_api_key(team_default, team_dir)
+
+    def resolver(name: str | None) -> dict:
+        if name and name in overrides:
+            return dict(overrides[name])
+        return dict(resolved_default)
+
+    return resolver
+
+
+def resolve_model_config(
+    model_resolver: Callable | None,
+    model_config: dict,
+    agent_name: str | None = None,
+) -> dict:
+    """Resolve model config for a specific agent. Falls back to model_config."""
+    if model_resolver:
+        return model_resolver(agent_name)
+    return dict(model_config)
+
+
 def load_agents(team_dir: Path) -> list[dict]:
-    team_config = json.loads((team_dir / "team.json").read_text())
-    return team_config["agents"]
+    return load_team_config(team_dir)["agents"]
 
 
 def load_coach(team_dir: Path) -> dict | None:
-    team_config = json.loads((team_dir / "team.json").read_text())
-    return team_config.get("coach")
+    return load_team_config(team_dir).get("coach")
 
 
 def load_iteration(team_dir: Path) -> dict:
     data = json.loads((team_dir / "iteration.json").read_text())
+    warnings: list[str] = []
+    data = migrate_iteration_data(data, warnings=warnings)
+    for w in warnings:
+        print(f"Warning: {w}", file=sys.stderr)
     current_id = data["current"]
     for iteration in data["iterations"]:
         if iteration["id"] == current_id:
-            if "phase" in iteration:
-                iteration["phase"] = _normalize_phase(iteration["phase"])
             return iteration
-    raise SystemExit(
-        f"Error: current iteration '{current_id}' not found in iteration list."
+    raise ConfigError(
+        f"current iteration '{current_id}' not found in iteration list."
     )
 
 
@@ -100,14 +171,6 @@ def get_current_iteration(team_dir: Path) -> tuple[dict, Path]:
 PHASE_ORDER = ["refinement", "planning", "pre-code-review", "implementation", "code-review"]
 ITERATION_STATUSES = ["pending", "in-progress", "done"]
 
-_PHASE_ALIASES = {"grooming": "refinement"}
-
-
-def _normalize_phase(phase: str) -> str:
-    """Normalize legacy phase names (e.g. 'grooming' → 'refinement')."""
-    return _PHASE_ALIASES.get(phase, phase)
-
-
 def create_iteration(
     team_dir: Path,
     iteration_id: str,
@@ -121,6 +184,7 @@ def create_iteration(
     """
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
+    data = migrate_iteration_data(data)
     existing_ids = {it["id"] for it in data.get("iterations", [])}
     if iteration_id in existing_ids:
         raise ValueError(f"Iteration '{iteration_id}' already exists.")
@@ -153,13 +217,14 @@ def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:
     """Update arbitrary fields on an iteration in iteration.json."""
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
+    data = migrate_iteration_data(data)
     for iteration in data["iterations"]:
         if iteration["id"] == iteration_id:
             iteration.update(fields)
             iter_path.write_text(json.dumps(data, indent=2) + "\n")
             return
-    raise SystemExit(
-        f"Error: iteration '{iteration_id}' not found in iteration list."
+    raise ConfigError(
+        f"iteration '{iteration_id}' not found in iteration list."
     )
 
 
@@ -171,6 +236,7 @@ def switch_current_iteration(team_dir: Path, iteration_id: str) -> None:
     """Switch the current iteration pointer to the given ID."""
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
+    data = migrate_iteration_data(data)
     existing_ids = {it["id"] for it in data.get("iterations", [])}
     if iteration_id not in existing_ids:
         raise ValueError(f"Iteration '{iteration_id}' not found.")
@@ -180,38 +246,40 @@ def switch_current_iteration(team_dir: Path, iteration_id: str) -> None:
 
 def load_streaming_config(team_dir: Path) -> bool:
     """Read streaming flag from team.json. Returns False if not configured."""
-    team_config = json.loads((team_dir / "team.json").read_text())
-    return bool(team_config.get("streaming", False))
+    return bool(load_team_config(team_dir).get("streaming", False))
 
 
 def load_file_access(team_dir: Path) -> dict | None:
     """Read file_access config from team.json. Returns None if not configured."""
-    team_config = json.loads((team_dir / "team.json").read_text())
-    return team_config.get("file_access")
+    return load_team_config(team_dir).get("file_access")
 
 
 def load_worktree_config(team_dir: Path) -> dict | None:
     """Read worktrees config from team.json. Returns None if not configured."""
-    team_config = json.loads((team_dir / "team.json").read_text())
-    return team_config.get("worktrees")
+    return load_team_config(team_dir).get("worktrees")
 
 
 def load_team_config(team_dir: Path) -> dict:
-    """Load the full team.json as a dict."""
-    return json.loads((team_dir / "team.json").read_text())
+    """Load the full team.json as a dict, with migration applied."""
+    raw = json.loads((team_dir / "team.json").read_text())
+    warnings: list[str] = []
+    data = migrate_team_config(raw, warnings=warnings)
+    for w in warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    return data
 
 
 def save_team_config(team_dir: Path, config: dict) -> None:
-    """Write the full team.json."""
+    """Write the full team.json with schema_version stamped."""
+    config = migrate_team_config(config)
     team_path = team_dir / "team.json"
     team_path.write_text(json.dumps(config, indent=2) + "\n")
 
 
 def save_model_config(team_dir: Path, model_config: dict) -> None:
-    team_path = team_dir / "team.json"
-    team_config = json.loads(team_path.read_text())
+    team_config = load_team_config(team_dir)
     team_config["model"] = model_config
-    team_path.write_text(json.dumps(team_config, indent=2) + "\n")
+    save_team_config(team_dir, team_config)
 
 
 class IterationStore:

@@ -345,6 +345,13 @@ def test_validate_next_layer_wrong_status(tmp_path):
         validate_next_layer(team, iteration, iter_dir)
 
 
+def test_validate_next_layer_unknown_phase(tmp_path):
+    """A typo'd phase produces ReviewError, not raw ValueError."""
+    team, iter_dir, iteration = _make_team_dir(tmp_path, phase="bogus")
+    with pytest.raises(ReviewError, match="Unknown phase 'bogus'"):
+        validate_next_layer(team, iteration, iter_dir)
+
+
 # ── advance_next_layer ────────────────────────────────────────
 
 

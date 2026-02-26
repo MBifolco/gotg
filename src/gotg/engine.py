@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterator
 
 from gotg.agent import build_prompt, build_coach_prompt
+from gotg.config import resolve_model_config
 from gotg.events import (
     AgentTurnComplete,
     AppendDebug,
@@ -17,16 +18,41 @@ from gotg.events import (
     ToolCallProgress,
 )
 from gotg.policy import SessionPolicy
-from gotg.tools import execute_file_tool, format_agent_tool_operation
+from gotg.tools import execute_file_tool, format_agent_tool_operation, make_tool_progress
 
 
 @dataclass
 class SessionDeps:
     """Model function callables injected by the caller (bridge pattern)."""
-    agent_completion: Callable
-    coach_completion: Callable
+    agent_completion: Callable | None
+    coach_completion: Callable | None
     single_completion: Callable | None = None  # raw_completion (implementation tool loop)
     stream_completion: Callable | None = None  # raw_completion_stream (streaming)
+    model_resolver: Callable | None = None     # (name: str | None) -> dict
+
+    def validate(
+        self,
+        policy: SessionPolicy,
+        *,
+        require_agent_completion: bool = False,
+        require_coach_completion: bool = False,
+        require_raw_completion: bool = False,
+    ) -> None:
+        """Validate deps satisfy policy requirements. Raises ValueError."""
+        if require_agent_completion and self.agent_completion is None:
+            raise ValueError("deps.agent_completion is required")
+        if require_coach_completion and self.coach_completion is None:
+            raise ValueError(
+                "deps.coach_completion is required (policy has coach)"
+            )
+        if require_raw_completion:
+            has_non_streaming = self.single_completion is not None
+            has_streaming = policy.streaming and self.stream_completion is not None
+            if not has_non_streaming and not has_streaming:
+                raise ValueError(
+                    "Implementation phase requires deps.single_completion "
+                    "or deps.stream_completion (with streaming enabled)"
+                )
 
 
 def run_session(
@@ -38,6 +64,11 @@ def run_session(
     policy: SessionPolicy,
 ) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | SessionComplete | TextDelta | AgentTurnComplete | ToolCallProgress]:
     """Run a conversation session, yielding events. No print, no persistence."""
+    deps.validate(
+        policy,
+        require_agent_completion=True,
+        require_coach_completion=policy.coach is not None,
+    )
 
     # Build participant list
     all_participants = [
@@ -104,10 +135,12 @@ def run_session(
         # Build tools + executor
         agent_tools, tool_executor = build_tool_executor(agent, policy)
 
+        agent_cfg = resolve_model_config(deps.model_resolver, model_config, agent["name"])
+
         if policy.streaming and deps.stream_completion:
             # Engine-driven streaming tool loop
             for sub_event in _do_streaming_agent_turn(
-                agent, iteration, model_config, deps, history, prompt,
+                agent, iteration, agent_cfg, deps, history, prompt,
                 agent_tools, tool_executor, turn,
             ):
                 yield sub_event
@@ -116,11 +149,11 @@ def run_session(
         else:
             # Existing non-streaming path
             result = deps.agent_completion(
-                base_url=model_config["base_url"],
-                model=model_config["model"],
+                base_url=agent_cfg["base_url"],
+                model=agent_cfg["model"],
                 messages=prompt,
-                api_key=model_config.get("api_key"),
-                provider=model_config.get("provider", "ollama"),
+                api_key=agent_cfg.get("api_key"),
+                provider=agent_cfg.get("provider", "ollama"),
                 tools=agent_tools,
                 tool_executor=tool_executor,
             )
@@ -137,8 +170,9 @@ def run_session(
 
         # Coach injection after every full rotation
         if policy.coach and policy.coach_cadence and turn % policy.coach_cadence == 0:
+            coach_cfg = resolve_model_config(deps.model_resolver, model_config, policy.coach["name"])
             stop = yield from _do_coach_turn(
-                iteration, model_config, deps, history,
+                iteration, coach_cfg, deps, history,
                 all_participants, turn, policy,
             )
             if stop:
@@ -239,15 +273,6 @@ def _process_agent_result(
         history.append(msg)
 
 
-def _classify_tool_result(result_str: str) -> str:
-    """Derive status from tool result string prefix."""
-    if result_str.startswith("Error:"):
-        return "error"
-    if result_str.startswith("Pending approval"):
-        return "pending_approval"
-    return "ok"
-
-
 def _do_streaming_agent_turn(
     agent: dict,
     iteration: dict,
@@ -294,18 +319,7 @@ def _do_streaming_agent_turn(
             operations.append({"name": tc["name"], "input": tc["input"], "result": result})
             tool_results.append({"id": tc["id"], "result": result})
 
-            status = _classify_tool_result(result)
-            content_size = None
-            if tc["name"] == "file_write":
-                content_size = len(tc["input"].get("content", "").encode())
-            yield ToolCallProgress(
-                agent=agent["name"],
-                tool_name=tc["name"],
-                path=tc["input"].get("path", ""),
-                status=status,
-                bytes=content_size,
-                error=result if status == "error" else None,
-            )
+            yield make_tool_progress(agent["name"], tc["name"], tc["input"], result)
 
         # Build continuation for next round
         continuation = rnd.build_continuation(tool_results)

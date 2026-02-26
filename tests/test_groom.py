@@ -3,6 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from gotg.errors import GroomingError
 from gotg.groom import (
     generate_slug,
     validate_slug,
@@ -113,10 +114,10 @@ def test_write_and_load_metadata(tmp_path):
     assert loaded_dir == groom_dir
 
 
-def test_load_metadata_missing_exits(tmp_path):
+def test_load_metadata_missing_raises(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    with pytest.raises(SystemExit):
+    with pytest.raises(GroomingError):
         load_grooming_metadata(team_dir, "nonexistent")
 
 
@@ -135,6 +136,21 @@ def test_list_sessions_returns_all(tmp_path):
     assert len(sessions) == 2
     assert sessions[0]["slug"] == "aaa-topic"
     assert sessions[1]["slug"] == "bbb-topic"
+
+
+def test_list_sessions_forward_version_warns(tmp_path, capsys):
+    """list_grooming_sessions prints warning for forward-version metadata."""
+    team_dir = tmp_path / ".team"
+    groom_dir = team_dir / "grooming" / "future-topic"
+    groom_dir.mkdir(parents=True)
+    import json
+    (groom_dir / "grooming.json").write_text(json.dumps({
+        "schema_version": 99, "slug": "future-topic", "topic": "future",
+    }))
+    sessions = list_grooming_sessions(team_dir)
+    assert len(sessions) == 1
+    captured = capsys.readouterr()
+    assert "schema_version 99" in captured.err
 
 
 def test_existing_slugs(tmp_path):
