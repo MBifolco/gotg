@@ -29,6 +29,7 @@ from gotg.events import (
     TextDelta,
     ToolCallProgress,
 )
+from gotg.session_types import PauseReason
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
 from gotg.tui.messages import EngineEvent, SessionError, TextDeltaMsg, ToolProgress
 from gotg.tui.widgets.action_bar import ActionBar
@@ -43,12 +44,6 @@ class SessionState(Enum):
     PAUSED = auto()
     COMPLETE = auto()
     ADVANCING = auto()
-
-
-class PauseReason(Enum):
-    APPROVALS = auto()
-    COACH_QUESTION = auto()
-    PHASE_COMPLETE = auto()
 
 
 class ChatScreen(Screen):
@@ -146,31 +141,14 @@ class ChatScreen(Screen):
 
     def _restore_pause_state(self, messages: list[dict]) -> None:
         """Detect if the conversation was paused mid-session and restore UI state."""
-        # Only look at messages in the current phase (after last boundary marker)
-        phase_messages = messages
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("phase_boundary"):
-                phase_messages = messages[i + 1:]
-                break
+        from gotg.session_types import reconstruct_resume_state
 
-        # Walk backwards past pass_turn system messages to find the real last content
-        last_content_msg = None
-        for msg in reversed(phase_messages):
-            if not msg.get("pass_turn") and msg.get("from") != "system":
-                last_content_msg = msg
-                break
+        state = reconstruct_resume_state(messages, self.metadata.get("phase"))
 
-        if not last_content_msg:
-            return
-
-        phase = self.metadata.get("phase")
-
-        # Detect phase complete signal (coach message ending the session)
-        if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
+        if state.pause_reason == PauseReason.PHASE_COMPLETE:
             self._pause_reason = PauseReason.PHASE_COMPLETE
             self.session_state = SessionState.PAUSED
-            from gotg.phases import get_phase_caps_safe
-            if get_phase_caps_safe(phase).phase_complete_shows_review_hint:
+            if state.phase_complete_shows_review:
                 self.query_one("#action-bar", ActionBar).show(
                     "Code review complete. Press D to review diffs and merge."
                 )
@@ -181,18 +159,16 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        # Detect ask_pm (coach paused for PM input)
-        ask_pm_data = last_content_msg.get("ask_pm")
-        if ask_pm_data:
+        if state.pause_reason == PauseReason.COACH_QUESTION:
             self._pause_reason = PauseReason.COACH_QUESTION
             self.session_state = SessionState.PAUSED
             msg_list = self.query_one("#message-list", MessageList)
-            msg_list.append_coach_prompt(ask_pm_data["question"])
-            options = ask_pm_data.get("options") or []
+            msg_list.append_coach_prompt(state.ask_pm_data["question"])
+            options = state.ask_pm_data.get("options") or []
             if options:
                 from gotg.tui.modals.decision import DecisionModal
                 self.app.push_screen(
-                    DecisionModal(ask_pm_data["question"], options),
+                    DecisionModal(state.ask_pm_data["question"], options),
                     callback=self._on_decision_result,
                 )
             else:
@@ -202,9 +178,7 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        # Detect task assignment needed
-        from gotg.phases import get_phase_caps_safe
-        if get_phase_caps_safe(phase).show_task_status_bar:
+        if state.show_task_status_bar:
             self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────

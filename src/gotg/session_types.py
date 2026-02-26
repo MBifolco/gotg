@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,6 +17,7 @@ __all__ = [
     "PhaseAdvanceError",
     "ReviewError",
     # Enums
+    "PauseReason",
     "ResolutionStrategy",
     # Dataclasses
     "BranchReview",
@@ -24,6 +25,7 @@ __all__ = [
     "MergeResult",
     "NextLayerResult",
     "AdvanceResult",
+    "ResumeState",
     "ConflictFileInfo",
     "ConflictInfo",
     "AiResolutionResult",
@@ -32,6 +34,7 @@ __all__ = [
     "ContinueContext",
     # Utilities
     "resolve_layer",
+    "reconstruct_resume_state",
 ]
 
 
@@ -104,6 +107,22 @@ class AdvanceResult:
     transition_msg: dict
     checkpoint_number: int | None
     warnings: list[str] = field(default_factory=list)
+
+
+class PauseReason(Enum):
+    """Why a session is paused. Domain knowledge, not UI state."""
+    APPROVALS = auto()
+    COACH_QUESTION = auto()
+    PHASE_COMPLETE = auto()
+
+
+@dataclass
+class ResumeState:
+    """Reconstructed session state from persisted messages."""
+    pause_reason: PauseReason | None = None
+    phase_complete_shows_review: bool = False
+    ask_pm_data: dict | None = None
+    show_task_status_bar: bool = False
 
 
 class ResolutionStrategy(Enum):
@@ -188,3 +207,50 @@ def resolve_layer(layer_override: int | None, iteration: dict) -> int:
     if layer_override is not None:
         return layer_override
     return iteration.get("current_layer", 0)
+
+
+def reconstruct_resume_state(messages: list[dict], phase: str | None) -> ResumeState:
+    """Reconstruct session pause state from persisted messages.
+
+    Pure function — no I/O, no widget queries. Extracts the detection
+    patterns that any adapter (CLI, TUI, web) would need to restore
+    a paused session.
+    """
+    from gotg.phases import get_phase_caps_safe
+
+    # Scope to current phase (after last boundary marker)
+    phase_messages = messages
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("phase_boundary"):
+            phase_messages = messages[i + 1:]
+            break
+
+    # Walk backwards past pass_turn and system messages to find real last content
+    last_content_msg = None
+    for msg in reversed(phase_messages):
+        if not msg.get("pass_turn") and msg.get("from") != "system":
+            last_content_msg = msg
+            break
+
+    if not last_content_msg:
+        return ResumeState()
+
+    # Phase complete signal
+    if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
+        caps = get_phase_caps_safe(phase)
+        return ResumeState(
+            pause_reason=PauseReason.PHASE_COMPLETE,
+            phase_complete_shows_review=caps.phase_complete_shows_review_hint,
+        )
+
+    # Coach asked PM — require "question" key for well-formed payload
+    ask_pm_data = last_content_msg.get("ask_pm")
+    if isinstance(ask_pm_data, dict) and "question" in ask_pm_data:
+        return ResumeState(
+            pause_reason=PauseReason.COACH_QUESTION,
+            ask_pm_data=ask_pm_data,
+        )
+
+    # Fallback: check if phase shows task status bar
+    caps = get_phase_caps_safe(phase)
+    return ResumeState(show_task_status_bar=caps.show_task_status_bar)

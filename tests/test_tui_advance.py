@@ -17,7 +17,8 @@ from gotg.events import (
 )
 from gotg.session import AdvanceResult
 from gotg.tui.app import GotgApp
-from gotg.tui.screens.chat import ChatScreen, SessionState, PauseReason
+from gotg.session_types import PauseReason
+from gotg.tui.screens.chat import ChatScreen, SessionState
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList, MessageWidget
