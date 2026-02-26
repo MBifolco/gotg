@@ -23,7 +23,7 @@ from gotg.events import (
 from gotg.tools import classify_tool_result, make_tool_progress
 from gotg.policy import SessionPolicy
 from gotg.prompts import COMPLETE_TASKS_TOOL, DRIFT_CHECK_PROMPT, REPORT_BLOCKED_TOOL
-from gotg.tasks import load_tasks_file, save_tasks_file
+from gotg.tasks import TaskRepo
 from gotg.transitions import strip_code_fences
 
 _STATE_FILE = "implementation_state.json"
@@ -32,12 +32,12 @@ _READ_ONLY_TOOLS = {"file_read", "file_list"}
 
 def _load_tasks(iter_dir: Path) -> list[dict]:
     """Read tasks.json from disk."""
-    return load_tasks_file(iter_dir / "tasks.json")
+    return TaskRepo(iter_dir / "tasks.json").load()
 
 
 def _save_tasks(iter_dir: Path, tasks: list[dict]) -> None:
     """Write tasks.json to disk."""
-    save_tasks_file(iter_dir / "tasks.json", tasks)
+    TaskRepo(iter_dir / "tasks.json").save(tasks)
 
 
 def _layer_tasks(tasks: list[dict], layer: int) -> list[dict]:

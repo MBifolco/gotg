@@ -234,3 +234,50 @@ def test_format_tasks_summary_anti_patterns_layer_filtered():
     result = format_tasks_summary(tasks, layer=0)
     assert "MUST NOT:" in result
     assert "Do not use eval()" in result
+
+
+# --- TaskRepo ---
+
+def _sample_tasks():
+    return [
+        {"id": "t1", "depends_on": [], "description": "First",
+         "done_criteria": "d1", "assigned_to": "a1", "status": "pending"},
+    ]
+
+
+def test_task_repo_save_and_load(tmp_path):
+    from gotg.tasks import TaskRepo
+    repo = TaskRepo(tmp_path / "tasks.json")
+    assert not repo.exists()
+    repo.save(_sample_tasks())
+    assert repo.exists()
+    loaded = repo.load()
+    assert len(loaded) == 1
+    assert loaded[0]["id"] == "t1"
+
+
+def test_task_repo_round_trip(tmp_path):
+    from gotg.tasks import TaskRepo
+    repo = TaskRepo(tmp_path / "tasks.json")
+    tasks = _sample_tasks()
+    tasks[0]["notes"] = "some notes"
+    repo.save(tasks)
+    loaded = repo.load()
+    assert loaded[0]["notes"] == "some notes"
+
+
+def test_task_repo_exists_false_initially(tmp_path):
+    from gotg.tasks import TaskRepo
+    repo = TaskRepo(tmp_path / "nonexistent.json")
+    assert not repo.exists()
+
+
+def test_task_repo_overwrite(tmp_path):
+    from gotg.tasks import TaskRepo
+    repo = TaskRepo(tmp_path / "tasks.json")
+    repo.save(_sample_tasks())
+    repo.save([{"id": "t2", "depends_on": [], "description": "Second",
+                "done_criteria": "d2", "assigned_to": "a2", "status": "pending"}])
+    loaded = repo.load()
+    assert len(loaded) == 1
+    assert loaded[0]["id"] == "t2"

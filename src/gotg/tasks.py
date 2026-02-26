@@ -144,3 +144,19 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
             parts.append(entry)
 
     return "\n".join(parts)
+
+
+class TaskRepo:
+    """tasks.json persistence. Binds path at construction."""
+
+    def __init__(self, tasks_path: Path):
+        self.tasks_path = tasks_path
+
+    def load(self) -> list[dict]:
+        return load_tasks_file(self.tasks_path)
+
+    def save(self, tasks: list[dict]) -> None:
+        save_tasks_file(self.tasks_path, tasks)
+
+    def exists(self) -> bool:
+        return self.tasks_path.exists()

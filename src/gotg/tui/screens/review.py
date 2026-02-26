@@ -274,8 +274,8 @@ class ReviewScreen(Screen):
         if not tasks_path.exists():
             return "No task context available."
         try:
-            from gotg.tasks import load_tasks_file, format_tasks_summary
-            tasks = load_tasks_file(tasks_path)
+            from gotg.tasks import TaskRepo, format_tasks_summary
+            tasks = TaskRepo(tasks_path).load()
             layer = self._review.layer if self._review else 0
             layer_tasks = [t for t in tasks if t.get("layer") == layer]
             if not layer_tasks:

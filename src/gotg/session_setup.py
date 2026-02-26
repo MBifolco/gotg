@@ -208,8 +208,8 @@ def prepare_session(
     )
     tasks_data = None
     if use_implementation:
-        from gotg.tasks import load_tasks_file
-        tasks_data = load_tasks_file(tasks_path)
+        from gotg.tasks import TaskRepo
+        tasks_data = TaskRepo(tasks_path).load()
 
     current_layer = iteration.get("current_layer", 0)
 
@@ -327,8 +327,8 @@ def validate_iteration_for_run(iteration: dict, iter_dir: Path, agents: list[dic
         raise SessionSetupError(
             f"{phase} requires tasks.json. Run 'gotg advance' from planning first."
         )
-    from gotg.tasks import load_tasks_file
-    tasks = load_tasks_file(tasks_path)
+    from gotg.tasks import TaskRepo
+    tasks = TaskRepo(tasks_path).load()
     current_layer = iteration.get("current_layer")
     if caps.filter_tasks_by_layer and current_layer is not None:
         tasks = [t for t in tasks if t.get("layer") == current_layer]
@@ -428,8 +428,8 @@ def setup_worktrees(
             _, iter_dir = IterationStore(team_dir).get_current()
             tasks_file = iter_dir / "tasks.json"
             if tasks_file.exists():
-                from gotg.tasks import load_tasks_file as _load_tasks
-                tasks_data = _load_tasks(tasks_file)
+                from gotg.tasks import TaskRepo
+                tasks_data = TaskRepo(tasks_file).load()
                 layer_tasks = [t for t in tasks_data if t.get("layer") == layer]
                 assigned_agents = {t.get("assigned_to") for t in layer_tasks if t.get("assigned_to")}
                 if assigned_agents:

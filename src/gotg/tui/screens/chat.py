@@ -698,14 +698,14 @@ class ChatScreen(Screen):
 
     def _update_task_status_bar(self) -> None:
         """Update action bar with task assignment status."""
-        from gotg.tasks import load_tasks_file
+        from gotg.tasks import TaskRepo
 
-        tasks_path = self.data_dir / "tasks.json"
+        repo = TaskRepo(self.data_dir / "tasks.json")
         bar = self.query_one("#action-bar", ActionBar)
-        if not tasks_path.exists():
+        if not repo.exists():
             bar.show("Press R to run, T to assign tasks.")
             return
-        tasks = load_tasks_file(tasks_path)
+        tasks = repo.load()
         unassigned = sum(1 for t in tasks if not t.get("assigned_to"))
         if unassigned:
             bar.show(

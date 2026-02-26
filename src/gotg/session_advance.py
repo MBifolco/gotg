@@ -120,8 +120,8 @@ def advance_phase(
         )
         if tasks is not None:
             tasks_path = iter_dir / "tasks.json"
-            from gotg.tasks import save_tasks_file
-            save_tasks_file(tasks_path, tasks)
+            from gotg.tasks import TaskRepo
+            TaskRepo(tasks_path).save(tasks)
             _progress(f"Wrote {tasks_path}")
             tasks_written = True
         else:
@@ -139,8 +139,9 @@ def advance_phase(
                 _progress("Extracting task notes from pre-code-review...")
                 model_config = load_model_config(team_dir)
                 history = conv_store.read_phase_history()
-                from gotg.tasks import load_tasks_file, save_tasks_file
-                tasks_data = load_tasks_file(tasks_path)
+                from gotg.tasks import TaskRepo
+                task_repo = TaskRepo(tasks_path)
+                tasks_data = task_repo.load()
                 notes_map, raw_text, error = extract_task_notes(
                     history, tasks_data, model_config, coach["name"], chat_call,
                 )
@@ -148,7 +149,7 @@ def advance_phase(
                     for task in tasks_data:
                         if task["id"] in notes_map:
                             task["notes"] = notes_map[task["id"]]
-                    save_tasks_file(tasks_path, tasks_data)
+                    task_repo.save(tasks_data)
                     _progress(f"Updated {tasks_path} with task notes")
                     coach_ran = True
                 else:
@@ -322,8 +323,8 @@ def advance_next_layer(
     tasks_path = iter_dir / "tasks.json"
     if not tasks_path.exists():
         raise ReviewError("tasks.json not found.")
-    from gotg.tasks import load_tasks_file
-    tasks = load_tasks_file(tasks_path)
+    from gotg.tasks import TaskRepo
+    tasks = TaskRepo(tasks_path).load()
 
     # Recompute layers if any task is missing the stored layer field
     if any("layer" not in t for t in tasks):

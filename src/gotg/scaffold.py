@@ -21,8 +21,8 @@ def format_agent_task_assignments(
     if not tasks_path.exists():
         return "No tasks assigned yet."
     try:
-        from gotg.tasks import load_tasks_file
-        tasks = load_tasks_file(tasks_path)
+        from gotg.tasks import TaskRepo
+        tasks = TaskRepo(tasks_path).load()
     except (json.JSONDecodeError, OSError):
         return "No tasks assigned yet."
     if not tasks:
