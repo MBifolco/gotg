@@ -146,6 +146,65 @@ Behavior: File writes during implementation are isolated per agent worktree root
 Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_worktree_isolation_contract`
 
+## Persistence Store Consolidation
+
+Behavior: `persist_event` supports both legacy `(event, log_path, debug_path)` and store-based `(event, store=store)` signatures with strict mutual exclusion.
+Tests:
+- `tests/test_session.py::test_persist_event_append_message`
+- `tests/test_session.py::test_persist_event_append_debug`
+- `tests/test_session.py::test_persist_event_with_store`
+- `tests/test_session.py::test_persist_event_store_debug`
+- `tests/test_session.py::test_persist_event_store_debug_noop_when_no_debug_path`
+- `tests/test_session.py::test_persist_event_rejects_mixed_args`
+- `tests/test_session.py::test_persist_event_rejects_no_args`
+- `tests/test_session.py::test_persist_event_rejects_partial_legacy`
+- `tests/test_session.py::test_persist_event_store_noop_for_other_events`
+
+Behavior: `run_and_persist` routes persistence through `SessionSetup.conv_store` when present.
+Tests:
+- `tests/test_session.py::test_run_and_persist_discussion`
+- `tests/test_session.py::test_run_and_persist_implementation`
+- `tests/test_session.py::test_run_and_persist_only_persists_append_events`
+- `tests/test_session.py::test_run_and_persist_debug_events`
+
+Behavior: TaskRepo wraps tasks.json persistence (load, save, exists) and delegates to free functions.
+Tests:
+- `tests/test_tasks.py::test_task_repo_save_and_load`
+- `tests/test_tasks.py::test_task_repo_round_trip`
+- `tests/test_tasks.py::test_task_repo_exists_false_initially`
+- `tests/test_tasks.py::test_task_repo_overwrite`
+
+Behavior: ConversationStore wraps conversation log I/O (read_full, read_phase_history, append, append_debug).
+Tests:
+- `tests/test_context.py::test_conversation_store_read_full`
+- `tests/test_context.py::test_conversation_store_append`
+- `tests/test_context.py::test_conversation_store_read_phase_history`
+- `tests/test_context.py::test_conversation_store_append_debug`
+- `tests/test_context.py::test_conversation_store_append_debug_noop_without_path`
+
+Behavior: IterationStore wraps iteration config operations (get_current, save_fields, save_phase, create, set_current).
+Tests:
+- `tests/test_context.py::test_iteration_store_get_current`
+- `tests/test_context.py::test_iteration_store_load`
+- `tests/test_context.py::test_iteration_store_save_fields`
+- `tests/test_context.py::test_iteration_store_save_phase`
+
+## Session Module Structure
+
+Behavior: Session preparation validates iteration state and builds file infrastructure before engine dispatch.
+Tests:
+- `tests/test_session.py::test_validate_iteration_for_run_requires_tasks`
+- `tests/test_session.py::test_validate_advance_wrong_phase`
+- `tests/test_session.py::test_validate_advance_no_tasks`
+- `tests/test_session.py::test_run_and_persist_translates_validate_error`
+
+Behavior: Phase advance extracts artifacts and writes boundary markers atomically.
+Tests:
+- `tests/test_session.py::test_advance_refinement_to_planning`
+- `tests/test_session.py::test_advance_planning_bad_json`
+- `tests/test_session.py::test_advance_planning_to_pre_code_review`
+- `tests/test_session.py::test_advance_pre_code_review_to_implementation`
+
 ## Known Gaps (Next Additions)
 
 1. Replay tests from additional historical `gotg-tests/test*` incidents (escape-based regression lane).
