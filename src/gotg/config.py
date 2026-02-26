@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from gotg.errors import ConfigError
 from gotg.migration import migrate_iteration_data, migrate_team_config
 
 
@@ -50,7 +51,7 @@ def ensure_dotenv_key(dotenv_path: Path, key: str) -> None:
 def _resolve_api_key(config: dict, team_dir: Path) -> dict:
     """Resolve $VAR api_key references via .env and os.environ.
 
-    Returns a new dict with api_key resolved. Raises SystemExit if
+    Returns a new dict with api_key resolved. Raises ConfigError if
     a $VAR reference cannot be resolved.
     """
     config = dict(config)
@@ -62,8 +63,8 @@ def _resolve_api_key(config: dict, team_dir: Path) -> dict:
         resolved = dotenv_vars.get(env_var) or os.environ.get(env_var)
         config["api_key"] = resolved
         if not config["api_key"]:
-            raise SystemExit(
-                f"Error: environment variable {env_var} is not set "
+            raise ConfigError(
+                f"environment variable {env_var} is not set "
                 f"(referenced in .team/team.json model.api_key). "
                 f"Add it to .env or export it in your shell."
             )
@@ -152,8 +153,8 @@ def load_iteration(team_dir: Path) -> dict:
     for iteration in data["iterations"]:
         if iteration["id"] == current_id:
             return iteration
-    raise SystemExit(
-        f"Error: current iteration '{current_id}' not found in iteration list."
+    raise ConfigError(
+        f"current iteration '{current_id}' not found in iteration list."
     )
 
 
@@ -222,8 +223,8 @@ def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:
             iteration.update(fields)
             iter_path.write_text(json.dumps(data, indent=2) + "\n")
             return
-    raise SystemExit(
-        f"Error: iteration '{iteration_id}' not found in iteration list."
+    raise ConfigError(
+        f"iteration '{iteration_id}' not found in iteration list."
     )
 
 

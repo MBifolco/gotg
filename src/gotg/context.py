@@ -14,6 +14,7 @@ from gotg.config import (
     load_model_config,
     load_worktree_config,
 )
+from gotg.errors import ConfigError
 from gotg.types import (
     AgentDict,
     CoachDict,
@@ -46,7 +47,7 @@ class TeamContext:
         try:
             resolver = build_model_resolver(model_config, agents, coach, team_dir)
         except ValueError as e:
-            raise SystemExit(f"Error: invalid model override in team.json: {e}")
+            raise ConfigError(f"invalid model override in team.json: {e}") from e
         return cls(
             team_dir=team_dir,
             project_root=team_dir.parent,

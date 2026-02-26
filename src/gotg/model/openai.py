@@ -189,7 +189,8 @@ def _openai_raw_stream(
                 error_msg = error_data.get("error", {}).get("message", resp.text)
             except Exception:
                 error_msg = resp.text
-            raise SystemExit(f"API error ({resp.status_code}): {error_msg}")
+            from gotg.errors import ModelError
+            raise ModelError(f"API error ({resp.status_code}): {error_msg}")
 
         for line in resp.iter_lines():
             if not line.startswith("data: "):

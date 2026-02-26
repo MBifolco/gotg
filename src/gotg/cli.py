@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 from gotg.engine import SessionDeps
+from gotg.errors import GotgError
 from gotg.console_events import handle_console_events
 from gotg.model import chat_completion, agentic_completion, raw_completion, raw_completion_stream
 
@@ -184,79 +185,83 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "init":
-        from gotg.commands.admin import cmd_init
-        cmd_init(args)
-    elif args.command == "run":
-        from gotg.commands.run import cmd_run
-        cmd_run(args)
-    elif args.command == "show":
-        from gotg.commands.admin import cmd_show
-        cmd_show(args)
-    elif args.command == "continue":
-        from gotg.commands.run import cmd_continue
-        cmd_continue(args)
-    elif args.command == "model":
-        from gotg.commands.admin import cmd_model
-        cmd_model(args)
-    elif args.command == "advance":
-        from gotg.commands.advance import cmd_advance
-        cmd_advance(args)
-    elif args.command == "checkpoint":
-        from gotg.commands.admin import cmd_checkpoint
-        cmd_checkpoint(args)
-    elif args.command == "checkpoints":
-        from gotg.commands.admin import cmd_checkpoints
-        cmd_checkpoints(args)
-    elif args.command == "restore":
-        from gotg.commands.admin import cmd_restore
-        cmd_restore(args)
-    elif args.command == "approvals":
-        from gotg.commands.admin import cmd_approvals
-        cmd_approvals(args)
-    elif args.command == "approve":
-        from gotg.commands.admin import cmd_approve
-        cmd_approve(args)
-    elif args.command == "deny":
-        from gotg.commands.admin import cmd_deny
-        cmd_deny(args)
-    elif args.command == "review":
-        from gotg.commands.review import cmd_review
-        cmd_review(args)
-    elif args.command == "merge":
-        if not args.abort and args.branch is None:
-            parser.error("merge requires a branch name or 'all' (or use --abort)")
-        from gotg.commands.review import cmd_merge
-        cmd_merge(args)
-    elif args.command == "worktrees":
-        from gotg.commands.review import cmd_worktrees
-        cmd_worktrees(args)
-    elif args.command == "next-layer":
-        from gotg.commands.advance import cmd_next_layer
-        cmd_next_layer(args)
-    elif args.command == "commit-worktrees":
-        from gotg.commands.review import cmd_commit_worktrees
-        cmd_commit_worktrees(args)
-    elif args.command == "groom":
-        if args.groom_command == "start":
-            from gotg.commands.groom import cmd_groom_start
-            cmd_groom_start(args)
-        elif args.groom_command == "continue":
-            from gotg.commands.groom import cmd_groom_continue
-            cmd_groom_continue(args)
-        elif args.groom_command == "list":
-            from gotg.commands.groom import cmd_groom_list
-            cmd_groom_list(args)
-        elif args.groom_command == "show":
-            from gotg.commands.groom import cmd_groom_show
-            cmd_groom_show(args)
+    try:
+        if args.command == "init":
+            from gotg.commands.admin import cmd_init
+            cmd_init(args)
+        elif args.command == "run":
+            from gotg.commands.run import cmd_run
+            cmd_run(args)
+        elif args.command == "show":
+            from gotg.commands.admin import cmd_show
+            cmd_show(args)
+        elif args.command == "continue":
+            from gotg.commands.run import cmd_continue
+            cmd_continue(args)
+        elif args.command == "model":
+            from gotg.commands.admin import cmd_model
+            cmd_model(args)
+        elif args.command == "advance":
+            from gotg.commands.advance import cmd_advance
+            cmd_advance(args)
+        elif args.command == "checkpoint":
+            from gotg.commands.admin import cmd_checkpoint
+            cmd_checkpoint(args)
+        elif args.command == "checkpoints":
+            from gotg.commands.admin import cmd_checkpoints
+            cmd_checkpoints(args)
+        elif args.command == "restore":
+            from gotg.commands.admin import cmd_restore
+            cmd_restore(args)
+        elif args.command == "approvals":
+            from gotg.commands.admin import cmd_approvals
+            cmd_approvals(args)
+        elif args.command == "approve":
+            from gotg.commands.admin import cmd_approve
+            cmd_approve(args)
+        elif args.command == "deny":
+            from gotg.commands.admin import cmd_deny
+            cmd_deny(args)
+        elif args.command == "review":
+            from gotg.commands.review import cmd_review
+            cmd_review(args)
+        elif args.command == "merge":
+            if not args.abort and args.branch is None:
+                parser.error("merge requires a branch name or 'all' (or use --abort)")
+            from gotg.commands.review import cmd_merge
+            cmd_merge(args)
+        elif args.command == "worktrees":
+            from gotg.commands.review import cmd_worktrees
+            cmd_worktrees(args)
+        elif args.command == "next-layer":
+            from gotg.commands.advance import cmd_next_layer
+            cmd_next_layer(args)
+        elif args.command == "commit-worktrees":
+            from gotg.commands.review import cmd_commit_worktrees
+            cmd_commit_worktrees(args)
+        elif args.command == "groom":
+            if args.groom_command == "start":
+                from gotg.commands.groom import cmd_groom_start
+                cmd_groom_start(args)
+            elif args.groom_command == "continue":
+                from gotg.commands.groom import cmd_groom_continue
+                cmd_groom_continue(args)
+            elif args.groom_command == "list":
+                from gotg.commands.groom import cmd_groom_list
+                cmd_groom_list(args)
+            elif args.groom_command == "show":
+                from gotg.commands.groom import cmd_groom_show
+                cmd_groom_show(args)
+            else:
+                groom_parser.print_help()
+        elif args.command == "ui":
+            from gotg.commands.admin import cmd_ui
+            cmd_ui(args)
         else:
-            groom_parser.print_help()
-    elif args.command == "ui":
-        from gotg.commands.admin import cmd_ui
-        cmd_ui(args)
-    else:
-        parser.print_help()
+            parser.print_help()
+    except GotgError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

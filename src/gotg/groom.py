@@ -6,6 +6,7 @@ import re
 import sys
 from pathlib import Path
 
+from gotg.errors import GroomingError
 from gotg.events import SessionStarted
 from gotg.migration import CURRENT_GROOMING_VERSION, migrate_grooming_metadata
 
@@ -95,8 +96,7 @@ def load_grooming_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
     groom_dir = _grooming_dir(team_dir, slug)
     meta_path = groom_dir / "grooming.json"
     if not meta_path.exists():
-        print(f"Error: grooming session '{slug}' not found.", file=sys.stderr)
-        raise SystemExit(1)
+        raise GroomingError(f"grooming session '{slug}' not found.")
     warnings: list[str] = []
     data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
     for w in warnings:

@@ -6,6 +6,7 @@ import pytest
 from gotg.config import IterationStore
 from gotg.context import TeamContext
 from gotg.conversation import ConversationStore
+from gotg.errors import ConfigError
 
 
 # --- Helpers ---
@@ -114,14 +115,14 @@ def test_from_team_dir_model_resolver_present(team_dir):
     assert cfg["model"] == "qwen2.5-coder:7b"
 
 
-def test_from_team_dir_invalid_model_override_raises_systemexit(team_dir):
-    """Cross-provider without base_url should give a clean SystemExit, not a traceback."""
+def test_from_team_dir_invalid_model_override_raises_config_error(team_dir):
+    """Cross-provider without base_url should give a clean ConfigError, not a traceback."""
     _write_team_json(team_dir, agents=[
         {"name": "agent-1", "role": "Engineer",
          "model": {"provider": "openai", "model": "gpt-4o"}},
         {"name": "agent-2", "role": "Engineer"},
     ])
-    with pytest.raises(SystemExit, match="invalid model override"):
+    with pytest.raises(ConfigError, match="invalid model override"):
         TeamContext.from_team_dir(team_dir)
 
 

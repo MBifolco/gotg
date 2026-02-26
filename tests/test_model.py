@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from gotg.errors import ModelError
 from gotg.model import chat_completion
 
 
@@ -88,7 +89,7 @@ def test_chat_completion_raises_on_http_error(mock_post):
     resp.status_code = 500
     resp.json.return_value = {"error": {"message": "Internal server error"}}
     mock_post.return_value = resp
-    with pytest.raises(SystemExit, match="API error.*500.*Internal server error"):
+    with pytest.raises(ModelError, match="API error.*500.*Internal server error"):
         chat_completion("http://localhost:11434", "m", [])
 
 

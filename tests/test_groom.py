@@ -3,6 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from gotg.errors import GroomingError
 from gotg.groom import (
     generate_slug,
     validate_slug,
@@ -113,10 +114,10 @@ def test_write_and_load_metadata(tmp_path):
     assert loaded_dir == groom_dir
 
 
-def test_load_metadata_missing_exits(tmp_path):
+def test_load_metadata_missing_raises(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    with pytest.raises(SystemExit):
+    with pytest.raises(GroomingError):
         load_grooming_metadata(team_dir, "nonexistent")
 
 

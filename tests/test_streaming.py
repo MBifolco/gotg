@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from gotg.errors import ModelError
+
 from gotg.engine import SessionDeps
 from gotg.events import (
     AgentTurnComplete,
@@ -784,7 +786,7 @@ class TestOpenAIRawStream:
         mock_resp.__exit__ = MagicMock(return_value=False)
 
         with patch("gotg.model.openai.httpx.stream", return_value=mock_resp):
-            with pytest.raises(SystemExit, match="429"):
+            with pytest.raises(ModelError, match="429"):
                 result = raw_completion_stream(
                     base_url="http://localhost:11434",
                     model="test",

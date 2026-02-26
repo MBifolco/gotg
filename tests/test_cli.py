@@ -4172,3 +4172,29 @@ def test_ask_pm_resume_with_continue(tmp_path):
     human_msgs = [m for m in messages if m["from"] == "human"]
     assert len(human_msgs) == 1
     assert "Yes, include auth" in human_msgs[0]["content"]
+
+
+# --- GotgError → SystemExit boundary tests ---
+
+def test_main_converts_config_error_to_systemexit(capsys):
+    """ConfigError from any command should become SystemExit(1) with Error: prefix."""
+    from gotg.errors import ConfigError
+    with patch("sys.argv", ["gotg", "show"]):
+        with patch("gotg.commands.admin.cmd_show", side_effect=ConfigError("bad config")):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error: bad config" in captured.err
+
+
+def test_main_converts_model_error_to_systemexit(tmp_path, capsys):
+    """ModelError from run should become SystemExit(1) with Error: prefix."""
+    from gotg.errors import ModelError
+    with patch("sys.argv", ["gotg", "show"]):
+        with patch("gotg.commands.admin.cmd_show", side_effect=ModelError("API error (429): Rate limited")):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Error: API error (429): Rate limited" in captured.err

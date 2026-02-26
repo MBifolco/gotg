@@ -10,6 +10,7 @@ from gotg.config import (
     save_iteration_phase, save_iteration_fields, PHASE_ORDER,
     build_model_resolver, resolve_model_config,
 )
+from gotg.errors import ConfigError
 
 
 def _write_team_json(team_dir, model=None, agents=None):
@@ -163,7 +164,7 @@ def test_load_model_config_env_var_missing_raises(tmp_path, monkeypatch):
         "model": "m",
         "api_key": "$NONEXISTENT_KEY_VAR",
     })
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         load_model_config(team)
 
 
@@ -207,7 +208,7 @@ def test_get_current_iteration_missing_id_raises(tmp_path):
     team.mkdir()
     _write_team_json(team)
     _write_iteration_json(team, current="nonexistent")
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         get_current_iteration(team)
 
 
@@ -383,7 +384,7 @@ def test_save_iteration_phase_preserves_other_fields(team_dir):
 
 
 def test_save_iteration_phase_missing_id_raises(team_dir):
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         save_iteration_phase(team_dir, "nonexistent", "planning")
 
 
@@ -452,7 +453,7 @@ def test_save_iteration_fields_preserves_other_fields(team_dir):
 
 
 def test_save_iteration_fields_missing_id_raises(team_dir):
-    with pytest.raises(SystemExit):
+    with pytest.raises(ConfigError):
         save_iteration_fields(team_dir, "nonexistent", phase="planning")
 
 

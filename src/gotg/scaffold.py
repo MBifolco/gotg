@@ -1,7 +1,8 @@
 import json
 import subprocess
-import sys
 from pathlib import Path
+
+from gotg.errors import ConfigError
 
 from gotg.prompts import (  # noqa: F401 — re-export for backward compatibility
     DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS,
@@ -142,13 +143,11 @@ def init_project(path: Path) -> None:
     team_dir = path / ".team"
 
     if team_dir.exists():
-        print(f"Error: {team_dir} already exists.", file=sys.stderr)
-        raise SystemExit(1)
+        raise ConfigError(f"{team_dir} already exists.")
 
     # Require git repo
     if not (path / ".git").exists():
-        print("Error: not a git repository. Run 'git init' first.", file=sys.stderr)
-        raise SystemExit(1)
+        raise ConfigError("not a git repository. Run 'git init' first.")
 
     # Gitignore .team/ and .env before creating them
     _ensure_gitignore(path)
