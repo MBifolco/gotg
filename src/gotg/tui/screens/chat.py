@@ -301,7 +301,7 @@ class ChatScreen(Screen):
             else:
                 # Grooming session — uses prepare_grooming_session
                 from gotg.groom import load_grooming_metadata
-                from gotg.session import prepare_grooming_session
+                from gotg.session import prepare_grooming_session, load_iteration_context
 
                 groom_meta, groom_dir = load_grooming_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
@@ -312,6 +312,14 @@ class ChatScreen(Screen):
                     "phase": None,
                 }
                 coach = ctx.coach if groom_meta.get("coach") else None
+
+                # Load iteration context from persisted context_from
+                context_from = groom_meta.get("context_from")
+                project_context = None
+                if isinstance(context_from, str):
+                    project_context = load_iteration_context(
+                        ctx.team_dir, context_from=context_from
+                    )
 
                 from gotg.config import load_streaming_config as _load_streaming
                 streaming_enabled = _load_streaming(ctx.team_dir)
@@ -330,6 +338,9 @@ class ChatScreen(Screen):
                     coach=coach,
                     max_turns=groom_meta.get("max_turns", 30),
                     streaming=streaming_enabled,
+                    project_context=project_context,
+                    project_root=ctx.project_root,
+                    file_access=ctx.file_access,
                 )
 
             # Unified event loop — run_and_persist handles persistence + phase routing

@@ -115,8 +115,11 @@ COACH_TOOLS: list[dict] = [
 # ── Grooming mode constants ──────────────────────────────────────
 
 GROOMING_SYSTEM_SUPPLEMENT: str = _DEFAULTS["grooming"]["system"]
+GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT: str = _DEFAULTS["grooming"]["system_with_context"]
 GROOMING_COACH_PROMPT: str = _DEFAULTS["grooming"]["coach"]
 GROOMING_KICKOFF_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff"]
+GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context_and_tools"]
+GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context"]
 COMPLETE_TASKS_TOOL: dict = {
     "name": "complete_tasks",
     "description": _DEFAULTS["tools"]["complete_tasks"]["description"],

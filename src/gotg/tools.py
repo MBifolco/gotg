@@ -61,6 +61,9 @@ FILE_TOOLS = [
 ]
 
 
+READ_ONLY_FILE_TOOLS = [t for t in FILE_TOOLS if t["name"] != "file_write"]
+
+
 def execute_file_tool(
     tool_name: str,
     tool_input: dict,

@@ -9,11 +9,14 @@ from gotg.prompts import (
     GROOMING_COACH_PROMPT,
     GROOMING_COACH_TOOLS,
     GROOMING_KICKOFF_TEMPLATE,
+    GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE,
+    GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE,
     GROOMING_SYSTEM_SUPPLEMENT,
+    GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT,
 )
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
 from gotg.tasks import TaskRepo, format_tasks_summary
-from gotg.tools import FILE_TOOLS
+from gotg.tools import FILE_TOOLS, READ_ONLY_FILE_TOOLS
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class SessionPolicy:
     coach_system_prompt: str | None   # Overrides phase-based coach facilitation prompt
     # Phase context
     phase_skeleton: str | None = None  # Compressed prior-phase context
+    project_context: str | None = None  # Iteration artifacts for context injection (grooming, cross-iteration)
     # Streaming
     streaming: bool = False           # opt-in via team.json, default off for safe rollout
 
@@ -132,17 +136,45 @@ def grooming_policy(
     coach: dict | None = None,
     max_turns: int = 30,
     streaming: bool = False,
+    project_context: str | None = None,
+    project_root: Path | None = None,
+    file_access: dict | None = None,
 ) -> SessionPolicy:
     """Build policy for a freeform grooming conversation."""
     first_agent = agents[0]["name"] if agents else "agent-1"
 
+    # Build read-only file tools + fileguard when file_access is configured
+    fileguard = None
+    read_only_tools: tuple[dict, ...] = ()
+    if project_root and file_access:
+        from gotg.fileguard import FileGuard
+        read_only_config = {**file_access, "writable_paths": [], "enable_approvals": False}
+        fileguard = FileGuard(project_root, read_only_config)
+        read_only_tools = tuple(READ_ONLY_FILE_TOOLS)
+
+    agent_tools = tuple(list(AGENT_TOOLS) + list(read_only_tools))
+
+    # Select system supplement based on context availability
+    system_supplement = (
+        GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT if project_context
+        else GROOMING_SYSTEM_SUPPLEMENT
+    )
+
     # Only inject kickoff on first run (empty history)
     kickoff_text = None
     if not history:
-        kickoff_text = GROOMING_KICKOFF_TEMPLATE.format(
-            topic=topic,
-            first_agent=first_agent,
-        )
+        if project_context and fileguard:
+            kickoff_text = GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE.format(
+                topic=topic, first_agent=first_agent,
+            )
+        elif project_context:
+            kickoff_text = GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE.format(
+                topic=topic, first_agent=first_agent,
+            )
+        else:
+            kickoff_text = GROOMING_KICKOFF_TEMPLATE.format(
+                topic=topic, first_agent=first_agent,
+            )
 
     return SessionPolicy(
         max_turns=max_turns,
@@ -150,16 +182,17 @@ def grooming_policy(
         coach_cadence=len(agents) if coach else None,
         stop_on_phase_complete=False,
         stop_on_ask_pm=bool(coach),
-        agent_tools=tuple(AGENT_TOOLS),
+        agent_tools=agent_tools,
         coach_tools=tuple(GROOMING_COACH_TOOLS) if coach else None,
         groomed_summary=None,
         tasks_summary=None,
         diffs_summary=None,
         kickoff_text=kickoff_text,
-        fileguard=None,
+        fileguard=fileguard,
         approval_store=None,
         worktree_map=None,
-        system_supplement=GROOMING_SYSTEM_SUPPLEMENT,
+        system_supplement=system_supplement,
         coach_system_prompt=GROOMING_COACH_PROMPT if coach else None,
+        project_context=project_context,
         streaming=streaming,
     )

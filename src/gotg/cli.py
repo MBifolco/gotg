@@ -170,6 +170,9 @@ def main():
     groom_start.add_argument("--slug", help="Override auto-generated slug")
     groom_start.add_argument("--coach", action="store_true", help="Enable coach facilitation")
     groom_start.add_argument("--max-turns", type=int, help="Max turns (default: 30)")
+    groom_context_group = groom_start.add_mutually_exclusive_group()
+    groom_context_group.add_argument("--context-from", help="Iteration ID to load context from")
+    groom_context_group.add_argument("--no-context", action="store_true", help="Skip iteration context injection")
 
     groom_continue = groom_sub.add_parser("continue", help="Continue a grooming conversation")
     groom_continue.add_argument("slug", help="Session slug")

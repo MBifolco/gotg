@@ -13,6 +13,7 @@ def build_prompt(
     worktree_map: dict | None = None,
     system_supplement: str | None = None,
     phase_skeleton: str | None = None,
+    project_context: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -70,15 +71,21 @@ def build_prompt(
                 phase_prompt = phase_prompt.format(current_layer=current_layer)
             system_parts.append(phase_prompt)
 
-    # File access info for phases that support it
+    # File access info for phases that support it (or grooming with file tools)
     from gotg.phases import get_phase_caps_safe
-    if fileguard and get_phase_caps_safe(phase).inject_file_access_prompt:
-        writable = ", ".join(fileguard.writable_paths) if fileguard.writable_paths else "none"
-        system_parts.append(
-            f"FILE ACCESS: You can read project files and write to: {writable}. "
-            "Writes to other paths will be denied. "
-            "System files (.team/, .git/, .env) are always blocked."
-        )
+    if fileguard and (get_phase_caps_safe(phase).inject_file_access_prompt or phase is None):
+        if fileguard.writable_paths:
+            writable = ", ".join(fileguard.writable_paths)
+            system_parts.append(
+                f"FILE ACCESS: You can read project files and write to: {writable}. "
+                "Writes to other paths will be denied. "
+                "System files (.team/, .git/, .env) are always blocked."
+            )
+        else:
+            system_parts.append(
+                "FILE ACCESS (read-only): You can read project files using file_read and "
+                "file_list tools. You cannot write files in this session."
+            )
 
     # Worktree isolation warning
     if worktree_map and agent_config["name"] in worktree_map:
@@ -98,6 +105,9 @@ def build_prompt(
 
     if phase_skeleton:
         system_parts.append("PREVIOUS PHASE CONTEXT:\n\n" + phase_skeleton)
+
+    if project_context:
+        system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
 
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)
@@ -170,6 +180,7 @@ def build_coach_prompt(
     tasks_summary: str | None = None,
     diffs_summary: str | None = None,
     coach_system_prompt: str | None = None,
+    project_context: str | None = None,
 ) -> list[dict]:
     """Build prompt for the coach facilitator during conversation."""
     coach_name = coach_config["name"]
@@ -201,6 +212,9 @@ def build_coach_prompt(
 
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)
+
+    if project_context:
+        system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
 
     system_content = "\n\n".join(system_parts)
     messages = [{"role": "system", "content": system_content}]

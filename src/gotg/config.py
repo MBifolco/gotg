@@ -312,3 +312,15 @@ class IterationStore:
 
     def set_current(self, iteration_id: str) -> None:
         switch_current_iteration(self.team_dir, iteration_id)
+
+    def list_all(self) -> list[dict]:
+        """Return all iterations in natural order (append-order from iteration.json).
+
+        Uses migration path — same as load_iteration().
+        """
+        data = json.loads((self.team_dir / "iteration.json").read_text())
+        warnings: list[str] = []
+        data = migrate_iteration_data(data, warnings=warnings)
+        for w in warnings:
+            print(f"Warning: {w}", file=sys.stderr)
+        return data.get("iterations", [])

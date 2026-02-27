@@ -30,7 +30,83 @@ __all__ = [
     "setup_worktrees",
     "apply_and_inject",
     "load_diffs_for_review",
+    "load_iteration_context",
 ]
+
+
+def load_iteration_context(
+    team_dir: Path,
+    context_from: str | None = None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Load iteration artifacts for context injection.
+
+    When context_from is explicit and strict=True, raises SessionSetupError
+    if iteration not found or has no artifacts. When auto-detecting
+    (context_from=None), returns None silently if nothing found.
+    """
+    from gotg.config import IterationStore
+
+    if context_from:
+        # Explicit: validate iteration exists
+        store = IterationStore(team_dir)
+        all_iters = store.list_all()
+        if not any(it["id"] == context_from for it in all_iters):
+            if strict:
+                raise SessionSetupError(f"iteration '{context_from}' not found.")
+            return None
+        iter_dir = store.get_dir(context_from)
+    else:
+        # Auto-detect: find latest non-pending iteration with artifacts
+        try:
+            store = IterationStore(team_dir)
+            all_iters = store.list_all()
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        iter_dir = None
+        for it in all_iters:  # ordered by position in iteration.json
+            if it.get("status") == "pending":
+                continue
+            d = store.get_dir(it["id"])
+            if (d / "refinement_summary.md").exists() or (d / "tasks.json").exists():
+                iter_dir = d  # keep scanning — last match wins (latest)
+        if iter_dir is None:
+            return None
+
+    # Load artifacts
+    parts: list[str] = []
+    summary_path = iter_dir / "refinement_summary.md"
+    if summary_path.exists():
+        parts.append(
+            f"=== Refinement Summary (from {iter_dir.name}) ===\n"
+            f"{summary_path.read_text().strip()}"
+        )
+
+    tasks_path = iter_dir / "tasks.json"
+    if tasks_path.exists():
+        try:
+            from gotg.tasks import TaskRepo, format_tasks_summary
+            tasks_data = TaskRepo(tasks_path).load()
+            summary = format_tasks_summary(tasks_data)
+            if summary:
+                parts.append(f"=== Task Breakdown (from {iter_dir.name}) ===\n{summary}")
+        except Exception as e:
+            if strict:
+                raise SessionSetupError(
+                    f"failed to load tasks.json from '{context_from}': {e}"
+                ) from e
+            # Auto-detect: skip corrupt tasks, continue with other artifacts
+
+    if not parts:
+        if strict:
+            raise SessionSetupError(
+                f"iteration '{context_from}' has no artifacts "
+                f"(no refinement_summary.md or tasks.json)."
+            )
+        return None
+
+    return "\n\n".join(parts)
 
 
 def build_session_infra(
@@ -85,6 +161,9 @@ def prepare_grooming_session(
     coach: dict | None = None,
     max_turns: int = 30,
     streaming: bool = False,
+    project_context: str | None = None,
+    project_root: Path | None = None,
+    file_access: dict | None = None,
 ) -> SessionSetup:
     """Build everything needed to run a grooming session.
 
@@ -101,6 +180,9 @@ def prepare_grooming_session(
     policy = grooming_policy(
         agents=agents, topic=topic, history=history,
         coach=coach, max_turns=max_turns, streaming=streaming,
+        project_context=project_context,
+        project_root=project_root,
+        file_access=file_access,
     )
 
     return SessionSetup(
@@ -108,7 +190,7 @@ def prepare_grooming_session(
         model_config=model_config, history=history, policy=policy,
         deps=deps, log_path=log_path, debug_path=debug_path,
         use_implementation=False, tasks_data=None, current_layer=0,
-        fileguard=None, approval_store=None, worktree_map=None,
+        fileguard=policy.fileguard, approval_store=None, worktree_map=None,
         conv_store=store,
     )
 

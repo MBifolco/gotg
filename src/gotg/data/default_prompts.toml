@@ -428,7 +428,17 @@ system = '''MODE: GROOMING — Ignore the phase workflow above. This is a freefo
 
 Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
 
+system_with_context = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
+
+Previous iteration context is provided in your system prompt — refinement summaries, task breakdowns, and/or project structure. Use this to ground your discussion. Reference existing decisions and code rather than speculating from scratch.
+
+If file tools are available, use file_read and file_list to browse the codebase when relevant — check existing implementations, understand project structure, reference existing patterns. Do not write files.
+
+Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
+
 coach = '''You are facilitating a freeform grooming conversation. This is NOT a structured phase — no deliverables and no phase to complete.
+
+If the team has project context or file tools available, encourage them to review existing code and artifacts before ideating. When agents make claims about the codebase, nudge them to verify with file_read.
 
 Help the team explore broadly — surface assumptions, risks, alternatives. Ask probing questions when the team converges too quickly. If stuck, suggest a new angle. Do NOT summarize agreements, track action items, or signal phase completion. Use ask_pm if a question needs PM input.
 
@@ -437,3 +447,22 @@ Keep messages brief. Engineers lead; you gently steer.'''
 kickoff = '''--- Grooming: {topic} ---
 This is an open exploration. No phases, no deliverables — just discuss.
 {first_agent}, what are your initial thoughts?'''
+
+kickoff_with_context_and_tools = '''--- Grooming: {topic} ---
+Previous iteration context is available in your system prompt. File tools are available for inspecting the codebase.
+
+Before diving into the topic, orient yourselves:
+- Review the iteration context provided (refinement summary, task breakdown)
+- Use file_list and file_read to inspect the current codebase structure
+- Briefly summarize what exists before proposing what to add or change
+
+{first_agent}, start by reviewing the existing project state.'''
+
+kickoff_with_context = '''--- Grooming: {topic} ---
+Previous iteration context is available in your system prompt.
+
+Before diving into the topic, orient yourselves:
+- Review the iteration context provided (refinement summary, task breakdown)
+- Briefly summarize what has been built so far before proposing what to add or change
+
+{first_agent}, what are your initial thoughts given the existing work?'''

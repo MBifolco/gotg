@@ -125,6 +125,7 @@ def run_session(
             worktree_map=policy.worktree_map,
             system_supplement=policy.system_supplement,
             phase_skeleton=policy.phase_skeleton,
+            project_context=policy.project_context,
         )
         yield AppendDebug({
             "turn": turn,
@@ -392,6 +393,7 @@ def _do_coach_turn(
         groomed_summary=policy.groomed_summary, tasks_summary=policy.tasks_summary,
         diffs_summary=policy.diffs_summary,
         coach_system_prompt=policy.coach_system_prompt,
+        project_context=policy.project_context,
     )
     yield AppendDebug({
         "turn": f"coach-after-{turn}",

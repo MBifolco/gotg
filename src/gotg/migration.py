@@ -8,7 +8,7 @@ from __future__ import annotations
 CURRENT_ITERATION_VERSION = 1
 CURRENT_TEAM_VERSION = 1
 CURRENT_TASKS_VERSION = 1
-CURRENT_GROOMING_VERSION = 1
+CURRENT_GROOMING_VERSION = 2
 
 # ── Helpers ───────────────────────────────────────────────────
 
@@ -151,7 +151,14 @@ def _migrate_grooming_v0_to_v1(data: dict) -> dict:
     return data
 
 
-_GROOMING_PIPELINE = [_migrate_grooming_v0_to_v1]
+def _migrate_grooming_v1_to_v2(data: dict) -> dict:
+    data = dict(data)
+    data.setdefault("context_from", None)
+    data["schema_version"] = 2
+    return data
+
+
+_GROOMING_PIPELINE = [_migrate_grooming_v0_to_v1, _migrate_grooming_v1_to_v2]
 
 
 def migrate_grooming_metadata(data: dict, warnings: list[str] | None = None) -> dict:
