@@ -93,6 +93,7 @@ def __getattr__(name):
         "cmd_groom_continue": ("gotg.commands.groom", "cmd_groom_continue"),
         "cmd_groom_list": ("gotg.commands.groom", "cmd_groom_list"),
         "cmd_groom_show": ("gotg.commands.groom", "cmd_groom_show"),
+        "cmd_groom_summarize": ("gotg.commands.groom", "cmd_groom_summarize"),
     }
     if name in _reexports:
         module_path, attr = _reexports[name]
@@ -176,13 +177,19 @@ def main():
 
     groom_continue = groom_sub.add_parser("continue", help="Continue a grooming conversation")
     groom_continue.add_argument("slug", help="Session slug")
-    groom_continue.add_argument("-m", "--message", help="Human message to inject")
+    groom_continue_action = groom_continue.add_mutually_exclusive_group()
+    groom_continue_action.add_argument("--approve-iterations", action="store_true",
+        help="Approve pending iteration proposals")
+    groom_continue_action.add_argument("-m", "--message", help="Human message to inject")
     groom_continue.add_argument("--max-turns", type=int, help="Additional turns to run")
 
     groom_sub.add_parser("list", help="List grooming sessions")
 
     groom_show = groom_sub.add_parser("show", help="Show grooming conversation")
     groom_show.add_argument("slug", help="Session slug")
+
+    groom_summarize = groom_sub.add_parser("summarize", help="Generate a summary of a grooming conversation")
+    groom_summarize.add_argument("slug", help="Session slug")
 
     subparsers.add_parser("ui", help="Launch interactive TUI")
 
@@ -255,6 +262,9 @@ def main():
             elif args.groom_command == "show":
                 from gotg.commands.groom import cmd_groom_show
                 cmd_groom_show(args)
+            elif args.groom_command == "summarize":
+                from gotg.commands.groom import cmd_groom_summarize
+                cmd_groom_summarize(args)
             else:
                 groom_parser.print_help()
         elif args.command == "ui":

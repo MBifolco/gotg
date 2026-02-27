@@ -348,6 +348,32 @@ Pre-code-review conversation:
 {conversation}
 === TRANSCRIPT END ==='''
 
+[extraction.grooming_summary]
+prompt = '''You are summarizing a grooming conversation about: {topic}
+
+Read the transcript and produce a concise summary document with these sections:
+
+## Topic
+One-sentence description of what was discussed.
+
+## Key Points
+Bullet list of the main ideas, proposals, and insights that emerged.
+
+## Agreements
+What the team agreed on (if anything). If nothing was firmly agreed, say so.
+
+## Decisions Against
+Things the team explicitly decided NOT to do, scoped out, or rejected. These constraints are as important as what was agreed — they prevent future drift.
+
+## Open Questions
+Unresolved questions, concerns, or areas needing more exploration.
+
+## Proposed Next Steps
+Any concrete actions or follow-ups suggested (including iteration proposals if any were made).
+
+Be concise. Capture substance, not process ("the team discussed X" → just state X).
+Do not invent information not present in the transcript.'''
+
 [extraction.merge_conflict]
 prompt = '''
 You are resolving a merge conflict in {file_path}.
@@ -421,14 +447,21 @@ Signal that you have finished implementing your assigned tasks for the current l
 description = '''
 Call this when you are blocked and cannot complete your assigned tasks in the current layer. Provide the blocked task IDs and a concise blocker reason. All task IDs must belong to you and be in the current layer. The entire call is rejected if any ID is invalid — no partial success.'''
 
+[tools.propose_iterations]
+description = '''Propose creating or updating iterations based on the grooming discussion. Each proposal includes a title, description, and whether it's new or an update. The PM will review the proposals and approve, provide feedback, or reject. For updates, include the iteration_id of the existing iteration. For new iterations, omit iteration_id — the system assigns the next available ID. You may call this tool multiple times as the discussion evolves.'''
+
 # ── Grooming mode (freeform pre-iteration exploration) ───────────
 
 [grooming]
 system = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
 
+ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When a grooming discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
+
 Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
 
 system_with_context = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
+
+ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When a grooming discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
 
 Previous iteration context is provided in your system prompt — refinement summaries, task breakdowns, and/or project structure. Use this to ground your discussion. Reference existing decisions and code rather than speculating from scratch.
 
@@ -441,6 +474,8 @@ coach = '''You are facilitating a freeform grooming conversation. This is NOT a 
 If the team has project context or file tools available, encourage them to review existing code and artifacts before ideating. When agents make claims about the codebase, nudge them to verify with file_read.
 
 Help the team explore broadly — surface assumptions, risks, alternatives. Ask probing questions when the team converges too quickly. If stuck, suggest a new angle. Do NOT summarize agreements, track action items, or signal phase completion. Push back when engineers get too verbose — redirect them to state only what is new.
+
+ITERATION PROPOSALS: When the team's discussion has crystallized enough to identify concrete work items, you can use the propose_iterations tool to propose creating new iterations or updating existing ones. Do not propose too early — let the team explore before converging. Do not propose without sufficient discussion — each iteration needs a clear scope and description. Each iteration description should be specific enough to start a refinement conversation — include the goal, key requirements, and any constraints or dependencies on other iterations. The PM may ask you to break the topic into iterations — when they do, facilitate a brief discussion about scope boundaries before proposing. You can propose multiple times as the discussion evolves. For updates to existing iterations, reference the iteration ID shown in the system messages from previous approvals.
 
 Keep your messages concise — shorter than the engineers' messages. Engineers lead; you gently steer.
 

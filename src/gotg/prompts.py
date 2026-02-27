@@ -36,6 +36,7 @@ COACH_REFINEMENT_PROMPT: str = _DEFAULTS["extraction"]["refinement_summary"]["pr
 COACH_GROOMING_PROMPT = COACH_REFINEMENT_PROMPT  # backward-compat alias
 COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"]
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
+GROOMING_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["grooming_summary"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
 DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
 
@@ -160,4 +161,43 @@ REPORT_BLOCKED_TOOL: dict = {
     },
 }
 
-GROOMING_COACH_TOOLS: list[dict] = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]
+PROPOSE_ITERATIONS_TOOL: dict = {
+    "name": "propose_iterations",
+    "description": _DEFAULTS["tools"]["propose_iterations"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["create", "update"],
+                        },
+                        "iteration_id": {
+                            "type": "string",
+                            "description": "Required for 'update'. The ID of the existing iteration to modify.",
+                        },
+                        "title": {"type": "string"},
+                        "description": {
+                            "type": "string",
+                            "description": "What this iteration should accomplish — scope, key requirements, acceptance criteria",
+                        },
+                    },
+                    "required": ["action", "title", "description"],
+                },
+            },
+            "rationale": {
+                "type": "string",
+                "description": "Brief explanation of why these iterations are proposed",
+            },
+        },
+        "required": ["proposals", "rationale"],
+    },
+}
+
+GROOMING_COACH_TOOLS: list[dict] = [
+    t for t in COACH_TOOLS if t["name"] == "ask_pm"
+] + [PROPOSE_ITERATIONS_TOOL]

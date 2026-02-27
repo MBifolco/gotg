@@ -10,6 +10,7 @@ from gotg.events import (
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
+    IterationsProposed,
     PauseForApprovals,
     PhaseCompleteSignaled,
     SessionComplete,
@@ -62,7 +63,7 @@ def run_session(
     deps: SessionDeps,
     history: list[dict],
     policy: SessionPolicy,
-) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | SessionComplete | TextDelta | AgentTurnComplete | ToolCallProgress]:
+) -> Iterator[SessionStarted | AppendMessage | AppendDebug | PauseForApprovals | PhaseCompleteSignaled | CoachAskedPM | IterationsProposed | SessionComplete | TextDelta | AgentTurnComplete | ToolCallProgress]:
     """Run a conversation session, yielding events. No print, no persistence."""
     deps.validate(
         policy,
@@ -385,7 +386,7 @@ def _do_coach_turn(
     all_participants: list[dict],
     turn: int,
     policy: SessionPolicy,
-) -> Iterator[AppendMessage | AppendDebug | PhaseCompleteSignaled | CoachAskedPM | TextDelta | AgentTurnComplete]:
+) -> Iterator[AppendMessage | AppendDebug | PhaseCompleteSignaled | CoachAskedPM | IterationsProposed | TextDelta | AgentTurnComplete]:
     """Run a coach turn. Yields events, returns True if session should stop."""
     coach = policy.coach
     coach_prompt = build_coach_prompt(
@@ -440,12 +441,20 @@ def _do_coach_turn(
         "tool_calls": coach_tool_calls,
     })
 
+    # Extract propose_iterations tool calls
+    propose_calls = [tc for tc in coach_tool_calls if tc["name"] == "propose_iterations"]
+    propose_input = propose_calls[0]["input"] if propose_calls else None
+
     # Fallback for empty coach messages with signal_phase_complete
     if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
         coach_text = "(Phase complete signal sent.)"
 
-    # Fallback for empty coach messages with ask_pm
-    if not coach_text.strip() and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
+    # Fallback for empty coach messages with propose_iterations
+    if not coach_text.strip() and propose_input:
+        coach_text = "(Iteration proposals submitted for PM review.)"
+
+    # Fallback for empty coach messages with ask_pm (only when no propose_input)
+    if not coach_text.strip() and not propose_input and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
         question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
         coach_text = f"(Requesting PM input: {question})"
 
@@ -467,12 +476,26 @@ def _do_coach_turn(
         "iteration": iteration["id"],
         "content": coach_text,
     }
-    if ask_pm_input:
+    # Suppress ask_pm when propose_input is present (proposals take priority)
+    if ask_pm_input and not propose_input:
         coach_msg["ask_pm"] = {
             "question": ask_pm_input["question"],
             "response_type": ask_pm_input.get("response_type", "feedback"),
             "options": list(ask_pm_input.get("options") or []),
         }
+
+    # Attach propose_iterations data to coach message (structured marker)
+    if propose_input:
+        existing_batches = sum(
+            1 for m in history if "propose_iterations" in m
+        )
+        batch_id = f"p{existing_batches + 1}"
+        coach_msg["propose_iterations"] = {
+            "batch_id": batch_id,
+            "proposals": propose_input["proposals"],
+            "rationale": propose_input.get("rationale", ""),
+        }
+
     yield AppendMessage(coach_msg)
     history.append(coach_msg)
 
@@ -481,8 +504,17 @@ def _do_coach_turn(
         yield PhaseCompleteSignaled(iteration.get("phase"))
         return True
 
+    # Coach proposes iterations (grooming only — tool not in COACH_TOOLS)
+    if propose_input:
+        yield IterationsProposed(
+            batch_id=batch_id,
+            proposals=tuple(propose_input["proposals"]),
+            rationale=propose_input.get("rationale", ""),
+        )
+        return True
+
     # Coach requests PM input
-    if ask_pm_input:
+    if ask_pm_input and not propose_input:
         question = ask_pm_input["question"]
         response_type = ask_pm_input.get("response_type", "feedback")
         options = tuple(ask_pm_input.get("options") or [])

@@ -94,6 +94,14 @@ class AgentTurnComplete:
 
 
 @dataclass
+class IterationsProposed:
+    """Coach proposed creating/updating iterations. Session pauses for PM review."""
+    batch_id: str                                 # unique per proposal batch (e.g. "p1", "p2")
+    proposals: tuple[dict, ...]                   # each: {action, title, description, iteration_id?}
+    rationale: str
+
+
+@dataclass
 class AdvanceProgress:
     """Reports advance progress step to the UI."""
     message: str

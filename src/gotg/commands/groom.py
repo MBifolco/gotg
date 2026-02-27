@@ -116,6 +116,37 @@ def cmd_groom_continue(args):
     store = ConversationStore(log_path)
     history = store.read_full()
 
+    # Handle --approve-iterations
+    if getattr(args, "approve_iterations", False):
+        # Find last UNAPPROVED proposal batch using structured markers
+        approved_batches = {
+            msg["iterations_batch_approved"]
+            for msg in history
+            if "iterations_batch_approved" in msg
+        }
+        proposals_msg = None
+        for msg in reversed(history):
+            pi = msg.get("propose_iterations")
+            if pi and pi.get("batch_id") not in approved_batches:
+                proposals_msg = pi
+                break
+
+        if not proposals_msg:
+            print("Error: no pending iteration proposals found.", file=sys.stderr)
+            raise SystemExit(1)
+
+        from gotg.session_setup import apply_iteration_proposals
+        results = apply_iteration_proposals(
+            team_dir, proposals_msg["proposals"],
+            batch_id=proposals_msg["batch_id"],
+            groom_slug=args.slug, store=store,
+        )
+        for r in results:
+            print(render_message(r))
+            print()
+        # Re-read history after applying proposals
+        history = store.read_full()
+
     # Count current agent turns (not human/coach/system)
     non_agent = {"human", "system"}
     if coach:
@@ -123,7 +154,7 @@ def cmd_groom_continue(args):
     current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
 
     # Inject human message if provided
-    if args.message:
+    if getattr(args, "message", None):
         msg = {
             "from": "human",
             "iteration": args.slug,
@@ -199,3 +230,32 @@ def cmd_groom_show(args):
     for msg in messages:
         print(render_message(msg))
         print()
+
+
+def cmd_groom_summarize(args):
+    cwd = Path.cwd()
+    team_dir = _cli.find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    ctx = TeamContext.from_team_dir(team_dir)
+    metadata, groom_dir = load_grooming_metadata(team_dir, args.slug)
+
+    history = ConversationStore(groom_dir / "conversation.jsonl").read_full()
+    if not history:
+        print("No messages to summarize.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.model import chat_completion
+
+    coach_name = ctx.coach["name"] if ctx.coach and metadata.get("coach") else None
+    summary = extract_grooming_summary_doc(
+        history, ctx.model_config, coach_name,
+        chat_call=chat_completion, topic=metadata["topic"],
+    )
+
+    summary_path = groom_dir / "summary.md"
+    summary_path.write_text(summary)
+    print(f"Summary written to {summary_path}")

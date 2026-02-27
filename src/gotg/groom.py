@@ -193,5 +193,6 @@ def run_grooming_conversation(
         run_and_persist(setup),
         on_started=lambda e: _print_grooming_header(e, topic),
         resume_hint=f"gotg groom continue {slug}",
+        summarize_hint=f"gotg groom summarize {slug}",
         complete_label="Grooming",
     )

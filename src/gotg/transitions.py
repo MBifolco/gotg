@@ -7,7 +7,7 @@ from typing import Callable
 
 from gotg.prompts import (
     COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
-    MERGE_CONFLICT_PROMPT,
+    GROOMING_SUMMARY_EXTRACTION_PROMPT, MERGE_CONFLICT_PROMPT,
 )
 from gotg.tasks import compute_layers
 
@@ -112,6 +112,40 @@ def extract_refinement_summary(
 
 
 extract_grooming_summary = extract_refinement_summary  # backward-compat alias
+
+
+def extract_grooming_summary_doc(
+    history: list[dict],
+    model_config: dict,
+    coach_name: str | None,
+    chat_call: Callable,
+    topic: str,
+) -> str:
+    """Extract a summary document from a grooming conversation.
+
+    Unlike other extraction functions, this INCLUDES coach messages in the transcript
+    because coach facilitation captures decisions, redirections, and scoping that
+    feed the Decisions Against section.
+    """
+    transcript = "\n\n".join(
+        f"[{m['from']}]: {m['content']}"
+        for m in history
+        if m["from"] != "system"
+    )
+
+    prompt = GROOMING_SUMMARY_EXTRACTION_PROMPT.format(topic=topic)
+
+    result = chat_call(
+        base_url=model_config["base_url"],
+        model=model_config["model"],
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"=== TRANSCRIPT START ===\n{transcript}\n=== TRANSCRIPT END ==="},
+        ],
+        api_key=model_config.get("api_key"),
+        provider=model_config.get("provider", "ollama"),
+    )
+    return strip_code_fences(result)
 
 
 def extract_tasks(

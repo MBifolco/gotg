@@ -31,6 +31,7 @@ __all__ = [
     "apply_and_inject",
     "load_diffs_for_review",
     "load_iteration_context",
+    "apply_iteration_proposals",
 ]
 
 
@@ -615,3 +616,97 @@ def load_diffs_for_review(
         warnings.append(f"no branches found for layer {layer}. No diffs to review.")
 
     return diffs, warnings
+
+
+def apply_iteration_proposals(
+    team_dir: Path,
+    proposals: list[dict],
+    batch_id: str,
+    groom_slug: str,
+    store: ConversationStore,
+) -> list[dict]:
+    """Create/update iterations from coach proposals. Returns system messages (already persisted).
+
+    Validates each proposal before any state mutations. Invalid proposals become
+    soft error messages. New iteration IDs are computed upfront to handle batches correctly.
+    """
+    from gotg.config import IterationStore
+    from gotg.errors import ConfigError
+
+    iter_store = IterationStore(team_dir)
+    messages: list[dict] = []
+
+    # --- Phase 1: Validate all proposals ---
+    validated: list[dict] = []
+    for i, p in enumerate(proposals):
+        action = p.get("action")
+        title = (p.get("title") or "").strip()
+        description = (p.get("description") or "").strip()
+
+        if action not in ("create", "update"):
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} has unknown action '{action}', skipped."))
+            continue
+        if not title or not description:
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} missing title or description, skipped."))
+            continue
+        if action == "update" and not p.get("iteration_id"):
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} is an update but missing iteration_id, skipped."))
+            continue
+
+        validated.append(p)
+
+    # --- Phase 2: Pre-compute IDs for creates (batch-safe) ---
+    existing_ids = {it["id"] for it in iter_store.list_all()}
+    id_map: dict[int, str] = {}
+    for i, p in enumerate(validated):
+        if p["action"] == "create":
+            next_num = 1
+            while f"iter-{next_num}" in existing_ids:
+                next_num += 1
+            new_id = f"iter-{next_num}"
+            existing_ids.add(new_id)
+            id_map[i] = new_id
+
+    # --- Phase 3: Apply ---
+    applied_count = 0
+    for i, p in enumerate(validated):
+        title = p["title"].strip()
+        description = p["description"].strip()
+
+        if p["action"] == "create":
+            new_id = id_map[i]
+            iter_store.create(new_id, description=description, set_current=False)
+            iter_store.save_fields(new_id, title=title)
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Created {new_id}: {title}"))
+            applied_count += 1
+
+        else:  # update
+            target_id = p["iteration_id"]
+            try:
+                iter_store.save_fields(target_id, title=title, description=description)
+                messages.append(_sys_msg(groom_slug,
+                    f"[iterations] Updated {target_id}: {title}"))
+                applied_count += 1
+            except ConfigError:
+                messages.append(_sys_msg(groom_slug,
+                    f"[iterations] Error: iteration '{target_id}' not found, skipped update."))
+
+    # --- Phase 4: Mark batch as approved (structured marker) ---
+    approval_msg = _sys_msg(groom_slug,
+        f"[iterations] Batch {batch_id} approved: {applied_count} applied.")
+    approval_msg["iterations_batch_approved"] = batch_id
+    messages.append(approval_msg)
+
+    # Persist all messages
+    for msg in messages:
+        store.append(msg)
+
+    return messages
+
+
+def _sys_msg(groom_slug: str, content: str) -> dict:
+    return {"from": "system", "iteration": groom_slug, "content": content}
