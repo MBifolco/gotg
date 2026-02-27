@@ -792,3 +792,116 @@ def test_groom_continue_approve_and_message_exclusive():
         main()
 
     assert exc_info.value.code == 2  # argparse exits with 2 on error
+
+
+# ══════════════════════════════════════════════════════════════
+# end_grooming Coach Tool
+# ══════════════════════════════════════════════════════════════
+
+_END_GROOMING_TOOL_CALL = {
+    "name": "end_grooming",
+    "input": {"summary": "Discussed calculator UI — agreed on REPL-first approach."},
+}
+
+
+def test_coach_end_grooming_yields_session_complete():
+    """Coach end_grooming tool call → SessionComplete event."""
+    deps = _make_deps(
+        coach_response={
+            "content": "Great discussion. Wrapping up.",
+            "tool_calls": [_END_GROOMING_TOOL_CALL],
+        },
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    completes = _events_of_type(events, SessionComplete)
+    assert len(completes) == 1
+    # Coach message should still be appended before SessionComplete
+    coach_msgs = [
+        e for e in _events_of_type(events, AppendMessage)
+        if e.msg.get("from") == "coach"
+    ]
+    assert len(coach_msgs) == 1
+    assert "Wrapping up" in coach_msgs[0].msg["content"]
+
+
+def test_coach_end_grooming_fallback_text():
+    """Empty coach text gets fallback when end_grooming called."""
+    deps = _make_deps(
+        coach_response={
+            "content": "",
+            "tool_calls": [_END_GROOMING_TOOL_CALL],
+        },
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    coach_msgs = [
+        e for e in _events_of_type(events, AppendMessage)
+        if e.msg.get("from") == "coach"
+    ]
+    assert "(Grooming concluded.)" in coach_msgs[0].msg["content"]
+
+
+def test_coach_end_grooming_priority_over_ask_pm():
+    """When coach calls both end_grooming and ask_pm, end_grooming wins."""
+    deps = _make_deps(
+        coach_response={
+            "content": "Wrapping up.",
+            "tool_calls": [
+                _END_GROOMING_TOOL_CALL,
+                {"name": "ask_pm", "input": {"question": "Anything else?"}},
+            ],
+        },
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    completes = _events_of_type(events, SessionComplete)
+    asks = _events_of_type(events, CoachAskedPM)
+    assert len(completes) == 1
+    assert len(asks) == 0
+    # ask_pm should NOT be attached to coach_msg
+    coach_msgs = [
+        e for e in _events_of_type(events, AppendMessage)
+        if e.msg.get("from") == "coach"
+    ]
+    assert "ask_pm" not in coach_msgs[0].msg
+
+
+def test_propose_iterations_priority_over_end_grooming():
+    """When coach calls both propose_iterations and end_grooming, proposals win."""
+    deps = _make_deps(
+        coach_response={
+            "content": "Final proposals before wrapping up.",
+            "tool_calls": [_PROPOSE_TOOL_CALL, _END_GROOMING_TOOL_CALL],
+        },
+    )
+    events = _collect(run_session(
+        agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
+    ))
+    proposals = _events_of_type(events, IterationsProposed)
+    completes = _events_of_type(events, SessionComplete)
+    assert len(proposals) == 1
+    assert len(completes) == 0  # proposals take priority, session pauses for review
+
+
+def test_end_grooming_tool_in_grooming_coach_tools():
+    """Tool present in GROOMING_COACH_TOOLS."""
+    names = {t["name"] for t in GROOMING_COACH_TOOLS}
+    assert "end_grooming" in names
+
+
+def test_end_grooming_tool_not_in_iteration_coach_tools():
+    """Tool NOT in COACH_TOOLS (iteration coach)."""
+    names = {t["name"] for t in COACH_TOOLS}
+    assert "end_grooming" not in names

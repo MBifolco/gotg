@@ -198,6 +198,21 @@ PROPOSE_ITERATIONS_TOOL: dict = {
     },
 }
 
+END_GROOMING_TOOL: dict = {
+    "name": "end_grooming",
+    "description": _DEFAULTS["tools"]["end_grooming"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "Brief summary of what was discussed and any key outcomes",
+            },
+        },
+        "required": ["summary"],
+    },
+}
+
 GROOMING_COACH_TOOLS: list[dict] = [
     t for t in COACH_TOOLS if t["name"] == "ask_pm"
-] + [PROPOSE_ITERATIONS_TOOL]
+] + [PROPOSE_ITERATIONS_TOOL, END_GROOMING_TOOL]

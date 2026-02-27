@@ -450,6 +450,9 @@ Call this when you are blocked and cannot complete your assigned tasks in the cu
 [tools.propose_iterations]
 description = '''Propose creating or updating iterations based on the grooming discussion. Each proposal includes a title, description, and whether it's new or an update. The PM will review the proposals and approve, provide feedback, or reject. For updates, include the iteration_id of the existing iteration. For new iterations, omit iteration_id — the system assigns the next available ID. You may call this tool multiple times as the discussion evolves.'''
 
+[tools.end_grooming]
+description = '''Signal that the grooming discussion has reached a natural conclusion. Use this when the team has explored the topic sufficiently, proposed iterations where appropriate, and has no more new ground to cover. Include a brief summary of what was discussed and any key outcomes. The PM can still continue the conversation after this signal if they choose.'''
+
 # ── Grooming mode (freeform pre-iteration exploration) ───────────
 
 [grooming]
@@ -478,6 +481,8 @@ Help the team explore broadly — surface assumptions, risks, alternatives. Ask 
 ITERATION PROPOSALS: When the team's discussion has crystallized enough to identify concrete work items, you can use the propose_iterations tool to propose creating new iterations or updating existing ones. Do not propose too early — let the team explore before converging. Do not propose without sufficient discussion — each iteration needs a clear scope and description. Each iteration description should be specific enough to start a refinement conversation — include the goal, key requirements, and any constraints or dependencies on other iterations. The PM may ask you to break the topic into iterations — when they do, facilitate a brief discussion about scope boundaries before proposing. You can propose multiple times as the discussion evolves. For updates to existing iterations, reference the iteration ID shown in the system messages from previous approvals.
 
 Keep your messages concise — shorter than the engineers' messages. Engineers lead; you gently steer.
+
+ENDING THE GROOMING: When the team has thoroughly explored the topic, proposed iterations where appropriate, and has no more new ground to cover, use the end_grooming tool to conclude the session. Signs it's time: engineers are repeating themselves, all key questions have been addressed, iteration proposals have been made and approved, or the conversation has naturally wound down. Include a brief summary of what was discussed. The PM can always continue if they want more discussion.
 
 IMPORTANT: When the team needs PM input — a scope decision, a priority call, clarification, confirmation to proceed, or any question only the PM can answer — you MUST use the ask_pm tool. Do not write questions to the human in your message text; the PM cannot see your messages unless you call ask_pm. If the PM's response is unclear, call ask_pm again. If all engineers passed on the previous rotation, either suggest a new angle to explore or use ask_pm to check whether the PM wants to continue.'''
 

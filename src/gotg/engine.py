@@ -441,9 +441,11 @@ def _do_coach_turn(
         "tool_calls": coach_tool_calls,
     })
 
-    # Extract propose_iterations tool calls
+    # Extract propose_iterations and end_grooming tool calls
     propose_calls = [tc for tc in coach_tool_calls if tc["name"] == "propose_iterations"]
     propose_input = propose_calls[0]["input"] if propose_calls else None
+    end_grooming_calls = [tc for tc in coach_tool_calls if tc["name"] == "end_grooming"]
+    end_grooming_input = end_grooming_calls[0]["input"] if end_grooming_calls else None
 
     # Fallback for empty coach messages with signal_phase_complete
     if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
@@ -453,8 +455,12 @@ def _do_coach_turn(
     if not coach_text.strip() and propose_input:
         coach_text = "(Iteration proposals submitted for PM review.)"
 
-    # Fallback for empty coach messages with ask_pm (only when no propose_input)
-    if not coach_text.strip() and not propose_input and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
+    # Fallback for empty coach messages with end_grooming
+    if not coach_text.strip() and end_grooming_input:
+        coach_text = "(Grooming concluded.)"
+
+    # Fallback for empty coach messages with ask_pm (only when no other tool takes priority)
+    if not coach_text.strip() and not propose_input and not end_grooming_input and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
         question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
         coach_text = f"(Requesting PM input: {question})"
 
@@ -476,8 +482,8 @@ def _do_coach_turn(
         "iteration": iteration["id"],
         "content": coach_text,
     }
-    # Suppress ask_pm when propose_input is present (proposals take priority)
-    if ask_pm_input and not propose_input:
+    # Suppress ask_pm when propose_input or end_grooming is present (they take priority)
+    if ask_pm_input and not propose_input and not end_grooming_input:
         coach_msg["ask_pm"] = {
             "question": ask_pm_input["question"],
             "response_type": ask_pm_input.get("response_type", "feedback"),
@@ -513,8 +519,13 @@ def _do_coach_turn(
         )
         return True
 
+    # Coach ends grooming session (grooming only — tool not in COACH_TOOLS)
+    if end_grooming_input:
+        yield SessionComplete(turn)
+        return True
+
     # Coach requests PM input
-    if ask_pm_input and not propose_input:
+    if ask_pm_input and not propose_input and not end_grooming_input:
         question = ask_pm_input["question"]
         response_type = ask_pm_input.get("response_type", "feedback")
         options = tuple(ask_pm_input.get("options") or [])
