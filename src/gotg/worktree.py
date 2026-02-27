@@ -175,10 +175,18 @@ def commit_worktree(worktree_path: Path, message: str) -> str | None:
     return result.stdout.strip()
 
 
-def is_worktree_dirty(worktree_path: Path) -> bool:
-    """Check if a worktree has uncommitted changes."""
+def is_worktree_dirty(worktree_path: Path, *, include_untracked: bool = True) -> bool:
+    """Check if a worktree has uncommitted changes.
+
+    Args:
+        include_untracked: If True (default), untracked files count as dirty.
+            Set to False to only check tracked file modifications.
+    """
+    cmd = ["git", "status", "--porcelain"]
+    if not include_untracked:
+        cmd.append("-uno")
     result = subprocess.run(
-        ["git", "status", "--porcelain"],
+        cmd,
         cwd=worktree_path,
         capture_output=True,
         text=True,

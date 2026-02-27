@@ -36,6 +36,7 @@ COACH_REFINEMENT_PROMPT: str = _DEFAULTS["extraction"]["refinement_summary"]["pr
 COACH_GROOMING_PROMPT = COACH_REFINEMENT_PROMPT  # backward-compat alias
 COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"]
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
+GROOMING_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["grooming_summary"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
 DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
 
@@ -115,8 +116,11 @@ COACH_TOOLS: list[dict] = [
 # ── Grooming mode constants ──────────────────────────────────────
 
 GROOMING_SYSTEM_SUPPLEMENT: str = _DEFAULTS["grooming"]["system"]
+GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT: str = _DEFAULTS["grooming"]["system_with_context"]
 GROOMING_COACH_PROMPT: str = _DEFAULTS["grooming"]["coach"]
 GROOMING_KICKOFF_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff"]
+GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context_and_tools"]
+GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context"]
 COMPLETE_TASKS_TOOL: dict = {
     "name": "complete_tasks",
     "description": _DEFAULTS["tools"]["complete_tasks"]["description"],
@@ -157,4 +161,58 @@ REPORT_BLOCKED_TOOL: dict = {
     },
 }
 
-GROOMING_COACH_TOOLS: list[dict] = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]
+PROPOSE_ITERATIONS_TOOL: dict = {
+    "name": "propose_iterations",
+    "description": _DEFAULTS["tools"]["propose_iterations"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "proposals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["create", "update"],
+                        },
+                        "iteration_id": {
+                            "type": "string",
+                            "description": "Required for 'update'. The ID of the existing iteration to modify.",
+                        },
+                        "title": {"type": "string"},
+                        "description": {
+                            "type": "string",
+                            "description": "What this iteration should accomplish — scope, key requirements, acceptance criteria",
+                        },
+                    },
+                    "required": ["action", "title", "description"],
+                },
+            },
+            "rationale": {
+                "type": "string",
+                "description": "Brief explanation of why these iterations are proposed",
+            },
+        },
+        "required": ["proposals", "rationale"],
+    },
+}
+
+END_GROOMING_TOOL: dict = {
+    "name": "end_grooming",
+    "description": _DEFAULTS["tools"]["end_grooming"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "Brief summary of what was discussed and any key outcomes",
+            },
+        },
+        "required": ["summary"],
+    },
+}
+
+GROOMING_COACH_TOOLS: list[dict] = [
+    t for t in COACH_TOOLS if t["name"] == "ask_pm"
+] + [PROPOSE_ITERATIONS_TOOL, END_GROOMING_TOOL]

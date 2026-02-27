@@ -14,6 +14,7 @@ from gotg.events import (
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
+    IterationsProposed,
     LayerComplete,
     PauseForApprovals,
     PhaseCompleteSignaled,
@@ -82,6 +83,7 @@ def handle_console_events(
     *,
     on_started: Callable[[SessionStarted], None] | None = None,
     resume_hint: str = "gotg continue",
+    summarize_hint: str | None = None,
     complete_label: str = "Conversation",
     use_implementation: bool = False,
 ) -> None:
@@ -128,6 +130,22 @@ def handle_console_events(
         elif isinstance(event, PhaseCompleteSignaled):
             print_phase_complete(event.phase)
             break
+        elif isinstance(event, IterationsProposed):
+            print("---")
+            print(f"Coach proposes {len(event.proposals)} iteration(s):")
+            print()
+            for i, p in enumerate(event.proposals, 1):
+                action_label = "NEW" if p["action"] == "create" else f"UPDATE {p.get('iteration_id', '?')}"
+                print(f"  [{action_label}] {p['title']}")
+                for line in p["description"].split("\n"):
+                    print(f"    {line}")
+                print()
+            if event.rationale:
+                print(f"  Rationale: {event.rationale}")
+                print()
+            print(f"To approve: {resume_hint} --approve-iterations")
+            print(f"To give feedback: {resume_hint} -m 'your feedback'")
+            break
         elif isinstance(event, CoachAskedPM):
             print("---")
             print(f"Coach asks: {event.question}")
@@ -155,5 +173,7 @@ def handle_console_events(
                 print(f"Implementation session complete ({event.total_turns} agent(s) dispatched).")
             else:
                 print(f"{complete_label} complete ({event.total_turns} turns)")
+                if summarize_hint:
+                    print(f"Run `{summarize_hint}` to generate a summary.")
         else:
             raise AssertionError(f"Unhandled event: {event!r}")

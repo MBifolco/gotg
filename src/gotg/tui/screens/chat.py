@@ -20,6 +20,7 @@ from gotg.events import (
     AppendDebug,
     AppendMessage,
     CoachAskedPM,
+    IterationsProposed,
     LayerComplete,
     PauseForApprovals,
     PhaseCompleteSignaled,
@@ -59,6 +60,7 @@ class ChatScreen(Screen):
         Binding("p", "advance_phase", "Advance", show=False),
         Binding("d", "open_review", "Diffs", show=False),
         Binding("t", "manage_tasks", "Tasks", show=False),
+        Binding("i", "review_proposals", "Proposals", show=False),
     ]
 
     session_state: reactive[SessionState] = reactive(SessionState.VIEWING)
@@ -77,6 +79,7 @@ class ChatScreen(Screen):
         self._session_kind = session_kind
         self._cancel_requested = False
         self._turn_count = 0
+        self._initial_load_done = False
         self._pause_reason: PauseReason | None = None
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
@@ -125,14 +128,15 @@ class ChatScreen(Screen):
 
         # Count existing agent turns
         self._turn_count = self._count_agent_turns(messages)
+        self._initial_load_done = True
 
         # Auto-start if mode is run or continue
         if self._mode in ("run", "continue"):
             self._start_session(self._mode)
             return
 
-        # Restore paused state if conversation ended with a phase complete signal
-        if self._session_kind == "iteration" and messages:
+        # Restore paused state for any session type
+        if messages:
             self._restore_pause_state(messages)
 
     def _count_agent_turns(self, messages: list[dict]) -> int:
@@ -158,6 +162,19 @@ class ChatScreen(Screen):
                     "Phase complete. Press P to advance, C to continue discussing."
                 )
             self._pin_after_action_bar()
+            return
+
+        if state.pause_reason == PauseReason.ITERATIONS_PROPOSED:
+            self._pause_reason = PauseReason.ITERATIONS_PROPOSED
+            self.session_state = SessionState.PAUSED
+            pd = state.iteration_proposals
+            from gotg.tui.modals.iteration_proposals import IterationProposalModal
+            self.app.push_screen(
+                IterationProposalModal(
+                    pd["proposals"], pd.get("rationale", ""), pd.get("batch_id", ""),
+                ),
+                callback=self._on_proposals_result,
+            )
             return
 
         if state.pause_reason == PauseReason.COACH_QUESTION:
@@ -261,6 +278,10 @@ class ChatScreen(Screen):
             streaming_enabled = False
 
             if self._session_kind == "iteration":
+                # Ensure we load the iteration this screen was opened for
+                target_id = self.metadata.get("id")
+                if target_id:
+                    ctx.iteration_store.set_current(target_id)
                 iteration, iter_dir = ctx.iteration_store.get_current()
                 validate_iteration_for_run(iteration, iter_dir, ctx.agents)
 
@@ -301,7 +322,7 @@ class ChatScreen(Screen):
             else:
                 # Grooming session — uses prepare_grooming_session
                 from gotg.groom import load_grooming_metadata
-                from gotg.session import prepare_grooming_session
+                from gotg.session import prepare_grooming_session, load_iteration_context
 
                 groom_meta, groom_dir = load_grooming_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
@@ -312,6 +333,14 @@ class ChatScreen(Screen):
                     "phase": None,
                 }
                 coach = ctx.coach if groom_meta.get("coach") else None
+
+                # Load iteration context from persisted context_from
+                context_from = groom_meta.get("context_from")
+                project_context = None
+                if isinstance(context_from, str):
+                    project_context = load_iteration_context(
+                        ctx.team_dir, context_from=context_from
+                    )
 
                 from gotg.config import load_streaming_config as _load_streaming
                 streaming_enabled = _load_streaming(ctx.team_dir)
@@ -330,6 +359,9 @@ class ChatScreen(Screen):
                     coach=coach,
                     max_turns=groom_meta.get("max_turns", 30),
                     streaming=streaming_enabled,
+                    project_context=project_context,
+                    project_root=ctx.project_root,
+                    file_access=ctx.file_access,
                 )
 
             # Unified event loop — run_and_persist handles persistence + phase routing
@@ -376,7 +408,8 @@ class ChatScreen(Screen):
                 else:
                     self.post_message(EngineEvent(event))
                 if isinstance(event, (PauseForApprovals, PhaseCompleteSignaled,
-                                      CoachAskedPM, SessionComplete, LayerComplete)):
+                                      CoachAskedPM, IterationsProposed,
+                                      SessionComplete, LayerComplete)):
                     break
 
         except SessionSetupError as e:
@@ -449,6 +482,17 @@ class ChatScreen(Screen):
                     "Type reply and press Enter."
                 )
             self._pin_after_action_bar()
+
+        elif isinstance(event, IterationsProposed):
+            self._pause_reason = PauseReason.ITERATIONS_PROPOSED
+            self.session_state = SessionState.PAUSED
+            from gotg.tui.modals.iteration_proposals import IterationProposalModal
+            self.app.push_screen(
+                IterationProposalModal(
+                    list(event.proposals), event.rationale, event.batch_id,
+                ),
+                callback=self._on_proposals_result,
+            )
 
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
@@ -573,6 +617,45 @@ class ChatScreen(Screen):
             return
         self._start_session("continue", human_message=result)
 
+    def _on_proposals_result(self, result: str | None) -> None:
+        """Handle the result from IterationProposalModal."""
+        if result is None:
+            # Dismissed — stay paused, show action bar
+            self.query_one("#action-bar", ActionBar).show(
+                "Proposals pending. Press I to review."
+            )
+            self._pin_after_action_bar()
+            return
+        if result == "approved":
+            # Find the unapproved batch
+            history = self._conv_store.read_full()
+            proposals_msg = None
+            approved_batches = {
+                m["iterations_batch_approved"] for m in history
+                if "iterations_batch_approved" in m
+            }
+            for msg in reversed(history):
+                pi = msg.get("propose_iterations")
+                if pi and pi.get("batch_id") not in approved_batches:
+                    proposals_msg = pi
+                    break
+
+            if proposals_msg:
+                from gotg.session_setup import apply_iteration_proposals
+                results = apply_iteration_proposals(
+                    self.app.team_dir, proposals_msg["proposals"],
+                    batch_id=proposals_msg["batch_id"],
+                    groom_slug=self.metadata.get("slug", ""),
+                    store=self._conv_store,
+                )
+                msg_list = self.query_one("#message-list", MessageList)
+                for r in results:
+                    msg_list.append_message(r)
+            self._start_session("continue")
+        else:
+            # Feedback — continue with message
+            self._start_session("continue", human_message=result)
+
     # ── Input handling ───────────────────────────────────────
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -613,6 +696,30 @@ class ChatScreen(Screen):
                 human_msg = text
                 input_widget.value = ""
             self._start_session("continue", human_message=human_msg)
+
+    def action_review_proposals(self) -> None:
+        """Re-open iteration proposal modal when paused with proposals."""
+        if self.session_state != SessionState.PAUSED:
+            return
+        if self._pause_reason != PauseReason.ITERATIONS_PROPOSED:
+            return
+        # Find the unapproved batch from history
+        history = self._conv_store.read_full()
+        approved_batches = {
+            m["iterations_batch_approved"] for m in history
+            if "iterations_batch_approved" in m
+        }
+        for msg in reversed(history):
+            pi = msg.get("propose_iterations")
+            if pi and pi.get("batch_id") not in approved_batches:
+                from gotg.tui.modals.iteration_proposals import IterationProposalModal
+                self.app.push_screen(
+                    IterationProposalModal(
+                        pi["proposals"], pi.get("rationale", ""), pi.get("batch_id", ""),
+                    ),
+                    callback=self._on_proposals_result,
+                )
+                return
 
     def action_manage_approvals(self) -> None:
         """Open approval management screen."""
@@ -697,7 +804,7 @@ class ChatScreen(Screen):
         self.app.push_screen(TaskAssignScreen(self.data_dir, agents))
 
     def _update_task_status_bar(self) -> None:
-        """Update action bar with task assignment status."""
+        """Update action bar with task assignment/completion status."""
         from gotg.tasks import TaskRepo
 
         repo = TaskRepo(self.data_dir / "tasks.json")
@@ -706,6 +813,15 @@ class ChatScreen(Screen):
             bar.show("Press R to run, T to assign tasks.")
             return
         tasks = repo.load()
+        completed = sum(1 for t in tasks if t.get("status") == "done")
+        if completed == len(tasks):
+            bar.show("All tasks complete. Merge branches, then advance.")
+            return
+        if completed > 0:
+            bar.show(
+                f"{completed}/{len(tasks)} tasks done. Press R to continue implementation."
+            )
+            return
         unassigned = sum(1 for t in tasks if not t.get("assigned_to"))
         if unassigned:
             bar.show(
@@ -733,6 +849,8 @@ class ChatScreen(Screen):
 
     def on_screen_resume(self) -> None:
         """Refresh state when returning from pushed screens."""
+        if not self._initial_load_done:
+            return
         if self.session_state == SessionState.VIEWING:
             # Returning from TaskAssignScreen or similar
             from gotg.phases import get_phase_caps_safe

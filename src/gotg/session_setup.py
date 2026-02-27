@@ -30,7 +30,84 @@ __all__ = [
     "setup_worktrees",
     "apply_and_inject",
     "load_diffs_for_review",
+    "load_iteration_context",
+    "apply_iteration_proposals",
 ]
+
+
+def load_iteration_context(
+    team_dir: Path,
+    context_from: str | None = None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """Load iteration artifacts for context injection.
+
+    When context_from is explicit and strict=True, raises SessionSetupError
+    if iteration not found or has no artifacts. When auto-detecting
+    (context_from=None), returns None silently if nothing found.
+    """
+    from gotg.config import IterationStore
+
+    if context_from:
+        # Explicit: validate iteration exists
+        store = IterationStore(team_dir)
+        all_iters = store.list_all()
+        if not any(it["id"] == context_from for it in all_iters):
+            if strict:
+                raise SessionSetupError(f"iteration '{context_from}' not found.")
+            return None
+        iter_dir = store.get_dir(context_from)
+    else:
+        # Auto-detect: find latest non-pending iteration with artifacts
+        try:
+            store = IterationStore(team_dir)
+            all_iters = store.list_all()
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+        iter_dir = None
+        for it in all_iters:  # ordered by position in iteration.json
+            if it.get("status") == "pending":
+                continue
+            d = store.get_dir(it["id"])
+            if (d / "refinement_summary.md").exists() or (d / "tasks.json").exists():
+                iter_dir = d  # keep scanning — last match wins (latest)
+        if iter_dir is None:
+            return None
+
+    # Load artifacts
+    parts: list[str] = []
+    summary_path = iter_dir / "refinement_summary.md"
+    if summary_path.exists():
+        parts.append(
+            f"=== Refinement Summary (from {iter_dir.name}) ===\n"
+            f"{summary_path.read_text().strip()}"
+        )
+
+    tasks_path = iter_dir / "tasks.json"
+    if tasks_path.exists():
+        try:
+            from gotg.tasks import TaskRepo, format_tasks_summary
+            tasks_data = TaskRepo(tasks_path).load()
+            summary = format_tasks_summary(tasks_data)
+            if summary:
+                parts.append(f"=== Task Breakdown (from {iter_dir.name}) ===\n{summary}")
+        except Exception as e:
+            if strict:
+                raise SessionSetupError(
+                    f"failed to load tasks.json from '{context_from}': {e}"
+                ) from e
+            # Auto-detect: skip corrupt tasks, continue with other artifacts
+
+    if not parts:
+        if strict:
+            raise SessionSetupError(
+                f"iteration '{context_from}' has no artifacts "
+                f"(no refinement_summary.md or tasks.json)."
+            )
+        return None
+
+    return "\n\n".join(parts)
 
 
 def build_session_infra(
@@ -85,6 +162,9 @@ def prepare_grooming_session(
     coach: dict | None = None,
     max_turns: int = 30,
     streaming: bool = False,
+    project_context: str | None = None,
+    project_root: Path | None = None,
+    file_access: dict | None = None,
 ) -> SessionSetup:
     """Build everything needed to run a grooming session.
 
@@ -101,6 +181,9 @@ def prepare_grooming_session(
     policy = grooming_policy(
         agents=agents, topic=topic, history=history,
         coach=coach, max_turns=max_turns, streaming=streaming,
+        project_context=project_context,
+        project_root=project_root,
+        file_access=file_access,
     )
 
     return SessionSetup(
@@ -108,7 +191,7 @@ def prepare_grooming_session(
         model_config=model_config, history=history, policy=policy,
         deps=deps, log_path=log_path, debug_path=debug_path,
         use_implementation=False, tasks_data=None, current_layer=0,
-        fileguard=None, approval_store=None, worktree_map=None,
+        fileguard=policy.fileguard, approval_store=None, worktree_map=None,
         conv_store=store,
     )
 
@@ -533,3 +616,97 @@ def load_diffs_for_review(
         warnings.append(f"no branches found for layer {layer}. No diffs to review.")
 
     return diffs, warnings
+
+
+def apply_iteration_proposals(
+    team_dir: Path,
+    proposals: list[dict],
+    batch_id: str,
+    groom_slug: str,
+    store: ConversationStore,
+) -> list[dict]:
+    """Create/update iterations from coach proposals. Returns system messages (already persisted).
+
+    Validates each proposal before any state mutations. Invalid proposals become
+    soft error messages. New iteration IDs are computed upfront to handle batches correctly.
+    """
+    from gotg.config import IterationStore
+    from gotg.errors import ConfigError
+
+    iter_store = IterationStore(team_dir)
+    messages: list[dict] = []
+
+    # --- Phase 1: Validate all proposals ---
+    validated: list[dict] = []
+    for i, p in enumerate(proposals):
+        action = p.get("action")
+        title = (p.get("title") or "").strip()
+        description = (p.get("description") or "").strip()
+
+        if action not in ("create", "update"):
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} has unknown action '{action}', skipped."))
+            continue
+        if not title or not description:
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} missing title or description, skipped."))
+            continue
+        if action == "update" and not p.get("iteration_id"):
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Error: proposal {i+1} is an update but missing iteration_id, skipped."))
+            continue
+
+        validated.append(p)
+
+    # --- Phase 2: Pre-compute IDs for creates (batch-safe) ---
+    existing_ids = {it["id"] for it in iter_store.list_all()}
+    id_map: dict[int, str] = {}
+    for i, p in enumerate(validated):
+        if p["action"] == "create":
+            next_num = 1
+            while f"iter-{next_num}" in existing_ids:
+                next_num += 1
+            new_id = f"iter-{next_num}"
+            existing_ids.add(new_id)
+            id_map[i] = new_id
+
+    # --- Phase 3: Apply ---
+    applied_count = 0
+    for i, p in enumerate(validated):
+        title = p["title"].strip()
+        description = p["description"].strip()
+
+        if p["action"] == "create":
+            new_id = id_map[i]
+            iter_store.create(new_id, description=description, set_current=False)
+            iter_store.save_fields(new_id, title=title)
+            messages.append(_sys_msg(groom_slug,
+                f"[iterations] Created {new_id}: {title}"))
+            applied_count += 1
+
+        else:  # update
+            target_id = p["iteration_id"]
+            try:
+                iter_store.save_fields(target_id, title=title, description=description)
+                messages.append(_sys_msg(groom_slug,
+                    f"[iterations] Updated {target_id}: {title}"))
+                applied_count += 1
+            except ConfigError:
+                messages.append(_sys_msg(groom_slug,
+                    f"[iterations] Error: iteration '{target_id}' not found, skipped update."))
+
+    # --- Phase 4: Mark batch as approved (structured marker) ---
+    approval_msg = _sys_msg(groom_slug,
+        f"[iterations] Batch {batch_id} approved: {applied_count} applied.")
+    approval_msg["iterations_batch_approved"] = batch_id
+    messages.append(approval_msg)
+
+    # Persist all messages
+    for msg in messages:
+        store.append(msg)
+
+    return messages
+
+
+def _sys_msg(groom_slug: str, content: str) -> dict:
+    return {"from": "system", "iteration": groom_slug, "content": content}

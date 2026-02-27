@@ -33,6 +33,8 @@ from gotg.session_setup import (  # noqa: F401
     setup_worktrees,
     apply_and_inject,
     load_diffs_for_review,
+    load_iteration_context,
+    apply_iteration_proposals,
 )
 from gotg.session_advance import (  # noqa: F401
     validate_advance,
@@ -82,6 +84,8 @@ __all__ = [
     "setup_worktrees",
     "apply_and_inject",
     "load_diffs_for_review",
+    "load_iteration_context",
+    "apply_iteration_proposals",
     # Advance
     "validate_advance",
     "advance_phase",

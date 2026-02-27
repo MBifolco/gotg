@@ -93,6 +93,7 @@ def __getattr__(name):
         "cmd_groom_continue": ("gotg.commands.groom", "cmd_groom_continue"),
         "cmd_groom_list": ("gotg.commands.groom", "cmd_groom_list"),
         "cmd_groom_show": ("gotg.commands.groom", "cmd_groom_show"),
+        "cmd_groom_summarize": ("gotg.commands.groom", "cmd_groom_summarize"),
     }
     if name in _reexports:
         module_path, attr = _reexports[name]
@@ -110,12 +111,14 @@ def main():
     init_parser.add_argument("path", nargs="?", default=".", help="Project path (default: current directory)")
 
     run_parser = subparsers.add_parser("run", help="Run the agent conversation")
+    run_parser.add_argument("-i", "--iteration", help="Switch to this iteration before running")
     run_parser.add_argument("--max-turns", type=int, help="Override max_turns from iteration.json")
     run_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
 
     subparsers.add_parser("show", help="Show the conversation log")
 
     continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
+    continue_parser.add_argument("-i", "--iteration", help="Switch to this iteration before continuing")
     continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
     continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
     continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
@@ -170,16 +173,25 @@ def main():
     groom_start.add_argument("--slug", help="Override auto-generated slug")
     groom_start.add_argument("--coach", action="store_true", help="Enable coach facilitation")
     groom_start.add_argument("--max-turns", type=int, help="Max turns (default: 30)")
+    groom_context_group = groom_start.add_mutually_exclusive_group()
+    groom_context_group.add_argument("--context-from", help="Iteration ID to load context from")
+    groom_context_group.add_argument("--no-context", action="store_true", help="Skip iteration context injection")
 
     groom_continue = groom_sub.add_parser("continue", help="Continue a grooming conversation")
     groom_continue.add_argument("slug", help="Session slug")
-    groom_continue.add_argument("-m", "--message", help="Human message to inject")
+    groom_continue_action = groom_continue.add_mutually_exclusive_group()
+    groom_continue_action.add_argument("--approve-iterations", action="store_true",
+        help="Approve pending iteration proposals")
+    groom_continue_action.add_argument("-m", "--message", help="Human message to inject")
     groom_continue.add_argument("--max-turns", type=int, help="Additional turns to run")
 
     groom_sub.add_parser("list", help="List grooming sessions")
 
     groom_show = groom_sub.add_parser("show", help="Show grooming conversation")
     groom_show.add_argument("slug", help="Session slug")
+
+    groom_summarize = groom_sub.add_parser("summarize", help="Generate a summary of a grooming conversation")
+    groom_summarize.add_argument("slug", help="Session slug")
 
     subparsers.add_parser("ui", help="Launch interactive TUI")
 
@@ -252,6 +264,9 @@ def main():
             elif args.groom_command == "show":
                 from gotg.commands.groom import cmd_groom_show
                 cmd_groom_show(args)
+            elif args.groom_command == "summarize":
+                from gotg.commands.groom import cmd_groom_summarize
+                cmd_groom_summarize(args)
             else:
                 groom_parser.print_help()
         elif args.command == "ui":

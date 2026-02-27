@@ -249,10 +249,18 @@ def test_migrate_grooming_v0_preserves_existing_status():
     assert result["status"] == "closed"
 
 
-def test_migrate_grooming_v1_passthrough():
+def test_migrate_grooming_v1_to_v2_adds_context_from():
     data = {"schema_version": 1, "slug": "test", "status": "active"}
     result = migrate_grooming_metadata(data)
-    assert result["schema_version"] == 1
+    assert result["schema_version"] == 2
+    assert result["context_from"] is None
+
+
+def test_migrate_grooming_v2_passthrough():
+    data = {"schema_version": 2, "slug": "test", "status": "active", "context_from": "iter-1"}
+    result = migrate_grooming_metadata(data)
+    assert result["schema_version"] == 2
+    assert result["context_from"] == "iter-1"
 
 
 def test_migrate_grooming_forward_version_warns():

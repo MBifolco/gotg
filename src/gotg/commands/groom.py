@@ -42,7 +42,44 @@ def cmd_groom_start(args):
     coach = ctx.coach if args.coach else None
     max_turns = args.max_turns or 30
 
-    groom_dir = write_grooming_metadata(team_dir, slug, topic, coach=bool(coach), max_turns=max_turns)
+    # Resolve iteration context
+    from gotg.session_setup import load_iteration_context
+    from gotg.session_types import SessionSetupError
+
+    if getattr(args, "no_context", False):
+        context_from_value: str | bool | None = False
+        project_context = None
+    elif getattr(args, "context_from", None):
+        context_from_value = args.context_from
+        try:
+            project_context = load_iteration_context(
+                team_dir, context_from=args.context_from, strict=True
+            )
+        except SessionSetupError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+    else:
+        # Auto-detect
+        project_context = load_iteration_context(team_dir)
+        context_from_value = None
+        # If auto-detect found something, record which iteration it came from
+        if project_context:
+            from gotg.config import IterationStore
+            try:
+                all_iters = IterationStore(team_dir).list_all()
+                for it in all_iters:
+                    if it.get("status") == "pending":
+                        continue
+                    d = IterationStore(team_dir).get_dir(it["id"])
+                    if (d / "refinement_summary.md").exists() or (d / "tasks.json").exists():
+                        context_from_value = it["id"]  # last match wins
+            except (FileNotFoundError, KeyError):
+                pass
+
+    groom_dir = write_grooming_metadata(
+        team_dir, slug, topic, coach=bool(coach), max_turns=max_turns,
+        context_from=context_from_value,
+    )
 
     iteration = {"id": slug, "description": topic, "phase": None}
 
@@ -53,6 +90,9 @@ def cmd_groom_start(args):
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=topic, coach=coach, max_turns_override=max_turns,
         streaming=streaming, model_resolver=ctx.model_resolver,
+        project_context=project_context,
+        project_root=ctx.project_root,
+        file_access=ctx.file_access,
     )
 
 
@@ -76,6 +116,37 @@ def cmd_groom_continue(args):
     store = ConversationStore(log_path)
     history = store.read_full()
 
+    # Handle --approve-iterations
+    if getattr(args, "approve_iterations", False):
+        # Find last UNAPPROVED proposal batch using structured markers
+        approved_batches = {
+            msg["iterations_batch_approved"]
+            for msg in history
+            if "iterations_batch_approved" in msg
+        }
+        proposals_msg = None
+        for msg in reversed(history):
+            pi = msg.get("propose_iterations")
+            if pi and pi.get("batch_id") not in approved_batches:
+                proposals_msg = pi
+                break
+
+        if not proposals_msg:
+            print("Error: no pending iteration proposals found.", file=sys.stderr)
+            raise SystemExit(1)
+
+        from gotg.session_setup import apply_iteration_proposals
+        results = apply_iteration_proposals(
+            team_dir, proposals_msg["proposals"],
+            batch_id=proposals_msg["batch_id"],
+            groom_slug=args.slug, store=store,
+        )
+        for r in results:
+            print(render_message(r))
+            print()
+        # Re-read history after applying proposals
+        history = store.read_full()
+
     # Count current agent turns (not human/coach/system)
     non_agent = {"human", "system"}
     if coach:
@@ -83,7 +154,7 @@ def cmd_groom_continue(args):
     current_agent_turns = sum(1 for msg in history if msg["from"] not in non_agent)
 
     # Inject human message if provided
-    if args.message:
+    if getattr(args, "message", None):
         msg = {
             "from": "human",
             "iteration": args.slug,
@@ -101,6 +172,16 @@ def cmd_groom_continue(args):
 
     iteration = {"id": args.slug, "description": metadata["topic"], "phase": None}
 
+    # Load iteration context from persisted context_from
+    from gotg.session_setup import load_iteration_context
+
+    context_from = metadata.get("context_from")
+    project_context = None
+    if isinstance(context_from, str):
+        # Explicit iteration ID — load its artifacts (non-strict: skip silently if missing)
+        project_context = load_iteration_context(team_dir, context_from=context_from)
+    # context_from is None or False → skip loading
+
     from gotg.config import load_streaming_config
     streaming = load_streaming_config(team_dir)
 
@@ -108,6 +189,9 @@ def cmd_groom_continue(args):
         groom_dir, ctx.agents, iteration, ctx.model_config,
         topic=metadata["topic"], coach=coach, max_turns_override=target_total,
         streaming=streaming, model_resolver=ctx.model_resolver,
+        project_context=project_context,
+        project_root=ctx.project_root,
+        file_access=ctx.file_access,
     )
 
 
@@ -146,3 +230,32 @@ def cmd_groom_show(args):
     for msg in messages:
         print(render_message(msg))
         print()
+
+
+def cmd_groom_summarize(args):
+    cwd = Path.cwd()
+    team_dir = _cli.find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    ctx = TeamContext.from_team_dir(team_dir)
+    metadata, groom_dir = load_grooming_metadata(team_dir, args.slug)
+
+    history = ConversationStore(groom_dir / "conversation.jsonl").read_full()
+    if not history:
+        print("No messages to summarize.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.model import chat_completion
+
+    coach_name = ctx.coach["name"] if ctx.coach and metadata.get("coach") else None
+    summary = extract_grooming_summary_doc(
+        history, ctx.model_config, coach_name,
+        chat_call=chat_completion, topic=metadata["topic"],
+    )
+
+    summary_path = groom_dir / "summary.md"
+    summary_path.write_text(summary)
+    print(f"Summary written to {summary_path}")

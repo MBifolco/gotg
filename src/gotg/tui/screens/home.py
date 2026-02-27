@@ -26,6 +26,7 @@ class HomeScreen(Screen):
         Binding("n", "new_item", "New", show=False),
         Binding("e", "edit_item", "Edit", show=False),
         Binding("s", "open_settings", "Settings", show=False),
+        Binding("g", "new_grooming", "Groom", show=False),
     ]
 
     def compose(self):
@@ -224,7 +225,7 @@ class HomeScreen(Screen):
         elif row_key in self._grooming_data:
             meta, data_dir = self._grooming_data[row_key]
             full_meta = load_session_metadata(team_dir, meta)
-            self.app.push_screen(ChatScreen(data_dir, full_meta))
+            self.app.push_screen(ChatScreen(data_dir, full_meta, session_kind="grooming"))
 
     def on_screen_resume(self) -> None:
         """Refresh data when returning from a pushed screen."""
@@ -353,15 +354,45 @@ class HomeScreen(Screen):
     def _on_new_grooming(self, result: str | None) -> None:
         if result is None:
             return
-        from gotg.groom import existing_slugs, generate_slug, write_grooming_metadata
+        from gotg.groom import existing_slugs, generate_slug, load_grooming_metadata, write_grooming_metadata
+        from gotg.session_setup import load_iteration_context
+        from gotg.config import IterationStore
         team_dir = self.app.team_dir
         slug = generate_slug(result, existing_slugs(team_dir))
+
+        # Auto-detect iteration context (same logic as CLI cmd_groom_start)
+        context_from_value: str | None = None
         try:
-            write_grooming_metadata(team_dir, slug, topic=result, coach=True, max_turns=30)
+            project_context = load_iteration_context(team_dir)
+            if project_context:
+                all_iters = IterationStore(team_dir).list_all()
+                for it in all_iters:
+                    if it.get("status") == "pending":
+                        continue
+                    d = IterationStore(team_dir).get_dir(it["id"])
+                    if (d / "refinement_summary.md").exists() or (d / "tasks.json").exists():
+                        context_from_value = it["id"]
+        except Exception:
+            pass
+
+        try:
+            write_grooming_metadata(
+                team_dir, slug, topic=result, coach=True, max_turns=30,
+                context_from=context_from_value,
+            )
             self.notify(f"Created grooming: {slug}")
-            self._load_data()
+            # Open the new session directly in ChatScreen
+            meta, groom_dir = load_grooming_metadata(team_dir, slug)
+            full_meta = load_session_metadata(team_dir, meta)
+            self.app.push_screen(
+                ChatScreen(groom_dir, full_meta, mode="run", session_kind="grooming")
+            )
         except FileExistsError:
             self.notify(f"Slug '{slug}' already exists.", severity="error")
+
+    def action_new_grooming(self) -> None:
+        """Start a new grooming session (G key — works from any tab)."""
+        self._new_grooming()
 
     # ── Edit item (E key) ─────────────────────────────────────
 

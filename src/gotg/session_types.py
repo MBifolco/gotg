@@ -115,6 +115,7 @@ class PauseReason(Enum):
     APPROVALS = auto()
     COACH_QUESTION = auto()
     PHASE_COMPLETE = auto()
+    ITERATIONS_PROPOSED = auto()
 
 
 @dataclass
@@ -124,6 +125,7 @@ class ResumeState:
     phase_complete_shows_review: bool = False
     ask_pm_data: dict | None = None
     show_task_status_bar: bool = False
+    iteration_proposals: dict | None = None
 
 
 class ResolutionStrategy(Enum):
@@ -244,6 +246,20 @@ def reconstruct_resume_state(messages: list[dict], phase: str | None) -> ResumeS
             pause_reason=PauseReason.PHASE_COMPLETE,
             phase_complete_shows_review=caps.phase_complete_shows_review_hint,
         )
+
+    # Coach proposed iterations — check before ask_pm (proposals take priority)
+    proposals_data = last_content_msg.get("propose_iterations")
+    if isinstance(proposals_data, dict) and "proposals" in proposals_data:
+        batch_id = proposals_data.get("batch_id", "")
+        approved = any(
+            m.get("iterations_batch_approved") == batch_id
+            for m in phase_messages
+        )
+        if not approved:
+            return ResumeState(
+                pause_reason=PauseReason.ITERATIONS_PROPOSED,
+                iteration_proposals=proposals_data,
+            )
 
     # Coach asked PM — require "question" key for well-formed payload
     ask_pm_data = last_content_msg.get("ask_pm")

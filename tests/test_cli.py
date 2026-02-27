@@ -2477,8 +2477,8 @@ def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
     (wt / "src" / "feature.py").write_text("feature")
     commit_worktree(wt, "add feature")
 
-    # Dirty main
-    (tmp_path / "src" / "dirty.py").write_text("uncommitted on main")
+    # Dirty main (modify a tracked file — untracked files are ignored)
+    (tmp_path / "src" / "main.py").write_text("modified on main")
 
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit):

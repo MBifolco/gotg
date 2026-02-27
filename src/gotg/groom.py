@@ -73,8 +73,15 @@ def _grooming_dir(team_dir: Path, slug: str) -> Path:
 
 def write_grooming_metadata(
     team_dir: Path, slug: str, topic: str, coach: bool, max_turns: int,
+    context_from: str | bool | None = None,
 ) -> Path:
-    """Create grooming directory and write grooming.json. Returns the dir."""
+    """Create grooming directory and write grooming.json. Returns the dir.
+
+    context_from semantics:
+      - string (e.g. "iter-1"): explicit or auto-resolved iteration ID
+      - None: no context found at start (or v1 migration default)
+      - False: user passed --no-context (explicit opt-out)
+    """
     groom_dir = _grooming_dir(team_dir, slug)
     groom_dir.mkdir(parents=True, exist_ok=False)
     (groom_dir / "conversation.jsonl").touch()
@@ -86,6 +93,7 @@ def write_grooming_metadata(
         "coach": coach,
         "max_turns": max_turns,
         "status": "active",
+        "context_from": context_from,
     }
     (groom_dir / "grooming.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return groom_dir
@@ -152,6 +160,9 @@ def run_grooming_conversation(
     max_turns_override: int | None = None,
     streaming: bool = False,
     model_resolver=None,
+    project_context: str | None = None,
+    project_root: Path | None = None,
+    file_access: dict | None = None,
 ) -> None:
     """Run a grooming conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
@@ -172,6 +183,9 @@ def run_grooming_conversation(
         topic=topic, coach=coach,
         max_turns=max_turns_override or iteration.get("max_turns", 30),
         streaming=streaming,
+        project_context=project_context,
+        project_root=project_root,
+        file_access=file_access,
     )
 
     slug = iteration["id"]
@@ -179,5 +193,6 @@ def run_grooming_conversation(
         run_and_persist(setup),
         on_started=lambda e: _print_grooming_header(e, topic),
         resume_hint=f"gotg groom continue {slug}",
+        summarize_hint=f"gotg groom summarize {slug}",
         complete_label="Grooming",
     )

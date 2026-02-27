@@ -520,6 +520,127 @@ async def test_home_n_cancel_does_nothing(tmp_path):
         assert len(data["iterations"]) == 0
 
 
+# ── HomeScreen: G key — new grooming ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_home_g_creates_grooming_and_opens_chat(tmp_path):
+    """Pressing G opens TextInputModal, submitting creates session and pushes ChatScreen."""
+    team_dir = _make_team_dir(tmp_path)
+    from gotg.tui.app import GotgApp
+    from gotg.tui.modals.text_input import TextInputModal
+    from gotg.tui.screens.chat import ChatScreen
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Press G — should open modal
+        await pilot.press("g")
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, TextInputModal)
+
+        # Type topic and submit
+        app.screen.query_one("#modal-input").value = "Explore caching strategies"
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Verify grooming session was created on disk
+        groom_dir = team_dir / "grooming"
+        assert groom_dir.exists()
+        slugs = [d.name for d in groom_dir.iterdir() if d.is_dir()]
+        assert len(slugs) == 1
+        meta = json.loads((groom_dir / slugs[0] / "grooming.json").read_text())
+        assert meta["topic"] == "Explore caching strategies"
+
+        # Verify we landed on ChatScreen (not back on HomeScreen)
+        assert isinstance(app.screen, ChatScreen)
+
+
+@pytest.mark.asyncio
+async def test_home_g_cancel_does_nothing(tmp_path):
+    """Pressing G then Escape creates no grooming session."""
+    team_dir = _make_team_dir(tmp_path)
+    from gotg.tui.app import GotgApp
+    from gotg.tui.modals.text_input import TextInputModal
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        await pilot.press("g")
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, TextInputModal)
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        groom_dir = team_dir / "grooming"
+        assert not groom_dir.exists() or len(list(groom_dir.iterdir())) == 0
+
+
+@pytest.mark.asyncio
+async def test_home_g_works_from_iterations_tab(tmp_path):
+    """G key works even when the iterations tab is active (not just grooming tab)."""
+    iterations = [
+        {"id": "iter-1", "description": "Test", "phase": "refinement",
+         "status": "in-progress", "max_turns": 10},
+    ]
+    team_dir = _make_team_dir(tmp_path, iterations=iterations)
+    from gotg.tui.app import GotgApp
+    from gotg.tui.modals.text_input import TextInputModal
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # We're on the iterations tab by default — G should still work
+        await pilot.press("g")
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, TextInputModal)
+
+
+@pytest.mark.asyncio
+async def test_home_grooming_row_select_passes_session_kind(tmp_path):
+    """Selecting a grooming row opens ChatScreen with session_kind='grooming'."""
+    grooming = [{"slug": "test-groom", "topic": "Test topic", "coach": True, "max_turns": 30, "status": "active"}]
+    # Make the iteration 'done' — grooming should still open fine
+    iterations = [
+        {"id": "iter-1", "description": "Done iter", "phase": "code-review",
+         "status": "done", "max_turns": 10},
+    ]
+    team_dir = _make_team_dir(tmp_path, iterations=iterations, grooming=grooming)
+    from gotg.tui.app import GotgApp
+    from gotg.tui.screens.chat import ChatScreen
+    from textual.widgets import DataTable, TabbedContent
+
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        # Switch to the grooming tab
+        tc = app.screen.query_one(TabbedContent)
+        tc.active = "tab-grooming"
+        await pilot.pause()
+        await pilot.pause()
+
+        # Focus the grooming table and select the row
+        groom_table = app.screen.query_one("#groom-table", DataTable)
+        groom_table.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Should open ChatScreen with session_kind="grooming"
+        assert isinstance(app.screen, ChatScreen)
+        assert app.screen._session_kind == "grooming"
+
+
 # ── HomeScreen: E key — edit iteration ────────────────────────
 
 

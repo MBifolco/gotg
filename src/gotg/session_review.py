@@ -129,7 +129,7 @@ def merge_branches(
             "gotg requires the default branch to be named 'main'."
         )
 
-    if is_worktree_dirty(project_root):
+    if is_worktree_dirty(project_root, include_untracked=False):
         raise ReviewError("uncommitted changes on main. Commit or stash before merging.")
 
     # Auto-commit dirty worktrees before checking merge status
