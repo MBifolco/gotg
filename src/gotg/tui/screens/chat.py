@@ -79,6 +79,7 @@ class ChatScreen(Screen):
         self._session_kind = session_kind
         self._cancel_requested = False
         self._turn_count = 0
+        self._initial_load_done = False
         self._pause_reason: PauseReason | None = None
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
@@ -127,6 +128,7 @@ class ChatScreen(Screen):
 
         # Count existing agent turns
         self._turn_count = self._count_agent_turns(messages)
+        self._initial_load_done = True
 
         # Auto-start if mode is run or continue
         if self._mode in ("run", "continue"):
@@ -194,7 +196,7 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        if state.show_task_status_bar and self._turn_count == 0:
+        if state.show_task_status_bar:
             self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────
@@ -802,7 +804,7 @@ class ChatScreen(Screen):
         self.app.push_screen(TaskAssignScreen(self.data_dir, agents))
 
     def _update_task_status_bar(self) -> None:
-        """Update action bar with task assignment status."""
+        """Update action bar with task assignment/completion status."""
         from gotg.tasks import TaskRepo
 
         repo = TaskRepo(self.data_dir / "tasks.json")
@@ -811,6 +813,15 @@ class ChatScreen(Screen):
             bar.show("Press R to run, T to assign tasks.")
             return
         tasks = repo.load()
+        completed = sum(1 for t in tasks if t.get("status") == "done")
+        if completed == len(tasks):
+            bar.show("All tasks complete. Merge branches, then advance.")
+            return
+        if completed > 0:
+            bar.show(
+                f"{completed}/{len(tasks)} tasks done. Press R to continue implementation."
+            )
+            return
         unassigned = sum(1 for t in tasks if not t.get("assigned_to"))
         if unassigned:
             bar.show(
@@ -838,10 +849,12 @@ class ChatScreen(Screen):
 
     def on_screen_resume(self) -> None:
         """Refresh state when returning from pushed screens."""
+        if not self._initial_load_done:
+            return
         if self.session_state == SessionState.VIEWING:
             # Returning from TaskAssignScreen or similar
             from gotg.phases import get_phase_caps_safe
-            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar and self._turn_count == 0:
+            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
                 self._update_task_status_bar()
             return
 
