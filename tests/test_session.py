@@ -510,6 +510,40 @@ def test_advance_without_coach_skips_extraction(tmp_path):
     assert result.checkpoint_number is not None
 
 
+def test_advance_pre_code_review_applies_files(tmp_path):
+    """files_map from notes extraction is written to tasks.json on advance."""
+    team_dir, iter_dir, iteration = _make_advance_team_dir(
+        tmp_path, phase="pre-code-review"
+    )
+    # Seed tasks.json
+    tasks = [
+        {"id": "t1", "description": "Build GUI", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-1", "status": "pending", "layer": 0},
+        {"id": "t2", "description": "Build config", "done_criteria": "Done",
+         "depends_on": [], "assigned_to": "agent-2", "status": "pending", "layer": 0},
+    ]
+    from gotg.tasks import TaskRepo
+    TaskRepo(iter_dir / "tasks.json").save(tasks)
+
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "Use tkinter", "files": ["src/gui.py", "tests/test_gui.py"]},
+            {"id": "t2", "notes": "Use YAML", "files": ["src/config.py"]},
+        ])
+
+    result = advance_phase(team_dir, iteration, iter_dir, chat_call=mock_chat)
+    assert result.from_phase == "pre-code-review"
+    assert result.to_phase == "implementation"
+
+    # Verify files were applied to tasks.json
+    updated_tasks = TaskRepo(iter_dir / "tasks.json").load()
+    t1 = next(t for t in updated_tasks if t["id"] == "t1")
+    t2 = next(t for t in updated_tasks if t["id"] == "t2")
+    assert t1["files"] == ["src/gui.py", "tests/test_gui.py"]
+    assert t2["files"] == ["src/config.py"]
+    assert t1["notes"] == "Use tkinter"
+
+
 # ── SessionSetup / prepare_session / run_and_persist ──
 
 from unittest.mock import patch, MagicMock

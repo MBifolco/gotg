@@ -142,13 +142,15 @@ def advance_phase(
                 from gotg.tasks import TaskRepo
                 task_repo = TaskRepo(tasks_path)
                 tasks_data = task_repo.load()
-                notes_map, raw_text, error = extract_task_notes(
+                notes_map, files_map, raw_text, error = extract_task_notes(
                     history, tasks_data, model_config, coach["name"], chat_call,
                 )
                 if notes_map is not None:
                     for task in tasks_data:
                         if task["id"] in notes_map:
                             task["notes"] = notes_map[task["id"]]
+                        if files_map and task["id"] in files_map:
+                            task["files"] = files_map[task["id"]]
                     task_repo.save(tasks_data)
                     _progress(f"Updated {tasks_path} with task notes")
                     coach_ran = True

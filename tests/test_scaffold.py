@@ -557,6 +557,38 @@ def test_format_phase_kickoff_unknown_phase_returns_empty():
     assert format_phase_kickoff("unknown-phase", agents, iteration) == ""
 
 
+def test_planning_kickoff_includes_writable_paths():
+    """format_phase_kickoff('planning', ...) with fileguard renders writable_paths info."""
+    from gotg.scaffold import format_phase_kickoff
+    from types import SimpleNamespace
+    fileguard = SimpleNamespace(writable_paths=["src/**", "tests/**"])
+    agents = [{"name": "agent-1"}, {"name": "agent-2"}]
+    iteration = {"id": "iter-1", "description": "Build X"}
+    result = format_phase_kickoff("planning", agents, iteration, fileguard=fileguard)
+    assert "src/**" in result
+    assert "tests/**" in result
+    assert "File access" in result
+
+
+def test_pre_code_review_kickoff_includes_writable_paths(tmp_path):
+    """format_phase_kickoff('pre-code-review', ...) with fileguard renders writable_paths info."""
+    from gotg.scaffold import format_phase_kickoff
+    from types import SimpleNamespace
+    import json as _json
+    fileguard = SimpleNamespace(writable_paths=["src/**", "docs/**"])
+    agents = [{"name": "agent-1"}, {"name": "agent-2"}]
+    iteration = {"id": "iter-1", "description": "Build X"}
+    # pre-code-review needs tasks.json for agent_task_assignments
+    tasks = [{"id": "t1", "assigned_to": "agent-1", "layer": 0}]
+    (tmp_path / "tasks.json").write_text(_json.dumps(tasks))
+    result = format_phase_kickoff(
+        "pre-code-review", agents, iteration, fileguard=fileguard, iter_dir=tmp_path,
+    )
+    assert "src/**" in result
+    assert "docs/**" in result
+    assert "File access" in result
+
+
 # --- format_agent_task_assignments ---
 
 def test_format_agent_task_assignments_basic(tmp_path):

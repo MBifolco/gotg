@@ -236,6 +236,85 @@ def test_format_tasks_summary_anti_patterns_layer_filtered():
     assert "Do not use eval()" in result
 
 
+# --- Files field ---
+
+def test_format_tasks_summary_shows_files():
+    """files field renders in summary output."""
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": ["src/main.py", "tests/test_main.py"]},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Files: src/main.py, tests/test_main.py" in result
+
+
+def test_format_tasks_summary_no_files():
+    """Missing/empty files field omitted from output."""
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending"},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Files:" not in result
+
+    tasks_empty = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": []},
+    ]
+    result_empty = format_tasks_summary(tasks_empty)
+    assert "Files:" not in result_empty
+
+
+def test_format_tasks_summary_files_layer_filtered():
+    """files field renders in layer-filtered summary."""
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "layer": 0, "files": ["src/app.py"]},
+    ]
+    result = format_tasks_summary(tasks, layer=0)
+    assert "Files: src/app.py" in result
+
+
+def test_format_tasks_summary_malformed_files():
+    """String/mixed-list files silently skipped."""
+    tasks_str = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": "src/main.py"},
+    ]
+    assert "Files:" not in format_tasks_summary(tasks_str)
+
+    tasks_mixed = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": [123, None]},
+    ]
+    assert "Files:" not in format_tasks_summary(tasks_mixed)
+
+
+def test_format_tasks_summary_whitespace_files_stripped():
+    """Whitespace-only and blank file paths are filtered out."""
+    tasks = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": ["  src/main.py  ", "", "   "]},
+    ]
+    result = format_tasks_summary(tasks)
+    assert "Files: src/main.py" in result
+    # Only one file should appear (blanks filtered)
+    assert result.count("Files:") == 1
+
+    tasks_all_blank = [
+        {"id": "t1", "depends_on": [], "description": "Task",
+         "done_criteria": "Done", "assigned_to": "agent-1", "status": "pending",
+         "files": ["", "   "]},
+    ]
+    assert "Files:" not in format_tasks_summary(tasks_all_blank)
+
+
 # --- TaskRepo ---
 
 def _sample_tasks():

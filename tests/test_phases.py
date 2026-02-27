@@ -90,9 +90,12 @@ def test_refinement_all_false():
     assert caps == PhaseCapabilities()
 
 
-def test_planning_all_false():
+def test_planning_caps():
     caps = get_phase_caps("planning")
-    assert caps == PhaseCapabilities()
+    assert caps.inject_writable_paths_kickoff is True
+    # Everything else is default (False)
+    assert caps.requires_tasks is False
+    assert caps.requires_task_assignment is False
 
 
 def test_pre_code_review_caps():

@@ -83,6 +83,7 @@ DO:
 - Ensure each task is independent and completable by one engineer
 - Identify dependencies between tasks and note their ordering
 - Define what 'done' looks like for each task
+- Specify the exact file paths each task will create or modify, relative to the project root
 - Consider which tasks can be parallelized
 - Prefer existing libraries, frameworks, or standard-library modules over custom code when they satisfy the requirements from refinement. Discuss only enough to determine whether they reduce or eliminate planned tasks
 
@@ -97,6 +98,8 @@ If a teammate re-opens a settled requirement, redirect them: "That was decided i
 kickoff = '''
 --- Phase: planning ---
 Goal: break the groomed scope into concrete, assignable tasks with dependencies and done criteria. The groomed scope is available above.
+
+{writable_paths_info}
 
 {first_agent}, propose an initial task breakdown. {second_agent}, review it and suggest modifications.
 
@@ -143,6 +146,8 @@ Goal: interface alignment. Each engineer proposes their approach for their assig
 One message per task. Respond to teammates ONLY if you see an interface mismatch. Silence means the interface works for you.
 
 {agent_task_assignments}
+
+{writable_paths_info}
 
 The coach will facilitate from here.'''
 
@@ -298,6 +303,7 @@ Each task object must have exactly these fields:
   1. Constraints discussed during planning (e.g., "we agreed not to build a custom parser")
   2. Relevant "Out of Scope" items from the SCOPE SUMMARY below — if the scope summary excludes something relevant to this task, include it as an anti_pattern even if the planning conversation never mentioned it explicitly.
   Do not invent restrictions that appear in neither the planning discussion nor the scope summary.
+- "files": array of file paths this task will create or modify, relative to the project root (e.g., ["src/calculator.py", "tests/test_calculator.py"]). Empty array only if the task produces no file changes (e.g., a documentation review task).
 - "done_criteria": how to verify the task is complete (1-2 sentences)
 - "depends_on": array of task id strings this task depends on (empty array if none)
 - "assigned_to": null (will be assigned later by the PM)
@@ -311,6 +317,7 @@ Example output format:
     "requirements": ["Count down from N seconds to zero", "Signal completion when timer reaches zero", "Accept configurable duration parameter"],
     "approach": "Use time.sleep() in a loop with 1-second intervals.",
     "anti_patterns": ["Do not implement pause/resume functionality"],
+    "files": ["src/timer.py"],
     "done_criteria": "Timer counts down from N seconds and signals completion.",
     "depends_on": [],
     "assigned_to": null,
@@ -322,6 +329,7 @@ Example output format:
     "requirements": ["Load YAML files from disk", "Validate against expected schema", "Raise clear errors for missing or malformed fields"],
     "approach": "Use PyYAML's safe_load with a Pydantic model for schema validation.",
     "anti_patterns": [],
+    "files": ["src/config.py", "tests/test_config.py"],
     "done_criteria": "Loads valid configs and raises clear errors for missing or malformed fields.",
     "depends_on": [],
     "assigned_to": null,
@@ -334,11 +342,12 @@ Example output format:
 prompt = '''
 You observed a pre-code-review discussion between engineers. For each task in the JSON below, extract the agreed implementation approach as a brief note (2-3 sentences max): files to create/modify, public function signatures, and key interface decisions.
 
-Output ONLY a valid JSON array with no markdown code fences, no commentary, and no text before or after the JSON. Each object must have exactly two fields:
+Output ONLY a valid JSON array with no markdown code fences, no commentary, and no text before or after the JSON. Each object must have exactly these fields:
 - "id": the task id (unchanged)
 - "notes": the implementation notes string
+- "files": array of file paths agreed during pre-code-review for this task (e.g., ["src/gui.py", "tests/test_gui.py"]). Empty array if no specific files were discussed for this task. These update the files from planning — use the pre-code-review paths if they differ from planning.
 
-If a task was not discussed, set notes to an empty string. If the task has an "approach" field, the notes should complement it (interface details, file paths), not contradict or replace the agreed approach. If the task has anti_patterns, the notes must not contradict them.
+If a task was not discussed, set notes to an empty string and files to an empty array. If the task has an "approach" field, the notes should complement it (interface details, file paths), not contradict or replace the agreed approach. If the task has anti_patterns, the notes must not contradict them.
 
 Task list:
 {tasks_json}

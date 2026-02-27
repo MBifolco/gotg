@@ -32,11 +32,14 @@ class PhaseCapabilities:
 
 PHASE_CAPS: dict[str, PhaseCapabilities] = {
     "refinement": PhaseCapabilities(),
-    "planning": PhaseCapabilities(),
+    "planning": PhaseCapabilities(
+        inject_writable_paths_kickoff=True,
+    ),
     "pre-code-review": PhaseCapabilities(
         requires_tasks=True,
         requires_task_assignment=True,
         include_task_assignments_kickoff=True,
+        inject_writable_paths_kickoff=True,
         show_task_status_bar=True,
         auto_open_task_assign_on_advance=True,
     ),

@@ -109,6 +109,11 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
             anti = t.get("anti_patterns")
             if anti:
                 entry += "\n  MUST NOT: " + "; ".join(anti)
+            files = t.get("files")
+            if isinstance(files, list):
+                str_files = [f.strip() for f in files if isinstance(f, str) and f.strip()]
+                if str_files:
+                    entry += "\n  Files: " + ", ".join(str_files)
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"
@@ -138,6 +143,11 @@ def format_tasks_summary(tasks: list[dict], layer: int | None = None) -> str:
             anti = t.get("anti_patterns")
             if anti:
                 entry += "\n  MUST NOT: " + "; ".join(anti)
+            files = t.get("files")
+            if isinstance(files, list):
+                str_files = [f.strip() for f in files if isinstance(f, str) and f.strip()]
+                if str_files:
+                    entry += "\n  Files: " + ", ".join(str_files)
             notes = t.get("notes")
             if notes:
                 entry += f"\n  Notes: {notes}"
