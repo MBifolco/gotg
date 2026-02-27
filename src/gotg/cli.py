@@ -111,12 +111,14 @@ def main():
     init_parser.add_argument("path", nargs="?", default=".", help="Project path (default: current directory)")
 
     run_parser = subparsers.add_parser("run", help="Run the agent conversation")
+    run_parser.add_argument("-i", "--iteration", help="Switch to this iteration before running")
     run_parser.add_argument("--max-turns", type=int, help="Override max_turns from iteration.json")
     run_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
 
     subparsers.add_parser("show", help="Show the conversation log")
 
     continue_parser = subparsers.add_parser("continue", help="Continue the conversation with optional human input")
+    continue_parser.add_argument("-i", "--iteration", help="Switch to this iteration before continuing")
     continue_parser.add_argument("-m", "--message", help="Human message to inject before continuing")
     continue_parser.add_argument("--max-turns", type=int, help="Number of new agent turns to run")
     continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")

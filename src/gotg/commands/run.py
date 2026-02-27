@@ -18,6 +18,15 @@ def cmd_run(args):
         raise SystemExit(1)
 
     ctx = TeamContext.from_team_dir(team_dir)
+
+    iter_switch = getattr(args, "iteration", None)
+    if isinstance(iter_switch, str):
+        try:
+            ctx.iteration_store.set_current(iter_switch)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
     iteration, iter_dir = ctx.iteration_store.get_current()
 
     try:
@@ -56,6 +65,15 @@ def cmd_continue(args):
         raise SystemExit(1)
 
     ctx = TeamContext.from_team_dir(team_dir)
+
+    iter_switch = getattr(args, "iteration", None)
+    if isinstance(iter_switch, str):
+        try:
+            ctx.iteration_store.set_current(iter_switch)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            raise SystemExit(1)
+
     iteration, iter_dir = ctx.iteration_store.get_current()
 
     try:

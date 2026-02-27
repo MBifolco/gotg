@@ -194,7 +194,7 @@ class ChatScreen(Screen):
             self._pin_after_action_bar()
             return
 
-        if state.show_task_status_bar:
+        if state.show_task_status_bar and self._turn_count == 0:
             self._update_task_status_bar()
 
     # ── State machine ────────────────────────────────────────
@@ -276,6 +276,10 @@ class ChatScreen(Screen):
             streaming_enabled = False
 
             if self._session_kind == "iteration":
+                # Ensure we load the iteration this screen was opened for
+                target_id = self.metadata.get("id")
+                if target_id:
+                    ctx.iteration_store.set_current(target_id)
                 iteration, iter_dir = ctx.iteration_store.get_current()
                 validate_iteration_for_run(iteration, iter_dir, ctx.agents)
 
@@ -837,7 +841,7 @@ class ChatScreen(Screen):
         if self.session_state == SessionState.VIEWING:
             # Returning from TaskAssignScreen or similar
             from gotg.phases import get_phase_caps_safe
-            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar:
+            if get_phase_caps_safe(self.metadata.get("phase")).show_task_status_bar and self._turn_count == 0:
                 self._update_task_status_bar()
             return
 
