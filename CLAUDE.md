@@ -83,6 +83,8 @@ Layer progression: `gotg next-layer` (after merging) → verifies merges, cleans
 
 ```bash
 gotg groom start "topic to explore" [--slug S] [--coach] [--max-turns N]
+gotg groom start "topic" --context-from iter-1   # explicit iteration context
+gotg groom start "topic" --no-context             # skip context injection
 gotg groom continue <slug> [-m MSG] [--max-turns N]
 gotg groom list
 gotg groom show <slug>
@@ -92,12 +94,16 @@ gotg groom show <slug>
 - Uses `grooming_policy()` — system supplement overrides phase workflow, coach gets `ask_pm` only (no `signal_phase_complete`)
 - `--max-turns` on continue is additive (N more turns from current point)
 - Synthetic iteration dict: `{"id": slug, "description": topic, "phase": None}`
+- **Iteration context injection**: auto-detects latest iteration with artifacts (refinement_summary.md or tasks.json), injects into agent system prompts. `--context-from` for explicit, `--no-context` to skip. Persisted in `grooming.json` as `context_from` (string = iteration ID, `null` = none found, `false` = user opted out).
+- **Read-only file tools**: when `file_access` configured in team.json, agents get `file_read` + `file_list` (no `file_write`). FileGuard with empty `writable_paths` enforces read-only.
+- **Bootstrap kickoff**: 3 variants based on available context + file tools. Orients agents to review existing work before ideating.
+- TUI: press **G** from Home to start grooming (auto-detects context). `--context-from`/`--no-context` are CLI-only.
 
 ## TUI (Interactive Interface)
 `gotg ui` launches a Textual-based TUI for browsing iterations and grooming conversations.
 
 - **Optional dependency:** `pip install gotg[tui]` (textual)
-- **Read-only in iteration 1:** browse conversations, no live engine
-- **Home screen:** tabbed view with iterations list and grooming sessions list
-- **Chat view:** two-column layout (messages left, info tile right)
+- **Home screen:** tabbed view (Iterations, Grooming, Info). N=new, E=edit, R=run, C=continue, G=new grooming
+- **Chat screen:** two-column layout (messages left, info tile right). P=advance, A=approvals, D=review diffs
+- **Settings screen:** model provider, agents, coach, file access, worktrees. Ctrl+S to save
 - Lives in `src/gotg/tui/` subpackage (app, screens, widgets, CSS)

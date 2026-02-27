@@ -315,7 +315,7 @@ After merging a layer into main, the next layer's worktrees branch from the upda
 
 | Command | Description |
 |---------|-------------|
-| `gotg groom start "topic" [--coach] [--slug S]` | Start a new grooming conversation |
+| `gotg groom start "topic" [--coach] [--slug S] [--context-from ID] [--no-context]` | Start a new grooming conversation |
 | `gotg groom continue <slug> [-m MSG] [--max-turns N]` | Resume a grooming conversation |
 | `gotg groom list` | List all grooming sessions |
 | `gotg groom show <slug>` | Replay a grooming conversation |
@@ -458,6 +458,8 @@ Grooming conversations are freeform explorations that live outside the iteration
 
 ```bash
 gotg groom start "how should we handle file conflicts?"
+gotg groom start "rethinking auth" --context-from iter-2   # explicit iteration context
+gotg groom start "random brainstorm" --no-context           # skip context injection
 gotg groom list
 gotg groom show file-conflicts
 gotg groom continue file-conflicts -m "what about concurrent writes?"
@@ -470,6 +472,36 @@ Key properties:
 - **No coach by default.** Add `--coach` to `groom start` for a facilitator who keeps the conversation broad (prevents premature convergence).
 - **Multiple concurrent conversations.** Explore several ideas in parallel, each in its own slug.
 - **Slugs are auto-generated** from the topic. Override with `--slug my-slug`.
+
+### Iteration Context Injection
+
+By default, grooming sessions auto-detect the latest iteration with artifacts (`refinement_summary.md` or `tasks.json`) and inject them into agent system prompts. Agents start the conversation aware of existing decisions, requirements, and task structure — no time wasted rediscovering previous work.
+
+```bash
+gotg groom start "improving the calculator"              # auto-detect latest iteration
+gotg groom start "rethinking auth" --context-from iter-2  # explicit iteration
+gotg groom start "random brainstorm" --no-context         # no context (pure freeform)
+```
+
+`--context-from` and `--no-context` are mutually exclusive. The choice is persisted in `grooming.json` as `context_from` — on `groom continue`, the same context is reloaded automatically without re-scanning or flags.
+
+### Read-Only File Tools
+
+When `file_access` is configured in `team.json`, grooming agents get `file_read` and `file_list` tools. They can browse the codebase to verify claims and reference existing implementations, but cannot write files. This keeps grooming sessions exploratory without risk of unintended changes.
+
+### Bootstrap Kickoff
+
+The first turn of a grooming session orients the team based on what's available:
+
+- **Context + file tools**: Agents review iteration artifacts and inspect the codebase before proposing.
+- **Context only**: Agents review the iteration context in their system prompt before ideating.
+- **Generic** (no context): Open exploration — agents start from scratch.
+
+### Grooming in the TUI
+
+Press **G** from the Home screen to create a new grooming session. The TUI prompts for a topic, auto-detects iteration context, and opens the conversation directly. Existing sessions appear in the **Grooming** tab — select one and press Enter to view, **R** to run, or **C** to continue.
+
+Note: `--context-from` and `--no-context` options are CLI-only. The TUI always auto-detects context.
 
 When an idea crystallizes, create an iteration manually and start from refinement.
 
