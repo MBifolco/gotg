@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Input
+from textual.widgets import Button, Footer, Header, TextArea
 
 from gotg.conversation import ConversationStore
 from gotg.events import (
@@ -37,6 +37,23 @@ from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList
 from gotg.tui.widgets.participant_panel import ParticipantPanel
+
+
+class _ChatInput(TextArea):
+    """TextArea subclass that posts Submitted on Ctrl+Enter."""
+
+    class Submitted(TextArea.Changed):
+        """Posted when the user presses Ctrl+Enter."""
+
+    def _on_key(self, event) -> None:
+        # Ctrl+Enter: various terminals send ctrl+j, ctrl+m, or ctrl+enter
+        if event.key in ("ctrl+j", "ctrl+enter"):
+            if self.text.strip():
+                self.post_message(self.Submitted(self))
+            event.prevent_default()
+            event.stop()
+            return
+        return super()._on_key(event)
 
 
 class SessionState(Enum):
@@ -98,10 +115,18 @@ class ChatScreen(Screen):
             with Vertical(id="chat-main"):
                 yield MessageList(id="message-list")
                 yield ActionBar(id="action-bar")
-                yield Input(
-                    placeholder="Press R to run, C to continue...",
-                    id="chat-input",
-                )
+                with Horizontal(id="input-row"):
+                    yield _ChatInput(
+                        language="markdown",
+                        theme="css",
+                        soft_wrap=True,
+                        compact=True,
+                        show_line_numbers=False,
+                        tab_behavior="indent",
+                        placeholder="Ctrl+Enter to send...",
+                        id="chat-input",
+                    )
+                    yield Button("Send", id="send-btn", variant="primary")
             with Vertical(id="chat-sidebar"):
                 yield InfoTile(id="info-tile")
                 yield ParticipantPanel(id="participant-panel")
@@ -201,6 +226,26 @@ class ChatScreen(Screen):
 
         if state.show_task_status_bar:
             self._update_task_status_bar()
+            return
+
+        # No specific pause — check if we just advanced (boundary + transition, no real content)
+        phase = self.metadata.get("phase", "")
+        bar = self.query_one("#action-bar", ActionBar)
+        # Find last boundary
+        last_boundary_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("phase_boundary"):
+                last_boundary_idx = i
+                break
+        if last_boundary_idx >= 0:
+            after_boundary = messages[last_boundary_idx + 1:]
+            has_real_content = any(
+                m.get("from") not in ("system", None) and not m.get("pass_turn")
+                for m in after_boundary
+            )
+            if not has_real_content:
+                bar.show(f"Advanced to {phase}. Press R to run.")
+                return
 
     # ── State machine ────────────────────────────────────────
 
@@ -208,33 +253,39 @@ class ChatScreen(Screen):
         """React to state changes by updating UI."""
         if not self.is_mounted:
             return  # Children not composed yet; on_mount handles initial state
-        input_widget = self.query_one("#chat-input", Input)
+        ta = self.query_one("#chat-input", _ChatInput)
+        btn = self.query_one("#send-btn", Button)
         info = self.query_one("#info-tile", InfoTile)
 
         if state == SessionState.VIEWING:
-            input_widget.placeholder = "Press R to run, C to continue..."
-            input_widget.disabled = False
+            ta.placeholder = "Press R to run, C to continue..."
+            ta.disabled = False
+            btn.disabled = False
             info.update_session_status("")
             self.query_one("#message-list", MessageList).focus()
         elif state == SessionState.RUNNING:
-            input_widget.placeholder = "Session running..."
-            input_widget.disabled = True
+            ta.placeholder = "Session running..."
+            ta.disabled = True
+            btn.disabled = True
             info.update_session_status("Running", self._turn_count)
         elif state == SessionState.PAUSED:
-            input_widget.disabled = False
+            ta.disabled = False
+            btn.disabled = False
             if self._pause_reason == PauseReason.COACH_QUESTION:
-                input_widget.placeholder = "Type reply and press Enter..."
-                input_widget.focus()
+                ta.placeholder = "Type reply and Ctrl+Enter to send..."
+                ta.focus()
             else:
-                input_widget.placeholder = "Press C to continue..."
+                ta.placeholder = "Press C to continue..."
             info.update_session_status("Paused", self._turn_count)
         elif state == SessionState.COMPLETE:
-            input_widget.disabled = False
-            input_widget.placeholder = "Press C to continue with more turns..."
+            ta.disabled = False
+            btn.disabled = False
+            ta.placeholder = "Press C to continue with more turns..."
             info.update_session_status("Complete", self._turn_count)
         elif state == SessionState.ADVANCING:
-            input_widget.placeholder = "Advancing phase..."
-            input_widget.disabled = True
+            ta.placeholder = "Advancing phase..."
+            ta.disabled = True
+            btn.disabled = True
             info.update_session_status("Advancing")
 
     # ── Session lifecycle ────────────────────────────────────
@@ -447,6 +498,7 @@ class ChatScreen(Screen):
             self._streaming_widget = None
             self._streaming_turn_id = None
             self._suppress_agent_append = event.agent
+            self.query_one("#action-bar", ActionBar).hide()
             participants = self.query_one("#participant-panel", ParticipantPanel)
             participants.mark_idle(event.agent)
 
@@ -672,15 +724,25 @@ class ChatScreen(Screen):
 
     # ── Input handling ───────────────────────────────────────
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle Enter key in the input widget."""
-        text = event.value.strip()
+    def _send_input(self) -> None:
+        """Extract text from the input, clear it, and continue the session."""
+        ta = self.query_one("#chat-input", _ChatInput)
+        text = ta.text.strip()
         if not text:
             return
-        event.input.value = ""
+        ta.clear()
 
         if self.session_state in (SessionState.PAUSED, SessionState.COMPLETE):
             self._start_session("continue", human_message=text)
+
+    def on__chat_input_submitted(self, event: _ChatInput.Submitted) -> None:
+        """Handle Ctrl+Enter in the TextArea."""
+        self._send_input()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Send button click."""
+        if event.button.id == "send-btn":
+            self._send_input()
 
     # ── Actions ──────────────────────────────────────────────
 
@@ -704,11 +766,11 @@ class ChatScreen(Screen):
     def action_continue_session(self) -> None:
         if self.session_state in (SessionState.PAUSED, SessionState.COMPLETE, SessionState.VIEWING):
             human_msg = None
-            input_widget = self.query_one("#chat-input", Input)
-            text = input_widget.value.strip()
+            ta = self.query_one("#chat-input", _ChatInput)
+            text = ta.text.strip()
             if text:
                 human_msg = text
-                input_widget.value = ""
+                ta.clear()
             self._start_session("continue", human_message=human_msg)
 
     def action_review_proposals(self) -> None:

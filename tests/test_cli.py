@@ -759,7 +759,7 @@ def _default_coach():
     return {"name": "coach", "role": "Agile Coach"}
 
 
-def _mock_chat_with_tools(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+def _mock_chat_with_tools(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
     """Mock chat_completion that handles tools parameter (returns dict for coach calls)."""
     if tools:
         return {"content": "response", "tool_calls": []}
@@ -778,7 +778,7 @@ def test_run_conversation_coach_injects_after_rotation(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         call_log.append("agent")
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         call_log.append("coach")
         return {"content": "response", "tool_calls": []}
 
@@ -828,7 +828,7 @@ def test_run_conversation_coach_early_exit(tmp_path):
         return {"content": "response", "operations": []}
 
     coach_call_count = 0
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         nonlocal coach_call_count
         coach_call_count += 1
         if coach_call_count == 1:
@@ -1067,7 +1067,7 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         captured_prompts.append(messages)
         return {"content": "response", "tool_calls": []}
 
@@ -2594,7 +2594,7 @@ def test_run_conversation_diffs_passed_to_coach(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         captured_prompts.append(messages)
         return {"content": "response", "tool_calls": []}
 
@@ -2622,7 +2622,7 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
         "iterations": [iteration], "current": "iter-1",
     }))
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All concerns resolved.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -2648,7 +2648,7 @@ def test_coach_completion_non_last_phase_message(tmp_path, capsys):
         "status": "in-progress", "phase": "refinement", "max_turns": 2,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All done.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -2878,7 +2878,7 @@ def test_coach_completion_implementation_suggests_advance(tmp_path, capsys):
         "status": "in-progress", "phase": "implementation", "max_turns": 2,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All tasks done.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -3438,7 +3438,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     }
 
     coach_call_count = 0
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         nonlocal coach_call_count
         coach_call_count += 1
         if coach_call_count == 1:
@@ -4093,7 +4093,7 @@ def test_ask_pm_pauses_conversation(tmp_path, capsys):
         "status": "in-progress", "max_turns": 4,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "We need PM input on the scope.",
             "tool_calls": [{"name": "ask_pm", "input": {"question": "Should we include auth?"}}],
@@ -4122,7 +4122,7 @@ def test_ask_pm_empty_text_gets_fallback(tmp_path):
         "status": "in-progress", "max_turns": 4,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "",
             "tool_calls": [{"name": "ask_pm", "input": {"question": "What's the priority?"}}],

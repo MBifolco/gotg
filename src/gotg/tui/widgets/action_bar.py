@@ -14,9 +14,10 @@ class ActionBar(Static):
         display: none;
         height: auto;
         max-height: 4;
-        background: $surface;
-        border-top: solid $warning;
+        background: #e0e0e0;
+        color: #1a1a1a;
         padding: 0 1;
+        text-style: bold;
     }
     ActionBar.visible {
         display: block;

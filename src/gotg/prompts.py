@@ -67,7 +67,33 @@ AGENT_TOOLS: list[dict] = [
     }
 ]
 
+COACH_PASS_TURN_TOOL: dict = {
+    "name": "coach_pass_turn",
+    "description": _DEFAULTS["tools"]["coach_pass_turn"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+GUIDE_DISCUSSION_TOOL: dict = {
+    "name": "guide_discussion",
+    "description": _DEFAULTS["tools"]["guide_discussion"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "Your facilitation message — redirect, summarize, assign speakers, or focus the team.",
+            },
+        },
+        "required": ["message"],
+    },
+}
+
 COACH_TOOLS: list[dict] = [
+    COACH_PASS_TURN_TOOL,
+    GUIDE_DISCUSSION_TOOL,
     {
         "name": "signal_phase_complete",
         "description": _DEFAULTS["tools"]["signal_phase_complete"]["description"],
@@ -226,5 +252,8 @@ END_GROOMING_TOOL: dict = {
 COACH_TOOLS.append(PROPOSE_ITERATIONS_TOOL)
 
 GROOMING_COACH_TOOLS: list[dict] = [
+    COACH_PASS_TURN_TOOL,
+    GUIDE_DISCUSSION_TOOL,
+] + [
     t for t in COACH_TOOLS if t["name"] == "ask_pm"
 ] + [PROPOSE_ITERATIONS_TOOL, END_GROOMING_TOOL]

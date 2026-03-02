@@ -925,3 +925,116 @@ def test_signal_phase_complete_fallback_includes_summary():
     ]
     last_coach = coach_msgs[-1].msg
     assert last_coach["content"] == "(Phase complete: changes_requested. resolved)"
+
+
+def test_coach_pass_turn_fallback_text():
+    """coach_pass_turn with empty text produces fallback and sets flag on message."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "coach_pass_turn", "input": {}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "(Coach observing — no intervention needed.)"
+    assert last_coach.get("coach_pass_turn") is True
+
+
+def test_coach_pass_turn_preserves_text():
+    """coach_pass_turn with text keeps original text, sets flag."""
+    coach_resp = {
+        "content": "Looks good team, carry on.",
+        "tool_calls": [{"name": "coach_pass_turn", "input": {}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Looks good team, carry on."
+    assert last_coach.get("coach_pass_turn") is True
+
+
+def test_coach_guide_discussion_with_content():
+    """guide_discussion uses coach's text as-is when content is present."""
+    coach_resp = {
+        "content": "Let's focus on the unresolved item.",
+        "tool_calls": [{"name": "guide_discussion", "input": {"message": "ignored"}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Let's focus on the unresolved item."
+    assert "coach_pass_turn" not in last_coach
+
+
+def test_coach_guide_discussion_empty_content_extracts_message():
+    """guide_discussion with empty content extracts message from tool input."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "guide_discussion", "input": {
+            "message": "Let's check requirement coverage before signaling completion.",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Let's check requirement coverage before signaling completion."
+
+
+def test_coach_tool_choice_passed_to_completion():
+    """Engine passes tool_choice to coach completion call."""
+    captured = {}
+    def mock_coach(**kw):
+        captured.update(kw)
+        return {"content": "ok", "tool_calls": []}
+    deps = SessionDeps(
+        agent_completion=lambda **kw: {"content": "hi", "operations": []},
+        coach_completion=mock_coach,
+    )
+    _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    assert captured.get("tool_choice") == {"type": "any"}
