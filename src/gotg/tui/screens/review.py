@@ -73,6 +73,8 @@ class ReviewScreen(Screen):
         team_dir: Path,
         iteration: dict,
         iter_dir: Path,
+        *,
+        review_outcome: str | None = None,
     ) -> None:
         super().__init__()
         self._team_dir = team_dir
@@ -83,6 +85,19 @@ class ReviewScreen(Screen):
         self._merging = False
         self._all_layers_done = False
         self._branches: dict[str, dict] = {}
+        self._review_outcome = review_outcome
+
+    def _reload_iteration(self) -> None:
+        """Refresh iteration state from disk to avoid acting on stale data."""
+        from gotg.config import IterationStore
+        store = IterationStore(self._team_dir)
+        iteration, _ = store.get_current()
+        self._iteration = iteration
+        self._review_outcome = iteration.get("review_outcome")
+
+    @property
+    def _merge_allowed(self) -> bool:
+        return self._review_outcome == "approved"
 
     def compose(self):
         yield Header()
@@ -168,15 +183,26 @@ class ReviewScreen(Screen):
         merged = [b for b in self._review.branches if b.merged]
 
         if not unmerged and merged:
-            bar.show(
-                f"All {len(merged)} branch(es) merged. "
-                "Press N to advance to next layer, R to refresh."
-            )
+            if self._merge_allowed:
+                bar.show(
+                    f"All {len(merged)} branch(es) merged. "
+                    "Press N to advance to next layer, R to refresh."
+                )
+            else:
+                bar.show(
+                    f"All {len(merged)} branch(es) merged. "
+                    "Review not approved — Esc=back"
+                )
         elif unmerged:
-            bar.show(
-                f"{len(unmerged)} unmerged, {len(merged)} merged. "
-                "M=merge selected  Y=merge all  R=refresh  Esc=back"
-            )
+            if self._merge_allowed:
+                bar.show(
+                    f"{len(unmerged)} unmerged, {len(merged)} merged. "
+                    "M=merge selected  Y=merge all  R=refresh  Esc=back"
+                )
+            else:
+                bar.show(
+                    f"{len(unmerged)} unmerged. Review not approved — Esc=back"
+                )
         else:
             bar.show("No branches to merge. Esc=back")
 
@@ -297,6 +323,10 @@ class ReviewScreen(Screen):
     def action_merge_selected(self) -> None:
         if self._merging:
             return
+        self._reload_iteration()
+        if not self._merge_allowed:
+            self.notify("Merge requires approved code review.", severity="warning")
+            return
         br = self._get_selected_branch()
         if not br or br["merged"] or br["empty"]:
             self.notify("Select an unmerged branch to merge.", severity="warning")
@@ -313,6 +343,8 @@ class ReviewScreen(Screen):
                     self._project_root, self._review.layer,
                     branches=[branch_name],
                     on_progress=lambda msg: None,
+                    phase=self._iteration.get("phase", "code-review"),
+                    review_outcome=self._review_outcome,
                 )
                 self.post_message(_MergeDone(results))
             except ReviewError as e:
@@ -323,6 +355,10 @@ class ReviewScreen(Screen):
 
     def action_merge_all(self) -> None:
         if self._merging or not self._review:
+            return
+        self._reload_iteration()
+        if not self._merge_allowed:
+            self.notify("Merge requires approved code review.", severity="warning")
             return
         unmerged = [b for b in self._review.branches if not b.merged and not b.empty]
         if not unmerged:
@@ -338,6 +374,8 @@ class ReviewScreen(Screen):
                 results = merge_branches(
                     self._project_root, self._review.layer,
                     on_progress=lambda msg: None,
+                    phase=self._iteration.get("phase", "code-review"),
+                    review_outcome=self._review_outcome,
                 )
                 self.post_message(_MergeDone(results))
             except ReviewError as e:
@@ -348,6 +386,10 @@ class ReviewScreen(Screen):
 
     def action_next_layer(self) -> None:
         if self._merging or not self._review:
+            return
+        self._reload_iteration()
+        if not self._merge_allowed:
+            self.notify("Next-layer requires approved code review.", severity="warning")
             return
         unmerged = [b for b in self._review.branches if not b.merged and not b.empty]
         if unmerged:

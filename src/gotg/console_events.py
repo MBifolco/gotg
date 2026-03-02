@@ -128,7 +128,18 @@ def handle_console_events(
             print("Resume with 'gotg continue'.")
             break
         elif isinstance(event, PhaseCompleteSignaled):
-            print_phase_complete(event.phase)
+            from gotg.phases import get_phase_caps_safe
+            caps = get_phase_caps_safe(event.phase)
+            print("---")
+            if caps.phase_complete_shows_review_hint:
+                if event.outcome == "changes_requested":
+                    print("Coach signals rework needed.")
+                    print("Next: `gotg review` to view diffs, or `gotg rework` to send feedback back to implementation.")
+                else:
+                    print("Coach signals code review approved.")
+                    print("Next: `gotg review` to inspect diffs, then `gotg merge all` + `gotg next-layer`.")
+            else:
+                print("Coach recommends advancing. Run `gotg advance` to proceed, or `gotg continue` to keep discussing.")
             break
         elif isinstance(event, IterationsProposed):
             print("---")
@@ -165,7 +176,7 @@ def handle_console_events(
         elif isinstance(event, LayerComplete):
             print("---")
             print(f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks).")
-            print("Run `gotg merge all` then `gotg next-layer`.")
+            print("Run `gotg advance` to begin code review.")
             break
         elif isinstance(event, SessionComplete):
             print("---")

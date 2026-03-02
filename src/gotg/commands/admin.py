@@ -38,6 +38,27 @@ def cmd_init(args):
     init_project(path)
 
 
+def cmd_new(args):
+    """Create a new iteration."""
+    cwd = Path.cwd()
+    team_dir = _cli.find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    store = IterationStore(team_dir)
+    existing_ids = {it["id"] for it in store.list_all()}
+    next_num = 1
+    while f"iter-{next_num}" in existing_ids:
+        next_num += 1
+    new_id = f"iter-{next_num}"
+
+    description = args.description
+    store.create(new_id, description=description, set_current=True)
+    print(f"Created {new_id}: {description}")
+    print(f"Set as current iteration. Run 'gotg run' to start refinement.")
+
+
 def cmd_model(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)

@@ -8,6 +8,7 @@ from typing import Callable
 from gotg.prompts import (
     COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
     GROOMING_SUMMARY_EXTRACTION_PROMPT, MERGE_CONFLICT_PROMPT,
+    REVIEW_FEEDBACK_EXTRACTION_PROMPT,
 )
 from gotg.tasks import compute_layers
 
@@ -364,5 +365,82 @@ def build_transition_messages(
         "from": "system",
         "iteration": iteration_id,
         "content": transition_content,
+    }
+    return boundary_msg, transition_msg
+
+
+# --- Review feedback extraction ---
+
+
+def extract_review_feedback(
+    history: list[dict],
+    tasks_data: list[dict],
+    model_config: dict,
+    coach_name: str,
+    chat_call: Callable,
+) -> tuple[dict[str, str] | None, str | None, str | None]:
+    """One-shot LLM call to extract review feedback from code-review conversation.
+
+    Returns (feedback_map, raw_text, error_msg).
+    On success: ({task_id: feedback}, None, None). Empty dict means all approved.
+    On failure: (None, raw_text, error_msg).
+    """
+    # Include coach messages — coach summarizes open concerns before signaling
+    transcript = "\n\n".join(
+        f"[{m['from']}]: {m['content']}"
+        for m in history
+        if m["from"] != "system"
+    )
+    tasks_json_str = json.dumps(tasks_data, indent=2)
+    prompt = REVIEW_FEEDBACK_EXTRACTION_PROMPT.format(
+        tasks_json=tasks_json_str,
+        conversation=transcript,
+    )
+    raw_text = chat_call(
+        base_url=model_config["base_url"],
+        model=model_config["model"],
+        messages=[{"role": "user", "content": prompt}],
+        api_key=model_config.get("api_key"),
+        provider=model_config.get("provider", "ollama"),
+    )
+    text = strip_code_fences(raw_text)
+    try:
+        feedback_data = json.loads(text)
+    except (json.JSONDecodeError, TypeError) as e:
+        return None, raw_text, f"Could not parse review feedback: {e}"
+    if not isinstance(feedback_data, list):
+        return None, raw_text, f"Could not parse review feedback: expected array, got {type(feedback_data).__name__}"
+    allowed_ids = {t["id"] for t in tasks_data if isinstance(t.get("id"), str)}
+    feedback_map: dict[str, str] = {}
+    for entry in feedback_data:
+        if not isinstance(entry, dict):
+            continue
+        task_id = entry.get("id")
+        if not isinstance(task_id, str) or task_id not in allowed_ids:
+            continue
+        feedback = entry.get("feedback")
+        if not isinstance(feedback, str) or not feedback.strip():
+            continue
+        feedback_map[task_id] = feedback.strip()
+    return feedback_map, None, None
+
+
+def build_rework_messages(
+    iteration_id: str, layer: int, tasks_with_feedback: list[str],
+) -> tuple[dict, dict]:
+    """Build boundary marker and transition message for a rework transition."""
+    boundary_msg = {
+        "from": "system",
+        "iteration": iteration_id,
+        "content": "--- HISTORY BOUNDARY ---",
+        "phase_boundary": True,
+        "from_phase": "code-review",
+        "to_phase": "implementation",
+    }
+    task_list = ", ".join(tasks_with_feedback)
+    transition_msg = {
+        "from": "system",
+        "iteration": iteration_id,
+        "content": f"--- Rework: code-review → implementation (layer {layer}). Tasks with feedback: {task_list} ---",
     }
     return boundary_msg, transition_msg

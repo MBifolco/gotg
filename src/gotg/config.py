@@ -149,7 +149,12 @@ def load_iteration(team_dir: Path) -> dict:
     data = migrate_iteration_data(data, warnings=warnings)
     for w in warnings:
         print(f"Warning: {w}", file=sys.stderr)
-    current_id = data["current"]
+    current_id = data.get("current")
+    if not current_id:
+        raise ConfigError(
+            "No current iteration. Create one with 'gotg new \"description\"' "
+            "or use 'gotg groom start \"topic\"' to explore first."
+        )
     for iteration in data["iterations"]:
         if iteration["id"] == current_id:
             return iteration

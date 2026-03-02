@@ -241,7 +241,7 @@ def test_coach_empty_text_fallback_signal():
     ))
     coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
     assert len(coach_msgs) == 1
-    assert coach_msgs[0].msg["content"] == "(Phase complete signal sent.)"
+    assert coach_msgs[0].msg["content"] == "(Phase complete: approved. done)"
 
 
 def test_coach_empty_text_fallback_ask_pm():
@@ -830,3 +830,98 @@ def test_run_session_validates_coach_completion():
             deps=deps, history=[],
             policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
         ))
+
+
+# ── signal_phase_complete outcome ─────────────────────────────
+
+
+def test_signal_phase_complete_extracts_outcome():
+    """Outcome from tool input flows to PhaseCompleteSignaled event."""
+    coach_resp = {
+        "content": "Review complete.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "all resolved", "outcome": "changes_requested",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "code-review", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    pcs = [e for e in events if isinstance(e, PhaseCompleteSignaled)]
+    assert len(pcs) == 1
+    assert pcs[0].outcome == "changes_requested"
+    assert pcs[0].phase == "code-review"
+
+
+def test_signal_phase_complete_default_outcome():
+    """Missing outcome defaults to 'approved'."""
+    coach_resp = {
+        "content": "Done.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "done"}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    pcs = [e for e in events if isinstance(e, PhaseCompleteSignaled)]
+    assert len(pcs) == 1
+    assert pcs[0].outcome == "approved"
+
+
+def test_signal_phase_complete_persists_on_message():
+    """Coach message has signal_phase_complete dict with outcome."""
+    coach_resp = {
+        "content": "Review done.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "all good", "outcome": "approved",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "code-review", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    assert len(coach_msgs) >= 1
+    last_coach = coach_msgs[-1].msg
+    assert "signal_phase_complete" in last_coach
+    assert last_coach["signal_phase_complete"]["outcome"] == "approved"
+    assert last_coach["signal_phase_complete"]["summary"] == "all good"
+
+
+def test_signal_phase_complete_fallback_includes_summary():
+    """Empty coach text + signal yields '(Phase complete: outcome. summary)'."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "resolved", "outcome": "changes_requested",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "(Phase complete: changes_requested. resolved)"

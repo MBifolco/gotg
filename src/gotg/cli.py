@@ -4,6 +4,7 @@ from pathlib import Path
 
 from gotg.engine import SessionDeps
 from gotg.errors import GotgError
+from gotg.events import PhaseCompleteSignaled
 from gotg.console_events import handle_console_events
 from gotg.model import chat_completion, agentic_completion, raw_completion, raw_completion_stream
 
@@ -58,8 +59,21 @@ def run_conversation(
         streaming=streaming,
     )
 
+    team_dir = iter_dir.parent.parent  # .team/iterations/iter-N → .team
+
+    def _persist_outcome(events):
+        """Wrapper: persist review_outcome on PhaseCompleteSignaled, then yield."""
+        for event in events:
+            if isinstance(event, PhaseCompleteSignaled):
+                from gotg.phases import get_phase_caps_safe
+                caps = get_phase_caps_safe(event.phase)
+                if caps.phase_complete_shows_review_hint:
+                    from gotg.config import save_iteration_fields
+                    save_iteration_fields(team_dir, iteration["id"], review_outcome=event.outcome)
+            yield event
+
     handle_console_events(
-        run_and_persist(setup),
+        _persist_outcome(run_and_persist(setup)),
         use_implementation=setup.use_implementation,
     )
 
@@ -109,6 +123,9 @@ def main():
 
     init_parser = subparsers.add_parser("init", help="Initialize a new .team/ directory")
     init_parser.add_argument("path", nargs="?", default=".", help="Project path (default: current directory)")
+
+    new_parser = subparsers.add_parser("new", help="Create a new iteration")
+    new_parser.add_argument("description", help="Iteration description")
 
     run_parser = subparsers.add_parser("run", help="Run the agent conversation")
     run_parser.add_argument("-i", "--iteration", help="Switch to this iteration before running")
@@ -161,6 +178,8 @@ def main():
 
     subparsers.add_parser("next-layer", help="Advance to the next task layer after merging")
 
+    subparsers.add_parser("rework", help="Send tasks back for rework based on review feedback")
+
     commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
     commit_wt_parser.add_argument("-m", "--message", help="Commit message (default: 'Agent implementation work')")
 
@@ -201,6 +220,9 @@ def main():
         if args.command == "init":
             from gotg.commands.admin import cmd_init
             cmd_init(args)
+        elif args.command == "new":
+            from gotg.commands.admin import cmd_new
+            cmd_new(args)
         elif args.command == "run":
             from gotg.commands.run import cmd_run
             cmd_run(args)
@@ -248,6 +270,9 @@ def main():
         elif args.command == "next-layer":
             from gotg.commands.advance import cmd_next_layer
             cmd_next_layer(args)
+        elif args.command == "rework":
+            from gotg.commands.advance import cmd_rework
+            cmd_rework(args)
         elif args.command == "commit-worktrees":
             from gotg.commands.review import cmd_commit_worktrees
             cmd_commit_worktrees(args)

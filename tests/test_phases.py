@@ -124,9 +124,10 @@ def test_implementation_caps():
     assert caps.enable_worktrees is True
     assert caps.filter_worktree_agents_by_tasks is True
     assert caps.use_implementation_executor is True
-    assert caps.supports_next_layer is True
-    assert caps.can_open_review_screen is True
     assert caps.show_task_status_bar is True
+    # Gate enforcement: merge/next-layer only via code-review
+    assert caps.supports_next_layer is False
+    assert caps.can_open_review_screen is False
     # Should NOT have these:
     assert caps.phase_complete_shows_review_hint is False
     assert caps.auto_open_task_assign_on_advance is False
@@ -134,11 +135,11 @@ def test_implementation_caps():
 
 def test_code_review_caps():
     caps = get_phase_caps("code-review")
-    assert caps.inject_file_access_prompt is True
-    assert caps.inject_writable_paths_kickoff is True
+    assert caps.inject_file_access_prompt is False  # read-only: no write prompt
+    assert caps.inject_writable_paths_kickoff is False  # read-only: no writable paths in kickoff
     assert caps.include_task_assignments_kickoff is True
     assert caps.scope_kickoff_to_layer is True
-    assert caps.enable_worktrees is True
+    assert caps.enable_worktrees is False  # reviewers read from project root + diffs
     assert caps.supports_next_layer is True
     assert caps.phase_complete_shows_review_hint is True
     assert caps.can_open_review_screen is True
@@ -169,20 +170,18 @@ def test_scope_kickoff_to_layer_impl_and_code_review():
 
 
 def test_review_hint_vs_review_screen_split():
-    """phase_complete_shows_review_hint (code-review only) vs
-    can_open_review_screen (impl + code-review) are distinct."""
+    """phase_complete_shows_review_hint and can_open_review_screen are
+    both code-review only (gate enforcement)."""
     assert PHASE_CAPS["code-review"].phase_complete_shows_review_hint is True
     assert PHASE_CAPS["implementation"].phase_complete_shows_review_hint is False
     assert PHASE_CAPS["code-review"].can_open_review_screen is True
-    assert PHASE_CAPS["implementation"].can_open_review_screen is True
+    assert PHASE_CAPS["implementation"].can_open_review_screen is False
 
 
 def test_supports_next_layer_dedicated():
-    """supports_next_layer is its own field, not aliased to enable_worktrees."""
-    # Both are True for impl + code-review, but they're distinct fields
-    impl = PHASE_CAPS["implementation"]
-    assert impl.supports_next_layer is True
-    assert impl.enable_worktrees is True
+    """supports_next_layer is code-review only (gate enforcement)."""
+    assert PHASE_CAPS["code-review"].supports_next_layer is True
+    assert PHASE_CAPS["implementation"].supports_next_layer is False
     # Verify they're separate fields
     assert "supports_next_layer" in PhaseCapabilities.__dataclass_fields__
     assert "enable_worktrees" in PhaseCapabilities.__dataclass_fields__

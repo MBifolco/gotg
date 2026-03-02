@@ -26,7 +26,7 @@ class EditIterationModal(ModalScreen[dict | None]):
     }
     EditIterationModal > Vertical {
         width: 64;
-        max-height: 22;
+        max-height: 28;
         padding: 1 2;
         border: thick $accent;
         background: $surface;
@@ -37,10 +37,6 @@ class EditIterationModal(ModalScreen[dict | None]):
     EditIterationModal > Vertical > .field-label {
         margin: 1 0 0 0;
         text-style: bold;
-    }
-    EditIterationModal > Vertical > .hint {
-        color: $text-muted;
-        margin: 1 0 0 0;
     }
     EditIterationModal > Vertical > Horizontal {
         height: auto;
@@ -87,7 +83,6 @@ class EditIterationModal(ModalScreen[dict | None]):
             with Horizontal():
                 yield Button("Save (Ctrl+S)", id="btn-save", variant="success")
                 yield Button("Cancel (Esc)", id="btn-cancel")
-            yield Label("Tab=next field  Ctrl+S=save  Escape=cancel", classes="hint")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-save":

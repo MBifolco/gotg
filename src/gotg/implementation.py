@@ -87,13 +87,18 @@ def _format_agent_tasks(tasks: list[dict], agent_name: str, layer: int) -> str:
 
     Numbered TASK labels with explicit field prefixes. Anti-patterns
     render as "DO NOT:" items with double-negative prefixes stripped.
+    Done tasks are shown as a compact summary at the bottom.
     """
     lt = _layer_tasks(tasks, layer)
     my_tasks = _agent_tasks(lt, agent_name)
     if not my_tasks:
         return "No tasks assigned to you in this layer."
+
+    actionable = [t for t in my_tasks if t.get("status") not in {"done", "blocked"}]
+    completed = [t for t in my_tasks if t.get("status") == "done"]
+
     parts: list[str] = []
-    for i, t in enumerate(my_tasks, 1):
+    for i, t in enumerate(actionable, 1):
         tag = f"TASK {i}"
         lines = [f"{tag} ID: {t['id']}"]
         lines.append(f"{tag} DESCRIPTION: {t['description']}")
@@ -112,7 +117,15 @@ def _format_agent_tasks(tasks: list[dict], agent_name: str, layer: int) -> str:
         notes = t.get("notes")
         if notes:
             lines.append(f"{tag} FILES TO CREATE:\n{notes}")
+        feedback = t.get("review_feedback")
+        if feedback:
+            lines.append(f"{tag} REVIEW FEEDBACK (must address): {feedback}")
         parts.append("\n\n".join(lines))
+
+    if completed:
+        done_ids = ", ".join(t["id"] for t in completed)
+        parts.append(f"\nAlready completed (no changes needed): {done_ids}")
+
     return "\n\n".join(parts)
 
 
@@ -298,6 +311,7 @@ def _handle_complete_tasks(
             t["completion_summary"] = summary
             t.pop("blocked_by", None)
             t.pop("blocked_reason", None)
+            t.pop("review_feedback", None)
             completed.append(t["id"])
 
     _save_tasks(iter_dir, tasks)

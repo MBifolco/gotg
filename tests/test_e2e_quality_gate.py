@@ -373,6 +373,10 @@ def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
+    # Simulate code-review approval before next-layer.
+    save_iteration_fields(team_dir, "iter-1", phase="code-review", review_outcome="approved")
+    iteration, _ = get_current_iteration(team_dir)
+
     # Advance to next layer and verify state.
     result = advance_next_layer(team_dir, iteration, iter_dir)
     assert result.all_done is False
@@ -384,6 +388,10 @@ def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
 
     # Run implementation on layer 1.
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
+
+    # Simulate code-review approval before next-layer.
+    save_iteration_fields(team_dir, "iter-1", phase="code-review", review_outcome="approved")
+    iteration, _ = get_current_iteration(team_dir)
 
     # No further layers should remain.
     result = advance_next_layer(team_dir, iteration, iter_dir)
@@ -886,7 +894,7 @@ def test_e2e_coach_streaming_tool_only_phase_complete(tmp_path, monkeypatch):
         if line.strip()
     ]
 
-    assert any(m.get("from") == "coach" and m.get("content") == "(Phase complete signal sent.)" for m in messages)
+    assert any(m.get("from") == "coach" and m.get("content") == "(Phase complete: approved. resolved)" for m in messages)
     assert any(
         isinstance(row.get("turn"), str)
         and row.get("turn", "").startswith("coach-after-")
@@ -2045,15 +2053,18 @@ def test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks(tmp
     )
 
 
-def test_replay_test16_next_layer_boundary_uses_implementation_phase(tmp_path):
-    """Replay guard from test16: implementation layer-advance boundary should stay in implementation phase."""
+def test_replay_test16_next_layer_boundary_uses_code_review_phase(tmp_path):
+    """Replay guard: next-layer boundary logs code-review→implementation."""
     team_dir, iter_dir = _make_team(
         tmp_path,
-        phase="implementation",
+        phase="code-review",
         current_layer=0,
         max_turns=1,
         streaming=False,
     )
+
+    # Set review_outcome so next-layer gate passes
+    save_iteration_fields(team_dir, "iter-1", review_outcome="approved")
 
     tasks = [
         {
@@ -2085,6 +2096,6 @@ def test_replay_test16_next_layer_boundary_uses_implementation_phase(tmp_path):
     messages = read_log(iter_dir / "conversation.jsonl")
     layer_boundary = next(m for m in messages if m.get("phase_boundary") and m.get("layer") == 1)
 
-    # Contract: moving between implementation layers should log implementation→implementation.
-    assert layer_boundary.get("from_phase") == "implementation"
+    # Contract: next-layer from code-review goes to implementation.
+    assert layer_boundary.get("from_phase") == "code-review"
     assert layer_boundary.get("to_phase") == "implementation"

@@ -599,10 +599,10 @@ def test_propose_iterations_tool_in_grooming_coach_tools():
     assert "propose_iterations" in names
 
 
-def test_propose_iterations_tool_not_in_iteration_coach_tools():
-    """Tool NOT in COACH_TOOLS (iteration coach)."""
+def test_propose_iterations_tool_in_iteration_coach_tools():
+    """Tool IS in COACH_TOOLS (iteration coach can update sibling iterations)."""
     names = {t["name"] for t in COACH_TOOLS}
-    assert "propose_iterations" not in names
+    assert "propose_iterations" in names
 
 
 def test_grooming_system_supplement_mentions_iterations():

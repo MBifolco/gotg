@@ -127,6 +127,7 @@ def run_session(
             system_supplement=policy.system_supplement,
             phase_skeleton=policy.phase_skeleton,
             project_context=policy.project_context,
+            iteration_plan=policy.iteration_plan,
         )
         yield AppendDebug({
             "turn": turn,
@@ -395,6 +396,7 @@ def _do_coach_turn(
         diffs_summary=policy.diffs_summary,
         coach_system_prompt=policy.coach_system_prompt,
         project_context=policy.project_context,
+        iteration_plan=policy.iteration_plan,
     )
     yield AppendDebug({
         "turn": f"coach-after-{turn}",
@@ -441,6 +443,10 @@ def _do_coach_turn(
         "tool_calls": coach_tool_calls,
     })
 
+    # Extract signal_phase_complete tool calls
+    signal_calls = [tc for tc in coach_tool_calls if tc["name"] == "signal_phase_complete"]
+    signal_input = signal_calls[0]["input"] if signal_calls else None
+
     # Extract propose_iterations and end_grooming tool calls
     propose_calls = [tc for tc in coach_tool_calls if tc["name"] == "propose_iterations"]
     propose_input = propose_calls[0]["input"] if propose_calls else None
@@ -448,8 +454,10 @@ def _do_coach_turn(
     end_grooming_input = end_grooming_calls[0]["input"] if end_grooming_calls else None
 
     # Fallback for empty coach messages with signal_phase_complete
-    if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-        coach_text = "(Phase complete signal sent.)"
+    if not coach_text.strip() and signal_input:
+        summary = signal_input.get("summary", "")
+        outcome = signal_input.get("outcome", "approved")
+        coach_text = f"(Phase complete: {outcome}. {summary})" if summary else f"(Phase complete: {outcome}.)"
 
     # Fallback for empty coach messages with propose_iterations
     if not coach_text.strip() and propose_input:
@@ -502,12 +510,20 @@ def _do_coach_turn(
             "rationale": propose_input.get("rationale", ""),
         }
 
+    # Attach signal_phase_complete data to coach message (structured marker)
+    if signal_input:
+        coach_msg["signal_phase_complete"] = {
+            "summary": signal_input.get("summary", ""),
+            "outcome": signal_input.get("outcome", "approved"),
+        }
+
     yield AppendMessage(coach_msg)
     history.append(coach_msg)
 
     # Coach signals phase complete via tool call
-    if policy.stop_on_phase_complete and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-        yield PhaseCompleteSignaled(iteration.get("phase"))
+    if policy.stop_on_phase_complete and signal_input:
+        outcome = signal_input.get("outcome", "approved")
+        yield PhaseCompleteSignaled(iteration.get("phase"), outcome=outcome)
         return True
 
     # Coach proposes iterations (grooming only — tool not in COACH_TOOLS)

@@ -31,9 +31,13 @@ class IterationProposalModal(ModalScreen[str | None]):
         max-height: 20;
         margin: 0 0 1 0;
     }
+    IterationProposalModal > Vertical > VerticalScroll > Label {
+        width: 1fr;
+    }
     IterationProposalModal > Vertical > .rationale {
         color: $text-muted;
         margin: 0 0 1 0;
+        width: 1fr;
     }
     IterationProposalModal > Vertical > Horizontal {
         height: auto;

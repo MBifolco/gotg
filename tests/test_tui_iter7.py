@@ -427,7 +427,7 @@ async def test_review_f_noop_when_not_all_done(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -466,7 +466,7 @@ async def test_review_f_marks_done_when_all_layers_complete(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -522,7 +522,7 @@ async def test_review_all_done_action_bar_shows_f_hint(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -557,6 +557,7 @@ def _make_review_team_dir(tmp_path, phase="code-review", current_layer=0):
     iteration = {
         "id": "iter-1", "description": "Test", "phase": phase,
         "status": "in-progress", "max_turns": 30, "current_layer": current_layer,
+        "review_outcome": "approved",
     }
     it_dir = team_dir / "iterations" / "iter-1"
     it_dir.mkdir(parents=True)

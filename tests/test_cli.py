@@ -2208,7 +2208,8 @@ def _make_git_project_with_team(tmp_path):
     team.mkdir()
     (team / "team.json").write_text("{}")
     (team / "iteration.json").write_text(json.dumps({
-        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress", "max_turns": 10}],
+        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress",
+                         "max_turns": 10, "phase": "code-review", "review_outcome": "approved"}],
         "current": "iter-1",
     }))
     (team / "iterations" / "iter-1").mkdir(parents=True)
@@ -2469,8 +2470,8 @@ def test_cmd_review_specific_branch_no_layer_label(tmp_path, monkeypatch, capsys
     assert "1 branch(es)" in output
 
 
-def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
-    """Dirty main checkout blocks merge."""
+def test_cmd_merge_dirty_main_auto_stashes(tmp_path, monkeypatch, capsys):
+    """Dirty main is auto-stashed before merge (not blocked)."""
     _make_git_project_with_team(tmp_path)
     from gotg.worktree import create_worktree, commit_worktree
     wt = create_worktree(tmp_path, "agent-1", 0)
@@ -2481,12 +2482,11 @@ def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
     (tmp_path / "src" / "main.py").write_text("modified on main")
 
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit):
-        with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
-            main()
+    with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+        main()
 
-    output = capsys.readouterr().err
-    assert "uncommitted changes on main" in output
+    output = capsys.readouterr().out
+    assert "Merged" in output or "merged" in output.lower()
 
 
 def test_cmd_merge_all_handles_worktree_error(tmp_path, monkeypatch, capsys):
@@ -2617,6 +2617,10 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "phase": "code-review", "max_turns": 2,
     }
+    # run_conversation derives team_dir from iter_dir and persists review_outcome
+    (tmp_path / "iteration.json").write_text(json.dumps({
+        "iterations": [iteration], "current": "iter-1",
+    }))
 
     def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
         return {
@@ -2630,7 +2634,7 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
                          _default_model_config(), coach=_default_coach())
 
     output = capsys.readouterr().out
-    assert "code review complete" in output
+    assert "code review approved" in output.lower()
     assert "gotg merge" in output
     assert "gotg next-layer" in output
     assert "gotg advance" not in output
@@ -2900,7 +2904,7 @@ def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", ta
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": phase, "max_turns": 10,
-         "current_layer": current_layer},
+         "current_layer": current_layer, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -2916,8 +2920,8 @@ def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", ta
     return team, iter_dir
 
 
-def test_next_layer_requires_implementation_or_code_review_phase(tmp_path, capsys):
-    """next-layer errors if not in implementation or code-review phase."""
+def test_next_layer_requires_code_review_phase(tmp_path, capsys):
+    """next-layer errors if not in code-review phase."""
     team, iter_dir = _make_next_layer_team_dir(tmp_path, phase="planning")
     with patch("sys.argv", ["gotg", "next-layer"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
@@ -2925,7 +2929,7 @@ def test_next_layer_requires_implementation_or_code_review_phase(tmp_path, capsy
                 main()
 
     err = capsys.readouterr().err
-    assert "implementation or code-review" in err
+    assert "code-review phase" in err
 
 
 def test_next_layer_advances_to_layer_1(tmp_path, capsys):
@@ -3011,7 +3015,7 @@ def test_next_layer_verifies_head_on_main(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3061,7 +3065,7 @@ def test_next_layer_blocks_on_unmerged_branches(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3109,7 +3113,7 @@ def test_next_layer_cleans_up_worktrees(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3331,7 +3335,7 @@ def test_next_layer_blocks_on_dirty_worktrees(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3452,7 +3456,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     messages = read_log(iter_dir / "conversation.jsonl")
     coach_msgs = [m for m in messages if m["from"] == "coach"]
     assert len(coach_msgs) == 1
-    assert coach_msgs[0]["content"] == "(Phase complete signal sent.)"
+    assert coach_msgs[0]["content"] == "(Phase complete: approved. Done.)"
 
 
 # --- Iteration 16: History boundary and phase-scoped history ---

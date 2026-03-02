@@ -697,7 +697,8 @@ def apply_iteration_proposals(
 
     # --- Phase 4: Mark batch as approved (structured marker) ---
     approval_msg = _sys_msg(groom_slug,
-        f"[iterations] Batch {batch_id} approved: {applied_count} applied.")
+        f"[iterations] Batch {batch_id} approved: {applied_count} applied. "
+        f"PM has accepted these iterations — do NOT re-propose them.")
     approval_msg["iterations_batch_approved"] = batch_id
     messages.append(approval_msg)
 

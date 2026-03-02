@@ -1,6 +1,6 @@
 import pytest
 
-from gotg.agent import build_prompt
+from gotg.agent import build_prompt, build_coach_prompt
 
 
 PREFIX = "add the following to the conversation:"
@@ -960,3 +960,38 @@ def test_build_prompt_includes_phase_skeleton(agent_config, iteration):
     system = messages[0]["content"]
     assert "PREVIOUS PHASE CONTEXT" in system
     assert "agreed on X" in system
+
+
+def test_build_prompt_includes_iteration_plan(agent_config, iteration):
+    plan = ">> iter-1: Build a thing [in-progress]\n   iter-2: Polish the thing [pending]"
+    messages = build_prompt(agent_config, iteration, [], iteration_plan=plan)
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" in system
+    assert ">> iter-1" in system
+    assert "iter-2: Polish the thing" in system
+    assert "scope creep" in system
+
+
+def test_build_prompt_no_iteration_plan_when_none(agent_config, iteration):
+    messages = build_prompt(agent_config, iteration, [])
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" not in system
+
+
+def test_build_coach_prompt_includes_iteration_plan():
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing", "phase": "refinement"}
+    plan = ">> iter-1: Build a thing [in-progress]\n   iter-2: Polish [pending]"
+    messages = build_coach_prompt(coach, iteration, [], iteration_plan=plan)
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" in system
+    assert ">> iter-1" in system
+    assert "scope creep" in system
+
+
+def test_build_coach_prompt_no_iteration_plan_when_none():
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing", "phase": "refinement"}
+    messages = build_coach_prompt(coach, iteration, [])
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" not in system

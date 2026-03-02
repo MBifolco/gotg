@@ -82,6 +82,12 @@ def cmd_continue(args):
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
 
+    # Clear stale review_outcome when resuming code-review discussion.
+    # The coach will re-signal with the correct outcome.
+    if iteration.get("phase") == "code-review" and iteration.get("review_outcome"):
+        ctx.iteration_store.save_fields(iteration["id"], review_outcome=None)
+        iteration["review_outcome"] = None
+
     layer_override = getattr(args, "layer", None)
     try:
         infra = build_session_infra(ctx, iteration, iter_dir, layer_override=layer_override)

@@ -38,6 +38,7 @@ COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
 GROOMING_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["grooming_summary"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
+REVIEW_FEEDBACK_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["review_feedback"]["prompt"]
 DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
 
 PHASE_KICKOFF_MESSAGES: dict[str, str] = {
@@ -76,7 +77,15 @@ COACH_TOOLS: list[dict] = [
                 "summary": {
                     "type": "string",
                     "description": "Brief summary of what was resolved in this phase",
-                }
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["approved", "changes_requested"],
+                    "description": (
+                        "For code-review: 'approved' when all concerns resolved, "
+                        "'changes_requested' when rework needed. Defaults to 'approved'."
+                    ),
+                },
             },
             "required": ["summary"],
         },
@@ -212,6 +221,9 @@ END_GROOMING_TOOL: dict = {
         "required": ["summary"],
     },
 }
+
+# Add propose_iterations to iteration coach tools (update sibling iterations during any phase)
+COACH_TOOLS.append(PROPOSE_ITERATIONS_TOOL)
 
 GROOMING_COACH_TOOLS: list[dict] = [
     t for t in COACH_TOOLS if t["name"] == "ask_pm"

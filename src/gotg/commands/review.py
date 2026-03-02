@@ -123,6 +123,8 @@ def cmd_merge(args):
         results = merge_branches(
             project_root, layer, branches=branches,
             force=args.force, on_progress=lambda msg: print(msg),
+            phase=iteration.get("phase"),
+            review_outcome=iteration.get("review_outcome"),
         )
     except ReviewError as e:
         print(f"Error: {e}", file=sys.stderr)

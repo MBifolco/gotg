@@ -60,6 +60,7 @@ class ChatScreen(Screen):
         Binding("p", "advance_phase", "Advance", show=False),
         Binding("d", "open_review", "Diffs", show=False),
         Binding("t", "manage_tasks", "Tasks", show=False),
+        Binding("w", "rework", "Rework", show=False),
         Binding("i", "review_proposals", "Proposals", show=False),
     ]
 
@@ -81,6 +82,7 @@ class ChatScreen(Screen):
         self._turn_count = 0
         self._initial_load_done = False
         self._pause_reason: PauseReason | None = None
+        self._phase_complete_outcome: str | None = None
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
         self._debug_path = data_dir / "debug.jsonl"
@@ -152,15 +154,16 @@ class ChatScreen(Screen):
 
         if state.pause_reason == PauseReason.PHASE_COMPLETE:
             self._pause_reason = PauseReason.PHASE_COMPLETE
+            self._phase_complete_outcome = state.phase_complete_outcome
             self.session_state = SessionState.PAUSED
+            bar = self.query_one("#action-bar", ActionBar)
             if state.phase_complete_shows_review:
-                self.query_one("#action-bar", ActionBar).show(
-                    "Code review complete. Press D to review diffs and merge."
-                )
+                if state.phase_complete_outcome == "changes_requested":
+                    bar.show("Rework needed. Press W to rework, D to view diffs.")
+                else:
+                    bar.show("Code review approved. Press D to review diffs and merge.")
             else:
-                self.query_one("#action-bar", ActionBar).show(
-                    "Phase complete. Press P to advance, C to continue discussing."
-                )
+                bar.show("Phase complete. Press P to advance, C to continue discussing.")
             self._pin_after_action_bar()
             return
 
@@ -284,6 +287,12 @@ class ChatScreen(Screen):
                     ctx.iteration_store.set_current(target_id)
                 iteration, iter_dir = ctx.iteration_store.get_current()
                 validate_iteration_for_run(iteration, iter_dir, ctx.agents)
+
+                # Clear stale review_outcome when resuming code-review discussion.
+                if iteration.get("phase") == "code-review" and iteration.get("review_outcome"):
+                    from gotg.config import save_iteration_fields
+                    save_iteration_fields(self.app.team_dir, iteration["id"], review_outcome=None)
+                    iteration["review_outcome"] = None
 
                 infra = build_session_infra(ctx, iteration, iter_dir)
 
@@ -496,16 +505,21 @@ class ChatScreen(Screen):
 
         elif isinstance(event, PhaseCompleteSignaled):
             self._pause_reason = PauseReason.PHASE_COMPLETE
+            self._phase_complete_outcome = event.outcome
             self.session_state = SessionState.PAUSED
             from gotg.phases import get_phase_caps_safe
-            if get_phase_caps_safe(event.phase).phase_complete_shows_review_hint:
-                self.query_one("#action-bar", ActionBar).show(
-                    "Code review complete. Press D to review diffs and merge."
-                )
+            caps = get_phase_caps_safe(event.phase)
+            bar = self.query_one("#action-bar", ActionBar)
+            if caps.phase_complete_shows_review_hint:
+                # Persist review outcome to iteration.json
+                from gotg.config import save_iteration_fields
+                save_iteration_fields(self.app.team_dir, self.metadata["id"], review_outcome=event.outcome)
+                if event.outcome == "changes_requested":
+                    bar.show("Rework needed. Press W to rework, D to view diffs.")
+                else:
+                    bar.show("Code review approved. Press D to review diffs and merge.")
             else:
-                self.query_one("#action-bar", ActionBar).show(
-                    "Phase complete. Press P to advance, C to continue discussing."
-                )
+                bar.show("Phase complete. Press P to advance, C to continue discussing.")
             self._pin_after_action_bar()
 
         elif isinstance(event, LayerComplete):
@@ -513,7 +527,7 @@ class ChatScreen(Screen):
             self.session_state = SessionState.PAUSED
             self.query_one("#action-bar", ActionBar).show(
                 f"Layer {event.layer} complete ({len(event.completed_tasks)} tasks). "
-                "Press D to review diffs and merge."
+                "Press P to advance to code review."
             )
             self._pin_after_action_bar()
 
@@ -815,7 +829,7 @@ class ChatScreen(Screen):
         tasks = repo.load()
         completed = sum(1 for t in tasks if t.get("status") == "done")
         if completed == len(tasks):
-            bar.show("All tasks complete. Merge branches, then advance.")
+            bar.show("All tasks complete. Press P to advance to code review.")
             return
         if completed > 0:
             bar.show(
@@ -845,7 +859,64 @@ class ChatScreen(Screen):
         ctx = TeamContext.from_team_dir(self.app.team_dir)
         iteration, iter_dir = ctx.iteration_store.get_current()
         from gotg.tui.screens.review import ReviewScreen
-        self.app.push_screen(ReviewScreen(self.app.team_dir, iteration, iter_dir))
+        self.app.push_screen(ReviewScreen(
+            self.app.team_dir, iteration, iter_dir,
+            review_outcome=iteration.get("review_outcome"),
+        ))
+
+    def action_rework(self) -> None:
+        """Send tasks back for rework based on review feedback."""
+        if self.session_state != SessionState.PAUSED:
+            return
+        if self._pause_reason != PauseReason.PHASE_COMPLETE:
+            return
+        if self._session_kind != "iteration":
+            return
+        # Only available when code-review ended with changes_requested
+        if self.metadata.get("phase") != "code-review":
+            return
+        if self._phase_complete_outcome != "changes_requested":
+            return
+        self.session_state = SessionState.ADVANCING
+        self.query_one("#action-bar", ActionBar).show("Extracting review feedback...")
+        self.run_worker(self._run_rework, thread=True)
+
+    def _run_rework(self) -> None:
+        """Runs in worker thread. Calls advance_rework and posts events."""
+        try:
+            from gotg.context import TeamContext
+            from gotg.model import chat_completion
+            from gotg.session_advance import advance_rework
+            from gotg.session_types import ReworkError
+
+            ctx = TeamContext.from_team_dir(self.app.team_dir)
+            iteration, iter_dir = ctx.iteration_store.get_current()
+
+            def on_progress(step: str):
+                self.post_message(EngineEvent(AdvanceProgress(message=step)))
+
+            result = advance_rework(
+                ctx.team_dir, iteration, iter_dir,
+                chat_call=chat_completion,
+                on_progress=on_progress,
+            )
+
+            self.post_message(EngineEvent(AppendMessage(result.boundary_msg)))
+            self.post_message(EngineEvent(AppendMessage(result.transition_msg)))
+
+            for w in result.warnings:
+                self.post_message(EngineEvent(AdvanceError(error=w, partial=True)))
+
+            self.post_message(EngineEvent(AdvanceComplete(
+                from_phase="code-review",
+                to_phase="implementation",
+                checkpoint_number=result.checkpoint_number,
+            )))
+
+        except ReworkError as e:
+            self.post_message(EngineEvent(AdvanceError(error=str(e), partial=False)))
+        except Exception as e:
+            self.post_message(SessionError(f"Rework failed: {e}"))
 
     def on_screen_resume(self) -> None:
         """Refresh state when returning from pushed screens."""

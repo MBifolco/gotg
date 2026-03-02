@@ -14,6 +14,7 @@ def build_prompt(
     system_supplement: str | None = None,
     phase_skeleton: str | None = None,
     project_context: str | None = None,
+    iteration_plan: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -109,6 +110,13 @@ def build_prompt(
     if project_context:
         system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
 
+    if iteration_plan:
+        system_parts.append(
+            "ITERATION PLAN (current iteration marked with >>):\n\n" + iteration_plan + "\n\n"
+            "Focus on the current iteration's scope. Reference sibling iterations "
+            "only when relevant to avoid scope creep."
+        )
+
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)
 
@@ -181,6 +189,7 @@ def build_coach_prompt(
     diffs_summary: str | None = None,
     coach_system_prompt: str | None = None,
     project_context: str | None = None,
+    iteration_plan: str | None = None,
 ) -> list[dict]:
     """Build prompt for the coach facilitator during conversation."""
     coach_name = coach_config["name"]
@@ -215,6 +224,13 @@ def build_coach_prompt(
 
     if project_context:
         system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
+
+    if iteration_plan:
+        system_parts.append(
+            "ITERATION PLAN (current iteration marked with >>):\n\n" + iteration_plan + "\n\n"
+            "Keep the team focused on the current iteration's scope. Reference sibling "
+            "iterations only when relevant to avoid scope creep."
+        )
 
     system_content = "\n\n".join(system_parts)
     messages = [{"role": "system", "content": system_content}]
