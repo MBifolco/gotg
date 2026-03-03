@@ -33,10 +33,9 @@ COACH_FACILITATION_PROMPTS: dict[str, str] = {
 }
 
 COACH_REFINEMENT_PROMPT: str = _DEFAULTS["extraction"]["refinement_summary"]["prompt"]
-COACH_GROOMING_PROMPT = COACH_REFINEMENT_PROMPT  # backward-compat alias
 COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"]
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
-GROOMING_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["grooming_summary"]["prompt"]
+EXPLORATION_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["exploration_summary"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
 REVIEW_FEEDBACK_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["review_feedback"]["prompt"]
 DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
@@ -148,14 +147,14 @@ COACH_TOOLS: list[dict] = [
     },
 ]
 
-# ── Grooming mode constants ──────────────────────────────────────
+# ── Exploration mode constants ──────────────────────────────────────
 
-GROOMING_SYSTEM_SUPPLEMENT: str = _DEFAULTS["grooming"]["system"]
-GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT: str = _DEFAULTS["grooming"]["system_with_context"]
-GROOMING_COACH_PROMPT: str = _DEFAULTS["grooming"]["coach"]
-GROOMING_KICKOFF_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff"]
-GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context_and_tools"]
-GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE: str = _DEFAULTS["grooming"]["kickoff_with_context"]
+EXPLORATION_SYSTEM_SUPPLEMENT: str = _DEFAULTS["exploration"]["system"]
+EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT: str = _DEFAULTS["exploration"]["system_with_context"]
+EXPLORATION_COACH_PROMPT: str = _DEFAULTS["exploration"]["coach"]
+EXPLORATION_KICKOFF_TEMPLATE: str = _DEFAULTS["exploration"]["kickoff"]
+EXPLORATION_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE: str = _DEFAULTS["exploration"]["kickoff_with_context_and_tools"]
+EXPLORATION_KICKOFF_WITH_CONTEXT_TEMPLATE: str = _DEFAULTS["exploration"]["kickoff_with_context"]
 COMPLETE_TASKS_TOOL: dict = {
     "name": "complete_tasks",
     "description": _DEFAULTS["tools"]["complete_tasks"]["description"],
@@ -233,9 +232,9 @@ PROPOSE_ITERATIONS_TOOL: dict = {
     },
 }
 
-END_GROOMING_TOOL: dict = {
-    "name": "end_grooming",
-    "description": _DEFAULTS["tools"]["end_grooming"]["description"],
+END_EXPLORATION_TOOL: dict = {
+    "name": "end_exploration",
+    "description": _DEFAULTS["tools"]["end_exploration"]["description"],
     "input_schema": {
         "type": "object",
         "properties": {
@@ -251,9 +250,9 @@ END_GROOMING_TOOL: dict = {
 # Add propose_iterations to iteration coach tools (update sibling iterations during any phase)
 COACH_TOOLS.append(PROPOSE_ITERATIONS_TOOL)
 
-GROOMING_COACH_TOOLS: list[dict] = [
+EXPLORATION_COACH_TOOLS: list[dict] = [
     COACH_PASS_TURN_TOOL,
     GUIDE_DISCUSSION_TOOL,
 ] + [
     t for t in COACH_TOOLS if t["name"] == "ask_pm"
-] + [PROPOSE_ITERATIONS_TOOL, END_GROOMING_TOOL]
+] + [PROPOSE_ITERATIONS_TOOL, END_EXPLORATION_TOOL]

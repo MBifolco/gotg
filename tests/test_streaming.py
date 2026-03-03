@@ -81,7 +81,7 @@ def _make_policy(**overrides):
         stop_on_phase_complete=False, stop_on_ask_pm=False,
         agent_tools=tuple(list(AGENT_TOOLS) + list(FILE_TOOLS)),
         coach_tools=None,
-        groomed_summary=None, tasks_summary=None, diffs_summary=None,
+        refinement_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
         phase_skeleton=None,
@@ -1198,22 +1198,22 @@ class TestCliDiscussionStreaming:
         assert "file_read" in captured.err
 
 
-# ── Grooming streaming tests ─────────────────────────────────────
+# ── Exploration streaming tests ─────────────────────────────────────
 
 
-class TestGroomingStreaming:
-    def test_grooming_policy_streaming_param(self):
-        """grooming_policy accepts and passes streaming param."""
-        from gotg.policy import grooming_policy
-        policy = grooming_policy(
+class TestExplorationStreaming:
+    def test_exploration_policy_streaming_param(self):
+        """exploration_policy accepts and passes streaming param."""
+        from gotg.policy import exploration_policy
+        policy = exploration_policy(
             agents=AGENTS, topic="test", history=[], streaming=True,
         )
         assert policy.streaming is True
 
-    def test_grooming_policy_streaming_default(self):
-        """grooming_policy defaults to streaming=False."""
-        from gotg.policy import grooming_policy
-        policy = grooming_policy(
+    def test_exploration_policy_streaming_default(self):
+        """exploration_policy defaults to streaming=False."""
+        from gotg.policy import exploration_policy
+        policy = exploration_policy(
             agents=AGENTS, topic="test", history=[],
         )
         assert policy.streaming is False

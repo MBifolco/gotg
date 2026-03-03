@@ -1,4 +1,4 @@
-"""Home screen with iteration and grooming session lists."""
+"""Home screen with iteration and exploration session lists."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Static, TabbedContent, TabPane
 
-from gotg.groom import list_grooming_sessions
+from gotg.explore import list_exploration_sessions
 from gotg.tui.data import list_iterations, load_session_metadata, relative_time
 from gotg.tui.helpers import count_jsonl_lines, get_selected_row_key
 from gotg.tui.screens.chat import ChatScreen
 
 
 class HomeScreen(Screen):
-    """Home screen showing iterations and grooming sessions."""
+    """Home screen showing iterations and exploration sessions."""
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
@@ -26,7 +26,7 @@ class HomeScreen(Screen):
         Binding("n", "new_item", "New", show=False),
         Binding("e", "edit_item", "Edit", show=False),
         Binding("s", "open_settings", "Settings", show=False),
-        Binding("g", "new_grooming", "Groom", show=False),
+        Binding("g", "new_exploration", "Explore", show=False),
     ]
 
     def compose(self):
@@ -39,13 +39,13 @@ class HomeScreen(Screen):
                     classes="empty-state",
                 )
                 yield DataTable(id="iter-table", cursor_type="row")
-            with TabPane("Grooming", id="tab-grooming"):
+            with TabPane("Exploration", id="tab-exploration"):
                 yield Static(
-                    "[dim]No grooming sessions. Press G to start one.[/dim]",
-                    id="groom-empty",
+                    "[dim]No exploration sessions. Press G to start one.[/dim]",
+                    id="explore-empty",
                     classes="empty-state",
                 )
-                yield DataTable(id="groom-table", cursor_type="row")
+                yield DataTable(id="explore-table", cursor_type="row")
             with TabPane("Info", id="tab-info"):
                 yield Static(id="info-content")
         yield Footer()
@@ -64,12 +64,12 @@ class HomeScreen(Screen):
         iter_table.add_column("Msgs", key="msgs")
         iter_table.add_column("Activity", key="activity")
 
-        groom_table = self.query_one("#groom-table", DataTable)
-        groom_table.add_column("Slug", key="slug")
-        groom_table.add_column("Topic", key="topic")
-        groom_table.add_column("Coach", key="coach")
-        groom_table.add_column("Msgs", key="msgs")
-        groom_table.add_column("Activity", key="activity")
+        explore_table = self.query_one("#explore-table", DataTable)
+        explore_table.add_column("Slug", key="slug")
+        explore_table.add_column("Topic", key="topic")
+        explore_table.add_column("Coach", key="coach")
+        explore_table.add_column("Msgs", key="msgs")
+        explore_table.add_column("Activity", key="activity")
 
     def _load_data(self) -> None:
         team_dir = self.app.team_dir
@@ -101,19 +101,19 @@ class HomeScreen(Screen):
         self.query_one("#iter-empty").display = len(iterations) == 0
         iter_table.display = len(iterations) > 0
 
-        # Grooming sessions
-        self._grooming_data = {}
-        groom_table = self.query_one("#groom-table", DataTable)
-        groom_table.clear()
-        sessions = list_grooming_sessions(team_dir)
+        # Exploration sessions
+        self._exploration_data = {}
+        explore_table = self.query_one("#explore-table", DataTable)
+        explore_table.clear()
+        sessions = list_exploration_sessions(team_dir)
         for s in sessions:
             row_key = s["slug"]
-            groom_dir = team_dir / "grooming" / s["slug"]
-            log_path = groom_dir / "conversation.jsonl"
+            explore_dir = team_dir / "exploration" / s["slug"]
+            log_path = explore_dir / "conversation.jsonl"
             msg_count = count_jsonl_lines(log_path)
             mtime = log_path.stat().st_mtime if log_path.exists() else None
-            self._grooming_data[row_key] = (s, groom_dir)
-            groom_table.add_row(
+            self._exploration_data[row_key] = (s, explore_dir)
+            explore_table.add_row(
                 s["slug"],
                 s.get("topic", ""),
                 "yes" if s.get("coach") else "",
@@ -123,8 +123,8 @@ class HomeScreen(Screen):
             )
 
         # Show/hide empty state
-        self.query_one("#groom-empty").display = len(sessions) == 0
-        groom_table.display = len(sessions) > 0
+        self.query_one("#explore-empty").display = len(sessions) == 0
+        explore_table.display = len(sessions) > 0
 
         # Info tab
         self._load_info()
@@ -172,9 +172,9 @@ class HomeScreen(Screen):
 
         lines.append("")
         lines.append(f"  Iterations: {len(self._iteration_data)}")
-        lines.append(f"  Grooming:   {len(self._grooming_data)}")
+        lines.append(f"  Exploration: {len(self._exploration_data)}")
         lines.append("")
-        lines.append("[dim]Press S to open settings, N to create iteration, G for grooming[/dim]")
+        lines.append("[dim]Press S to open settings, N to create iteration, G for exploration[/dim]")
 
         info_widget.update("\n".join(lines))
 
@@ -185,7 +185,7 @@ class HomeScreen(Screen):
         """Get metadata, data_dir, and kind for the focused table's selected row."""
         for table_id, data_store, kind in [
             ("#iter-table", "_iteration_data", "iteration"),
-            ("#groom-table", "_grooming_data", "grooming"),
+            ("#explore-table", "_exploration_data", "exploration"),
         ]:
             try:
                 table = self.query_one(table_id, DataTable)
@@ -203,11 +203,11 @@ class HomeScreen(Screen):
         return None
 
     def _active_tab(self) -> str:
-        """Return which tab is active: 'iterations', 'grooming', or 'info'."""
+        """Return which tab is active: 'iterations', 'exploration', or 'info'."""
         tc = self.query_one(TabbedContent)
         active = tc.active
-        if active == "tab-grooming":
-            return "grooming"
+        if active == "tab-exploration":
+            return "exploration"
         if active == "tab-info":
             return "info"
         return "iterations"
@@ -222,10 +222,10 @@ class HomeScreen(Screen):
             meta, data_dir = self._iteration_data[row_key]
             full_meta = load_session_metadata(team_dir, meta)
             self.app.push_screen(ChatScreen(data_dir, full_meta))
-        elif row_key in self._grooming_data:
-            meta, data_dir = self._grooming_data[row_key]
+        elif row_key in self._exploration_data:
+            meta, data_dir = self._exploration_data[row_key]
             full_meta = load_session_metadata(team_dir, meta)
-            self.app.push_screen(ChatScreen(data_dir, full_meta, session_kind="grooming"))
+            self.app.push_screen(ChatScreen(data_dir, full_meta, session_kind="exploration"))
 
     def on_screen_resume(self) -> None:
         """Refresh data when returning from a pushed screen."""
@@ -234,7 +234,7 @@ class HomeScreen(Screen):
     # ── Run / Continue ────────────────────────────────────────
 
     def action_run_session(self) -> None:
-        """Start a fresh run for the selected iteration/grooming."""
+        """Start a fresh run for the selected iteration/exploration."""
         data = self._get_selected_data()
         if data is None:
             return
@@ -290,7 +290,7 @@ class HomeScreen(Screen):
         self.app.push_screen(ChatScreen(data_dir, full_meta, mode="run", session_kind="iteration"))
 
     def action_continue_session(self) -> None:
-        """Continue the selected iteration/grooming."""
+        """Continue the selected iteration/exploration."""
         data = self._get_selected_data()
         if data is None:
             return
@@ -302,12 +302,12 @@ class HomeScreen(Screen):
     # ── New item (N key) ──────────────────────────────────────
 
     def action_new_item(self) -> None:
-        """Create a new iteration or grooming session depending on active tab."""
+        """Create a new iteration or exploration session depending on active tab."""
         tab = self._active_tab()
         if tab == "iterations":
             self._new_iteration()
-        elif tab == "grooming":
-            self._new_grooming()
+        elif tab == "exploration":
+            self._new_exploration()
 
     def _new_iteration(self) -> None:
         """Prompt for iteration description, then create it."""
@@ -340,27 +340,27 @@ class HomeScreen(Screen):
         except ValueError as e:
             self.notify(str(e), severity="error")
 
-    def _new_grooming(self) -> None:
-        """Prompt for grooming topic, then create it."""
+    def _new_exploration(self) -> None:
+        """Prompt for exploration topic, then create it."""
         from gotg.tui.modals.text_input import TextInputModal
         self.app.push_screen(
             TextInputModal(
-                "New grooming session — enter topic:",
+                "New exploration session — enter topic:",
                 placeholder="What would you like to explore?",
             ),
-            callback=self._on_new_grooming,
+            callback=self._on_new_exploration,
         )
 
-    def _on_new_grooming(self, result: str | None) -> None:
+    def _on_new_exploration(self, result: str | None) -> None:
         if result is None:
             return
-        from gotg.groom import existing_slugs, generate_slug, load_grooming_metadata, write_grooming_metadata
+        from gotg.explore import existing_slugs, generate_slug, load_exploration_metadata, write_exploration_metadata
         from gotg.session_setup import load_iteration_context
         from gotg.config import IterationStore
         team_dir = self.app.team_dir
         slug = generate_slug(result, existing_slugs(team_dir))
 
-        # Auto-detect iteration context (same logic as CLI cmd_groom_start)
+        # Auto-detect iteration context (same logic as CLI cmd_explore_start)
         context_from_value: str | None = None
         try:
             project_context = load_iteration_context(team_dir)
@@ -376,23 +376,23 @@ class HomeScreen(Screen):
             pass
 
         try:
-            write_grooming_metadata(
+            write_exploration_metadata(
                 team_dir, slug, topic=result, coach=True, max_turns=30,
                 context_from=context_from_value,
             )
-            self.notify(f"Created grooming: {slug}")
+            self.notify(f"Created exploration: {slug}")
             # Open the new session directly in ChatScreen
-            meta, groom_dir = load_grooming_metadata(team_dir, slug)
+            meta, explore_dir = load_exploration_metadata(team_dir, slug)
             full_meta = load_session_metadata(team_dir, meta)
             self.app.push_screen(
-                ChatScreen(groom_dir, full_meta, mode="run", session_kind="grooming")
+                ChatScreen(explore_dir, full_meta, mode="run", session_kind="exploration")
             )
         except FileExistsError:
             self.notify(f"Slug '{slug}' already exists.", severity="error")
 
-    def action_new_grooming(self) -> None:
-        """Start a new grooming session (G key — works from any tab)."""
-        self._new_grooming()
+    def action_new_exploration(self) -> None:
+        """Start a new exploration session (G key — works from any tab)."""
+        self._new_exploration()
 
     # ── Edit item (E key) ─────────────────────────────────────
 
@@ -409,8 +409,8 @@ class HomeScreen(Screen):
                 EditIterationModal(meta),
                 callback=lambda result: self._on_edit_iteration(result, meta["id"]),
             )
-        elif kind == "grooming":
-            self.notify("Grooming sessions can't be edited yet.", severity="warning")
+        elif kind == "exploration":
+            self.notify("Exploration sessions can't be edited yet.", severity="warning")
 
     def _on_edit_iteration(self, result: dict | None, iteration_id: str) -> None:
         if result is None:

@@ -7,7 +7,7 @@ from typing import Callable
 
 from gotg.prompts import (
     COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
-    GROOMING_SUMMARY_EXTRACTION_PROMPT, MERGE_CONFLICT_PROMPT,
+    EXPLORATION_SUMMARY_EXTRACTION_PROMPT, MERGE_CONFLICT_PROMPT,
     REVIEW_FEEDBACK_EXTRACTION_PROMPT,
 )
 from gotg.tasks import compute_layers
@@ -112,17 +112,17 @@ def extract_refinement_summary(
     )
 
 
-extract_grooming_summary = extract_refinement_summary  # backward-compat alias
+extract_exploration_summary = extract_refinement_summary  # backward-compat alias
 
 
-def extract_grooming_summary_doc(
+def extract_exploration_summary_doc(
     history: list[dict],
     model_config: dict,
     coach_name: str | None,
     chat_call: Callable,
     topic: str,
 ) -> str:
-    """Extract a summary document from a grooming conversation.
+    """Extract a summary document from an exploration conversation.
 
     Unlike other extraction functions, this INCLUDES coach messages in the transcript
     because coach facilitation captures decisions, redirections, and scoping that
@@ -134,7 +134,7 @@ def extract_grooming_summary_doc(
         if m["from"] != "system"
     )
 
-    prompt = GROOMING_SUMMARY_EXTRACTION_PROMPT.format(topic=topic)
+    prompt = EXPLORATION_SUMMARY_EXTRACTION_PROMPT.format(topic=topic)
 
     result = chat_call(
         base_url=model_config["base_url"],

@@ -121,7 +121,7 @@ def run_session(
         # Build prompt
         prompt = build_prompt(
             agent, iteration, history, all_participants,
-            groomed_summary=policy.groomed_summary, tasks_summary=policy.tasks_summary,
+            refinement_summary=policy.refinement_summary, tasks_summary=policy.tasks_summary,
             diffs_summary=policy.diffs_summary, fileguard=policy.fileguard,
             worktree_map=policy.worktree_map,
             system_supplement=policy.system_supplement,
@@ -392,7 +392,7 @@ def _do_coach_turn(
     coach = policy.coach
     coach_prompt = build_coach_prompt(
         coach, iteration, history, all_participants,
-        groomed_summary=policy.groomed_summary, tasks_summary=policy.tasks_summary,
+        refinement_summary=policy.refinement_summary, tasks_summary=policy.tasks_summary,
         diffs_summary=policy.diffs_summary,
         coach_system_prompt=policy.coach_system_prompt,
         project_context=policy.project_context,
@@ -450,11 +450,11 @@ def _do_coach_turn(
     signal_calls = [tc for tc in coach_tool_calls if tc["name"] == "signal_phase_complete"]
     signal_input = signal_calls[0]["input"] if signal_calls else None
 
-    # Extract propose_iterations and end_grooming tool calls
+    # Extract propose_iterations and end_exploration tool calls
     propose_calls = [tc for tc in coach_tool_calls if tc["name"] == "propose_iterations"]
     propose_input = propose_calls[0]["input"] if propose_calls else None
-    end_grooming_calls = [tc for tc in coach_tool_calls if tc["name"] == "end_grooming"]
-    end_grooming_input = end_grooming_calls[0]["input"] if end_grooming_calls else None
+    end_exploration_calls = [tc for tc in coach_tool_calls if tc["name"] == "end_exploration"]
+    end_exploration_input = end_exploration_calls[0]["input"] if end_exploration_calls else None
 
     # Coach pass_turn — minimal output, mark on message for filtering
     coach_passed = any(tc["name"] == "coach_pass_turn" for tc in coach_tool_calls)
@@ -478,12 +478,12 @@ def _do_coach_turn(
     if not coach_text.strip() and propose_input:
         coach_text = "(Iteration proposals submitted for PM review.)"
 
-    # Fallback for empty coach messages with end_grooming
-    if not coach_text.strip() and end_grooming_input:
-        coach_text = "(Grooming concluded.)"
+    # Fallback for empty coach messages with end_exploration
+    if not coach_text.strip() and end_exploration_input:
+        coach_text = "(Exploration concluded.)"
 
     # Fallback for empty coach messages with ask_pm (only when no other tool takes priority)
-    if not coach_text.strip() and not propose_input and not end_grooming_input and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
+    if not coach_text.strip() and not propose_input and not end_exploration_input and any(tc["name"] == "ask_pm" for tc in coach_tool_calls):
         question = next(tc["input"]["question"] for tc in coach_tool_calls if tc["name"] == "ask_pm")
         coach_text = f"(Requesting PM input: {question})"
 
@@ -507,8 +507,8 @@ def _do_coach_turn(
     }
     if coach_passed:
         coach_msg["coach_pass_turn"] = True
-    # Suppress ask_pm when propose_input or end_grooming is present (they take priority)
-    if ask_pm_input and not propose_input and not end_grooming_input:
+    # Suppress ask_pm when propose_input or end_exploration is present (they take priority)
+    if ask_pm_input and not propose_input and not end_exploration_input:
         coach_msg["ask_pm"] = {
             "question": ask_pm_input["question"],
             "response_type": ask_pm_input.get("response_type", "feedback"),
@@ -543,7 +543,7 @@ def _do_coach_turn(
         yield PhaseCompleteSignaled(iteration.get("phase"), outcome=outcome)
         return True
 
-    # Coach proposes iterations (grooming only — tool not in COACH_TOOLS)
+    # Coach proposes iterations (exploration only — tool not in COACH_TOOLS)
     if propose_input:
         yield IterationsProposed(
             batch_id=batch_id,
@@ -552,13 +552,13 @@ def _do_coach_turn(
         )
         return True
 
-    # Coach ends grooming session (grooming only — tool not in COACH_TOOLS)
-    if end_grooming_input:
+    # Coach ends exploration session (exploration only — tool not in COACH_TOOLS)
+    if end_exploration_input:
         yield SessionComplete(turn)
         return True
 
     # Coach requests PM input
-    if ask_pm_input and not propose_input and not end_grooming_input:
+    if ask_pm_input and not propose_input and not end_exploration_input:
         question = ask_pm_input["question"]
         response_type = ask_pm_input.get("response_type", "feedback")
         options = tuple(ask_pm_input.get("options") or [])

@@ -2,7 +2,7 @@ import json
 import pytest
 from pathlib import Path
 
-from gotg.policy import SessionPolicy, iteration_policy, grooming_policy, _format_iteration_plan
+from gotg.policy import SessionPolicy, iteration_policy, exploration_policy, _format_iteration_plan
 from gotg.prompts import AGENT_TOOLS, COACH_TOOLS
 from gotg.tools import FILE_TOOLS, READ_ONLY_FILE_TOOLS
 
@@ -40,7 +40,7 @@ def test_session_policy_creation():
         max_turns=5, coach=COACH, coach_cadence=2,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
         agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(COACH_TOOLS),
-        groomed_summary="summary", tasks_summary="tasks",
+        refinement_summary="summary", tasks_summary="tasks",
         diffs_summary=None, kickoff_text="kick",
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -50,7 +50,7 @@ def test_session_policy_creation():
     assert p.coach_cadence == 2
     assert isinstance(p.agent_tools, tuple)
     assert isinstance(p.coach_tools, tuple)
-    assert p.groomed_summary == "summary"
+    assert p.refinement_summary == "summary"
     assert p.kickoff_text == "kick"
 
 
@@ -59,7 +59,7 @@ def test_session_policy_frozen():
         max_turns=5, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
         agent_tools=tuple(AGENT_TOOLS), coach_tools=None,
-        groomed_summary=None, tasks_summary=None,
+        refinement_summary=None, tasks_summary=None,
         diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -101,11 +101,11 @@ def test_iteration_policy_without_coach(tmp_path):
     assert p.coach_tools is None
 
 
-def test_iteration_policy_loads_groomed_md(tmp_path):
+def test_iteration_policy_loads_refinement_summary_md(tmp_path):
     iter_dir = _make_iter_dir(tmp_path)
     (iter_dir / "refinement_summary.md").write_text("# Scope\nDo the thing\n")
     p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
-    assert p.groomed_summary == "# Scope\nDo the thing"
+    assert p.refinement_summary == "# Scope\nDo the thing"
 
 
 def test_iteration_policy_loads_tasks_json(tmp_path):
@@ -123,7 +123,7 @@ def test_iteration_policy_loads_tasks_json(tmp_path):
 def test_iteration_policy_no_artifacts(tmp_path):
     iter_dir = _make_iter_dir(tmp_path)
     p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
-    assert p.groomed_summary is None
+    assert p.refinement_summary is None
     assert p.tasks_summary is None
 
 
@@ -155,11 +155,11 @@ def test_iteration_policy_stop_conditions(tmp_path):
     assert p.stop_on_ask_pm is True
 
 
-# --- grooming_policy tests (minimal — Codex constraint 4) ---
+# --- exploration_policy tests (minimal — Codex constraint 4) ---
 
 
-def test_grooming_policy_defaults():
-    p = grooming_policy(AGENTS, "Discuss feature X", history=[])
+def test_exploration_policy_defaults():
+    p = exploration_policy(AGENTS, "Discuss feature X", history=[])
     assert p.coach is None
     assert p.coach_cadence is None
     assert p.stop_on_phase_complete is False
@@ -168,19 +168,19 @@ def test_grooming_policy_defaults():
     assert isinstance(p.agent_tools, tuple)
     assert p.max_turns == 30
     assert p.system_supplement is not None
-    assert "GROOMING" in p.system_supplement
+    assert "EXPLORATION" in p.system_supplement
     assert p.coach_system_prompt is None
     assert p.kickoff_text is not None
     assert "Discuss feature X" in p.kickoff_text
 
 
-def test_grooming_policy_max_turns():
-    p = grooming_policy(AGENTS, "Discuss feature X", history=[], max_turns=50)
+def test_exploration_policy_max_turns():
+    p = exploration_policy(AGENTS, "Discuss feature X", history=[], max_turns=50)
     assert p.max_turns == 50
 
 
-def test_grooming_policy_with_coach():
-    p = grooming_policy(AGENTS, "Discuss feature X", history=[], coach=COACH)
+def test_exploration_policy_with_coach():
+    p = exploration_policy(AGENTS, "Discuss feature X", history=[], coach=COACH)
     assert p.coach == COACH
     assert p.coach_cadence == len(AGENTS)
     assert p.stop_on_ask_pm is True
@@ -191,18 +191,18 @@ def test_grooming_policy_with_coach():
     assert "ask_pm" in tool_names
     assert "signal_phase_complete" not in tool_names
     assert p.coach_system_prompt is not None
-    assert "grooming" in p.coach_system_prompt.lower()
+    assert "exploration" in p.coach_system_prompt.lower()
 
 
-def test_grooming_policy_kickoff_includes_topic():
-    p = grooming_policy(AGENTS, "How to handle errors", history=[])
+def test_exploration_policy_kickoff_includes_topic():
+    p = exploration_policy(AGENTS, "How to handle errors", history=[])
     assert "How to handle errors" in p.kickoff_text
     assert "agent-1" in p.kickoff_text
 
 
-def test_grooming_policy_no_kickoff_with_history():
+def test_exploration_policy_no_kickoff_with_history():
     history = [{"from": "system", "content": "existing message"}]
-    p = grooming_policy(AGENTS, "Some topic", history=history)
+    p = exploration_policy(AGENTS, "Some topic", history=history)
     assert p.kickoff_text is None
 
 
@@ -458,10 +458,10 @@ def test_approval_tools_not_in_code_review(tmp_path):
     assert "file_write" not in tool_names  # code-review is read-only
 
 
-def test_grooming_never_gets_destructive_tools():
-    """Grooming policy never includes destructive file tools."""
-    from gotg.policy import grooming_policy
-    p = grooming_policy(AGENTS, "test topic", history=[])
+def test_exploration_never_gets_destructive_tools():
+    """Exploration policy never includes destructive file tools."""
+    from gotg.policy import exploration_policy
+    p = exploration_policy(AGENTS, "test topic", history=[])
     tool_names = {t["name"] for t in p.agent_tools}
     assert "file_delete" not in tool_names
     assert "file_rename" not in tool_names

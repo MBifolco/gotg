@@ -89,7 +89,7 @@ After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summ
 prompt = '''
 CURRENT PHASE: PLANNING
 
-You have completed refinement. The scope is defined in the groomed summary below.
+You have completed refinement. The scope is defined in the refinement summary below.
 
 In this phase, break the agreed scope into concrete, assignable tasks.
 
@@ -112,7 +112,7 @@ If a teammate re-opens a settled requirement, redirect them: "That was decided i
 
 kickoff = '''
 --- Phase: planning ---
-Goal: break the groomed scope into concrete, assignable tasks with dependencies and done criteria. The groomed scope is available above.
+Goal: break the refined scope into concrete, assignable tasks with dependencies and done criteria. The refined scope is available above.
 
 {writable_paths_info}
 
@@ -128,10 +128,10 @@ The team is in the PLANNING phase — breaking agreed scope into concrete, assig
 
 Your job is to:
 1. Summarize which tasks have been defined so far
-2. Note which requirements from the groomed scope don't have corresponding tasks yet
+2. Note which requirements from the refined scope don't have corresponding tasks yet
 3. Ask the team to address gaps
 4. Ensure each task has clear done criteria and dependencies
-5. Before signaling completion, ask the team: 'Have we covered every requirement from the groomed scope? Are there any tasks missing or dependencies we haven't identified?'
+5. Before signaling completion, ask the team: 'Have we covered every requirement from the refined scope? Are there any tasks missing or dependencies we haven't identified?'
 6. If the team confirms all requirements are covered and task definitions are complete, use the signal_phase_complete tool to recommend advancing to the next phase
 
 Keep your messages concise — shorter than the engineers' messages. The engineers are the experts. You manage the process.
@@ -254,7 +254,7 @@ If implementation diffs are included below, review the changes in each agent's b
 You are reviewing your teammates' implementations. Focus on:
 - Correctness: Does the code do what the task requires?
 - Consistency: Do components work together? Are interfaces compatible?
-- Requirements adherence: Does it match the groomed scope?
+- Requirements adherence: Does it match the refined scope?
 - Test coverage: Are there tests? Do they cover edge cases?
 - Code quality: Naming, structure, duplication, error handling
 
@@ -408,8 +408,8 @@ Pre-code-review conversation:
 {conversation}
 === TRANSCRIPT END ==='''
 
-[extraction.grooming_summary]
-prompt = '''You are summarizing a grooming conversation about: {topic}
+[extraction.exploration_summary]
+prompt = '''You are summarizing an exploration conversation about: {topic}
 
 Read the transcript and produce a concise summary document with these sections:
 
@@ -542,23 +542,23 @@ description = '''
 Call this when you are blocked and cannot complete your assigned tasks in the current layer. Provide the blocked task IDs and a concise blocker reason. All task IDs must belong to you and be in the current layer. The entire call is rejected if any ID is invalid — no partial success.'''
 
 [tools.propose_iterations]
-description = '''Propose creating or updating iterations based on the grooming discussion. Each proposal includes a title, description, and whether it's new or an update. The PM will review the proposals and approve, provide feedback, or reject. For updates, include the iteration_id of the existing iteration. For new iterations, omit iteration_id — the system assigns the next available ID. You may call this tool multiple times as the discussion evolves.'''
+description = '''Propose creating or updating iterations based on the exploration discussion. Each proposal includes a title, description, and whether it's new or an update. The PM will review the proposals and approve, provide feedback, or reject. For updates, include the iteration_id of the existing iteration. For new iterations, omit iteration_id — the system assigns the next available ID. You may call this tool multiple times as the discussion evolves.'''
 
-[tools.end_grooming]
-description = '''Signal that the grooming discussion has reached a natural conclusion. Use this when the team has explored the topic sufficiently, proposed iterations where appropriate, and has no more new ground to cover. Include a brief summary of what was discussed and any key outcomes. The PM can still continue the conversation after this signal if they choose.'''
+[tools.end_exploration]
+description = '''Signal that the exploration discussion has reached a natural conclusion. Use this when the team has explored the topic sufficiently, proposed iterations where appropriate, and has no more new ground to cover. Include a brief summary of what was discussed and any key outcomes. The PM can still continue the conversation after this signal if they choose.'''
 
-# ── Grooming mode (freeform pre-iteration exploration) ───────────
+# ── Exploration mode (freeform pre-iteration exploration) ────────
 
-[grooming]
-system = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
+[exploration]
+system = '''MODE: EXPLORATION — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
 
-ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When a grooming discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
+ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When an exploration discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
 
 Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
 
-system_with_context = '''MODE: GROOMING — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
+system_with_context = '''MODE: EXPLORATION — Ignore the phase workflow above. This is a freeform exploration conversation. No phases, no deliverables, no convergence pressure. Explore the topic thoroughly — surface assumptions, identify risks, brainstorm approaches, ask questions, think out loud.
 
-ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When a grooming discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
+ITERATIONS: Your team works in iterations. Each iteration is a focused unit of work that goes through refinement, planning, pre-code-review, implementation, and code-review. When an exploration discussion crystallizes into actionable work, the coach can propose breaking it into one or more iterations for the PM to approve. Think about natural boundaries: what can be built independently? What depends on what? Right-size each iteration — too broad loses focus, too narrow creates overhead.
 
 Previous iteration context is provided in your system prompt — refinement summaries, task breakdowns, and/or project structure. Use this to ground your discussion. Reference existing decisions and code rather than speculating from scratch.
 
@@ -566,7 +566,7 @@ If file tools are available, use file_read and file_list to browse the codebase 
 
 Do not reach conclusions or propose action items unless they emerge naturally. Do not propose task breakdowns or implementation plans. This is exploratory thinking, not decision-making.'''
 
-coach = '''You are facilitating a freeform grooming conversation. This is NOT a structured phase — no deliverables and no phase to complete.
+coach = '''You are facilitating a freeform exploration conversation. This is NOT a structured phase — no deliverables and no phase to complete.
 
 If the team has project context or file tools available, encourage them to review existing code and artifacts before ideating. When agents make claims about the codebase, nudge them to verify with file_read.
 
@@ -578,20 +578,20 @@ IMPORTANT: When you see a system message saying "Batch ... approved: N applied. 
 
 Keep your messages concise — shorter than the engineers' messages. Engineers lead; you gently steer.
 
-ENDING THE GROOMING: When the team has thoroughly explored the topic, proposed iterations where appropriate, and has no more new ground to cover, use the end_grooming tool to conclude the session. Signs it's time: engineers are repeating themselves, all key questions have been addressed, iteration proposals have been made and approved, or the conversation has naturally wound down. Include a brief summary of what was discussed. The PM can always continue if they want more discussion.
+ENDING THE EXPLORATION: When the team has thoroughly explored the topic, proposed iterations where appropriate, and has no more new ground to cover, use the end_exploration tool to conclude the session. Signs it's time: engineers are repeating themselves, all key questions have been addressed, iteration proposals have been made and approved, or the conversation has naturally wound down. Include a brief summary of what was discussed. The PM can always continue if they want more discussion.
 
 TOOLS — You MUST call exactly one tool every turn:
 - coach_pass_turn: DEFAULT. Agents are productively discussing. If in doubt, pass.
 - guide_discussion: Conversation needs steering — redirect, suggest new angles, push back on verbosity. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - propose_iterations: Propose creating or updating iterations when discussion crystallizes into actionable work.
-- end_grooming: Session has reached a natural conclusion. Include a brief summary.'''
+- end_exploration: Session has reached a natural conclusion. Include a brief summary.'''
 
-kickoff = '''--- Grooming: {topic} ---
+kickoff = '''--- Exploration: {topic} ---
 This is an open exploration. No phases, no deliverables — just discuss.
 {first_agent}, what are your initial thoughts?'''
 
-kickoff_with_context_and_tools = '''--- Grooming: {topic} ---
+kickoff_with_context_and_tools = '''--- Exploration: {topic} ---
 Previous iteration context is available in your system prompt. File tools are available for inspecting the codebase.
 
 Before diving into the topic, orient yourselves:
@@ -601,7 +601,7 @@ Before diving into the topic, orient yourselves:
 
 {first_agent}, start by reviewing the existing project state.'''
 
-kickoff_with_context = '''--- Grooming: {topic} ---
+kickoff_with_context = '''--- Exploration: {topic} ---
 Previous iteration context is available in your system prompt.
 
 Before diving into the topic, orient yourselves:

@@ -1,4 +1,4 @@
-"""Grooming conversation management — freeform pre-iteration exploration."""
+"""Exploration conversation management — freeform pre-iteration exploration."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,9 @@ import re
 import sys
 from pathlib import Path
 
-from gotg.errors import GroomingError
+from gotg.errors import ExplorationError
 from gotg.events import SessionStarted
-from gotg.migration import CURRENT_GROOMING_VERSION, migrate_grooming_metadata
+from gotg.migration import CURRENT_EXPLORATION_VERSION, migrate_exploration_metadata
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -42,7 +42,7 @@ def generate_slug(topic: str, existing: set[str] | None = None) -> str:
         filtered = words[:3]
 
     if not filtered:
-        filtered = ["groom"]
+        filtered = ["explore"]
 
     slug = "-".join(filtered)
 
@@ -67,27 +67,27 @@ def validate_slug(slug: str) -> bool:
 
 # ── Metadata ─────────────────────────────────────────────────────
 
-def _grooming_dir(team_dir: Path, slug: str) -> Path:
-    return team_dir / "grooming" / slug
+def _exploration_dir(team_dir: Path, slug: str) -> Path:
+    return team_dir / "exploration" / slug
 
 
-def write_grooming_metadata(
+def write_exploration_metadata(
     team_dir: Path, slug: str, topic: str, coach: bool, max_turns: int,
     context_from: str | bool | None = None,
 ) -> Path:
-    """Create grooming directory and write grooming.json. Returns the dir.
+    """Create exploration directory and write exploration.json. Returns the dir.
 
     context_from semantics:
       - string (e.g. "iter-1"): explicit or auto-resolved iteration ID
       - None: no context found at start (or v1 migration default)
       - False: user passed --no-context (explicit opt-out)
     """
-    groom_dir = _grooming_dir(team_dir, slug)
-    groom_dir.mkdir(parents=True, exist_ok=False)
-    (groom_dir / "conversation.jsonl").touch()
+    explore_dir = _exploration_dir(team_dir, slug)
+    explore_dir.mkdir(parents=True, exist_ok=False)
+    (explore_dir / "conversation.jsonl").touch()
 
     metadata = {
-        "schema_version": CURRENT_GROOMING_VERSION,
+        "schema_version": CURRENT_EXPLORATION_VERSION,
         "slug": slug,
         "topic": topic,
         "coach": coach,
@@ -95,34 +95,34 @@ def write_grooming_metadata(
         "status": "active",
         "context_from": context_from,
     }
-    (groom_dir / "grooming.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    return groom_dir
+    (explore_dir / "exploration.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    return explore_dir
 
 
-def load_grooming_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
-    """Load grooming.json. Returns (metadata, groom_dir). Exits if not found."""
-    groom_dir = _grooming_dir(team_dir, slug)
-    meta_path = groom_dir / "grooming.json"
+def load_exploration_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
+    """Load exploration.json. Returns (metadata, explore_dir). Exits if not found."""
+    explore_dir = _exploration_dir(team_dir, slug)
+    meta_path = explore_dir / "exploration.json"
     if not meta_path.exists():
-        raise GroomingError(f"grooming session '{slug}' not found.")
+        raise ExplorationError(f"exploration session '{slug}' not found.")
     warnings: list[str] = []
-    data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+    data = migrate_exploration_metadata(json.loads(meta_path.read_text()), warnings=warnings)
     for w in warnings:
         print(f"Warning: {w}", file=sys.stderr)
-    return data, groom_dir
+    return data, explore_dir
 
 
-def list_grooming_sessions(team_dir: Path) -> list[dict]:
-    """List all grooming sessions sorted by directory name."""
-    grooming_root = team_dir / "grooming"
-    if not grooming_root.exists():
+def list_exploration_sessions(team_dir: Path) -> list[dict]:
+    """List all exploration sessions sorted by directory name."""
+    exploration_root = team_dir / "exploration"
+    if not exploration_root.exists():
         return []
     sessions = []
-    for d in sorted(grooming_root.iterdir()):
-        meta_path = d / "grooming.json"
+    for d in sorted(exploration_root.iterdir()):
+        meta_path = d / "exploration.json"
         if meta_path.exists():
             warnings: list[str] = []
-            data = migrate_grooming_metadata(json.loads(meta_path.read_text()), warnings=warnings)
+            data = migrate_exploration_metadata(json.loads(meta_path.read_text()), warnings=warnings)
             for w in warnings:
                 print(f"Warning: {w}", file=sys.stderr)
             sessions.append(data)
@@ -130,17 +130,17 @@ def list_grooming_sessions(team_dir: Path) -> list[dict]:
 
 
 def existing_slugs(team_dir: Path) -> set[str]:
-    """Return set of existing grooming slugs."""
-    grooming_root = team_dir / "grooming"
-    if not grooming_root.exists():
+    """Return set of existing exploration slugs."""
+    exploration_root = team_dir / "exploration"
+    if not exploration_root.exists():
         return set()
-    return {d.name for d in grooming_root.iterdir() if d.is_dir()}
+    return {d.name for d in exploration_root.iterdir() if d.is_dir()}
 
 
 # ── Session header ───────────────────────────────────────────────
 
-def _print_grooming_header(event: SessionStarted, topic: str) -> None:
-    print(f"Grooming: {event.iteration_id}")
+def _print_exploration_header(event: SessionStarted, topic: str) -> None:
+    print(f"Exploration: {event.iteration_id}")
     print(f"Topic: {topic}")
     if event.coach:
         print(f"Coach: {event.coach} (facilitating)")
@@ -150,8 +150,8 @@ def _print_grooming_header(event: SessionStarted, topic: str) -> None:
 
 # ── Event handler ────────────────────────────────────────────────
 
-def run_grooming_conversation(
-    groom_dir: Path,
+def run_exploration_conversation(
+    explore_dir: Path,
     agents: list[dict],
     iteration: dict,
     model_config: dict,
@@ -164,12 +164,12 @@ def run_grooming_conversation(
     project_root: Path | None = None,
     file_access: dict | None = None,
 ) -> None:
-    """Run a grooming conversation. Handles all events from run_session."""
+    """Run an exploration conversation. Handles all events from run_session."""
     # Late imports to preserve mock targets (bridge pattern)
     from gotg.console_events import handle_console_events
     from gotg.engine import SessionDeps
     from gotg.model import agentic_completion, chat_completion, raw_completion_stream
-    from gotg.session import prepare_grooming_session, run_and_persist
+    from gotg.session import prepare_exploration_session, run_and_persist
 
     deps = SessionDeps(
         agent_completion=agentic_completion,
@@ -178,8 +178,8 @@ def run_grooming_conversation(
         model_resolver=model_resolver,
     )
 
-    setup = prepare_grooming_session(
-        groom_dir, agents, iteration, model_config, deps,
+    setup = prepare_exploration_session(
+        explore_dir, agents, iteration, model_config, deps,
         topic=topic, coach=coach,
         max_turns=max_turns_override or iteration.get("max_turns", 30),
         streaming=streaming,
@@ -191,8 +191,8 @@ def run_grooming_conversation(
     slug = iteration["id"]
     handle_console_events(
         run_and_persist(setup),
-        on_started=lambda e: _print_grooming_header(e, topic),
-        resume_hint=f"gotg groom continue {slug}",
-        summarize_hint=f"gotg groom summarize {slug}",
-        complete_label="Grooming",
+        on_started=lambda e: _print_exploration_header(e, topic),
+        resume_hint=f"gotg explore continue {slug}",
+        summarize_hint=f"gotg explore summarize {slug}",
+        complete_label="Exploration",
     )

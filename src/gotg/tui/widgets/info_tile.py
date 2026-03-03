@@ -12,7 +12,7 @@ from gotg.tui.data import relative_time
 
 
 class InfoTile(Vertical):
-    """Displays iteration or grooming session metadata."""
+    """Displays iteration or exploration session metadata."""
 
     def load_metadata(self, metadata: dict, data_dir: Path) -> None:
         self.remove_children()

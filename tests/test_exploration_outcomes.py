@@ -1,4 +1,4 @@
-"""Tests for grooming outcomes: iteration proposals + summary generation."""
+"""Tests for exploration outcomes: iteration proposals + summary generation."""
 
 import json
 from pathlib import Path
@@ -17,8 +17,8 @@ from gotg.policy import SessionPolicy
 from gotg.prompts import (
     AGENT_TOOLS,
     COACH_TOOLS,
-    GROOMING_COACH_TOOLS,
-    GROOMING_SUMMARY_EXTRACTION_PROMPT,
+    EXPLORATION_COACH_TOOLS,
+    EXPLORATION_SUMMARY_EXTRACTION_PROMPT,
     PROPOSE_ITERATIONS_TOOL,
 )
 from gotg.session_types import PauseReason, ResumeState, reconstruct_resume_state
@@ -58,8 +58,8 @@ def _make_policy(**overrides):
     defaults = dict(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=False, stop_on_ask_pm=True,
-        agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(GROOMING_COACH_TOOLS),
-        groomed_summary=None, tasks_summary=None, diffs_summary=None,
+        agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(EXPLORATION_COACH_TOOLS),
+        refinement_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
         phase_skeleton=None,
@@ -255,15 +255,15 @@ def test_apply_iteration_proposals_create(tmp_path):
     """Creates new iteration with auto-ID, pending status."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
         team_dir,
         [{"action": "create", "title": "My Iteration", "description": "Build stuff"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     # Should have a create message + approval marker
@@ -282,9 +282,9 @@ def test_apply_iteration_proposals_create_batch_ids(tmp_path):
     """3 creates in one batch get iter-1, iter-2, iter-3."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     proposals = [
@@ -292,7 +292,7 @@ def test_apply_iteration_proposals_create_batch_ids(tmp_path):
         for i in range(1, 4)
     ]
     results = apply_iteration_proposals(
-        team_dir, proposals, batch_id="p1", groom_slug="test-slug", store=store,
+        team_dir, proposals, batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     from gotg.config import IterationStore
@@ -309,15 +309,15 @@ def test_apply_iteration_proposals_update(tmp_path):
         {"id": "iter-1", "title": "Old", "description": "Old desc", "status": "in-progress", "phase": "refinement"},
     ])
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
         team_dir,
         [{"action": "update", "iteration_id": "iter-1", "title": "New Title", "description": "New desc"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("[iterations] Updated iter-1: New Title" in r["content"] for r in results)
@@ -333,15 +333,15 @@ def test_apply_iteration_proposals_update_not_found(tmp_path):
     """Soft error message for update of non-existent iteration."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
         team_dir,
         [{"action": "update", "iteration_id": "iter-99", "title": "X", "description": "Y"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("not found" in r["content"] for r in results)
@@ -353,9 +353,9 @@ def test_apply_iteration_proposals_mixed(tmp_path):
         {"id": "iter-1", "title": "Existing", "description": "Old", "status": "in-progress", "phase": "refinement"},
     ])
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
@@ -364,7 +364,7 @@ def test_apply_iteration_proposals_mixed(tmp_path):
             {"action": "create", "title": "New One", "description": "Build new"},
             {"action": "update", "iteration_id": "iter-1", "title": "Updated", "description": "Changed"},
         ],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("Created iter-2" in r["content"] for r in results)
@@ -375,16 +375,16 @@ def test_apply_iteration_proposals_injects_messages(tmp_path):
     """System messages persisted to conversation store."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    log_path = groom_dir / "conversation.jsonl"
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    log_path = explore_dir / "conversation.jsonl"
     store = ConversationStore(log_path)
 
     from gotg.session_setup import apply_iteration_proposals
     apply_iteration_proposals(
         team_dir,
         [{"action": "create", "title": "Test", "description": "Desc"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     messages = store.read_full()
@@ -396,9 +396,9 @@ def test_apply_iteration_proposals_idempotent(tmp_path):
     """Re-applying same batch_id has no effect (approval marker blocks)."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     # Seed a real coach message with propose_iterations (as engine would write)
     coach_msg = {
@@ -418,7 +418,7 @@ def test_apply_iteration_proposals_idempotent(tmp_path):
     apply_iteration_proposals(
         team_dir,
         [{"action": "create", "title": "Test", "description": "Desc"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     # Now scan for unapproved batches — p1 should be marked approved
@@ -444,9 +444,9 @@ def test_apply_iteration_proposals_validation_bad_action(tmp_path):
     """Unknown action → soft error, others proceed."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
@@ -455,7 +455,7 @@ def test_apply_iteration_proposals_validation_bad_action(tmp_path):
             {"action": "delete", "title": "Bad", "description": "Nope"},
             {"action": "create", "title": "Good", "description": "Works"},
         ],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("unknown action" in r["content"] for r in results)
@@ -466,15 +466,15 @@ def test_apply_iteration_proposals_validation_missing_fields(tmp_path):
     """Empty title/description → soft error."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
         team_dir,
         [{"action": "create", "title": "", "description": "Has desc"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("missing title or description" in r["content"] for r in results)
@@ -484,15 +484,15 @@ def test_apply_iteration_proposals_validation_update_no_id(tmp_path):
     """Update without iteration_id → soft error."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.conversation import ConversationStore
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    store = ConversationStore(explore_dir / "conversation.jsonl")
 
     from gotg.session_setup import apply_iteration_proposals
     results = apply_iteration_proposals(
         team_dir,
         [{"action": "update", "title": "X", "description": "Y"}],
-        batch_id="p1", groom_slug="test-slug", store=store,
+        batch_id="p1", explore_slug="test-slug", store=store,
     )
 
     assert any("missing iteration_id" in r["content"] for r in results)
@@ -519,7 +519,7 @@ def test_console_events_iterations_proposed(capsys):
 
     handle_console_events(
         iter(events),
-        resume_hint="gotg groom continue test-slug",
+        resume_hint="gotg explore continue test-slug",
     )
 
     captured = capsys.readouterr()
@@ -530,7 +530,7 @@ def test_console_events_iterations_proposed(capsys):
     assert "--approve-iterations" in captured.out
 
 
-def test_console_events_grooming_complete_hint(capsys):
+def test_console_events_exploration_complete_hint(capsys):
     """Summarize hint printed on session complete."""
     from gotg.console_events import handle_console_events
     from gotg.events import SessionComplete
@@ -543,13 +543,13 @@ def test_console_events_grooming_complete_hint(capsys):
 
     handle_console_events(
         iter(events),
-        summarize_hint="gotg groom summarize test-slug",
-        complete_label="Grooming",
+        summarize_hint="gotg explore summarize test-slug",
+        complete_label="Exploration",
     )
 
     captured = capsys.readouterr()
-    assert "gotg groom summarize test-slug" in captured.out
-    assert "Grooming complete" in captured.out
+    assert "gotg explore summarize test-slug" in captured.out
+    assert "Exploration complete" in captured.out
 
 
 # ══════════════════════════════════════════════════════════════
@@ -593,9 +593,9 @@ def test_pause_reason_iterations_proposed():
 # ══════════════════════════════════════════════════════════════
 
 
-def test_propose_iterations_tool_in_grooming_coach_tools():
-    """Tool present in GROOMING_COACH_TOOLS."""
-    names = {t["name"] for t in GROOMING_COACH_TOOLS}
+def test_propose_iterations_tool_in_exploration_coach_tools():
+    """Tool present in EXPLORATION_COACH_TOOLS."""
+    names = {t["name"] for t in EXPLORATION_COACH_TOOLS}
     assert "propose_iterations" in names
 
 
@@ -605,11 +605,11 @@ def test_propose_iterations_tool_in_iteration_coach_tools():
     assert "propose_iterations" in names
 
 
-def test_grooming_system_supplement_mentions_iterations():
-    """Iteration awareness text present in grooming supplements."""
-    from gotg.prompts import GROOMING_SYSTEM_SUPPLEMENT, GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT
-    assert "ITERATIONS:" in GROOMING_SYSTEM_SUPPLEMENT
-    assert "ITERATIONS:" in GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT
+def test_exploration_system_supplement_mentions_iterations():
+    """Iteration awareness text present in exploration supplements."""
+    from gotg.prompts import EXPLORATION_SYSTEM_SUPPLEMENT, EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT
+    assert "ITERATIONS:" in EXPLORATION_SYSTEM_SUPPLEMENT
+    assert "ITERATIONS:" in EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT
 
 
 # ══════════════════════════════════════════════════════════════
@@ -617,28 +617,28 @@ def test_grooming_system_supplement_mentions_iterations():
 # ══════════════════════════════════════════════════════════════
 
 
-def test_extract_grooming_summary_doc():
+def test_extract_exploration_summary_doc():
     """Extraction function returns summary text."""
-    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.transitions import extract_exploration_summary_doc
 
     def mock_chat(**kw):
         return "## Topic\nTest summary."
 
-    result = extract_grooming_summary_doc(
+    result = extract_exploration_summary_doc(
         [{"from": "agent-1", "content": "Hello"}, {"from": "coach", "content": "Interesting"}],
         MODEL_CONFIG, "coach", chat_call=mock_chat, topic="Test topic",
     )
     assert "Test summary." in result
 
 
-def test_extract_grooming_summary_doc_strips_fences():
+def test_extract_exploration_summary_doc_strips_fences():
     """Code fences stripped from LLM output."""
-    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.transitions import extract_exploration_summary_doc
 
     def mock_chat(**kw):
         return "```markdown\n## Topic\nContent\n```"
 
-    result = extract_grooming_summary_doc(
+    result = extract_exploration_summary_doc(
         [{"from": "agent-1", "content": "Hello"}],
         MODEL_CONFIG, None, chat_call=mock_chat, topic="Test topic",
     )
@@ -646,9 +646,9 @@ def test_extract_grooming_summary_doc_strips_fences():
     assert "## Topic" in result
 
 
-def test_extract_grooming_summary_doc_includes_coach():
+def test_extract_exploration_summary_doc_includes_coach():
     """Coach messages included in transcript (unlike other extractions)."""
-    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.transitions import extract_exploration_summary_doc
 
     captured_messages = []
 
@@ -656,7 +656,7 @@ def test_extract_grooming_summary_doc_includes_coach():
         captured_messages.append(kw["messages"])
         return "Summary"
 
-    extract_grooming_summary_doc(
+    extract_exploration_summary_doc(
         [
             {"from": "agent-1", "content": "Agent says"},
             {"from": "system", "content": "System note"},
@@ -671,35 +671,35 @@ def test_extract_grooming_summary_doc_includes_coach():
     assert "System note" not in transcript
 
 
-def test_grooming_summary_extraction_prompt_loaded():
+def test_exploration_summary_extraction_prompt_loaded():
     """TOML constant accessible."""
-    assert "{topic}" in GROOMING_SUMMARY_EXTRACTION_PROMPT
-    assert "Decisions Against" in GROOMING_SUMMARY_EXTRACTION_PROMPT
+    assert "{topic}" in EXPLORATION_SUMMARY_EXTRACTION_PROMPT
+    assert "Decisions Against" in EXPLORATION_SUMMARY_EXTRACTION_PROMPT
 
 
 # ══════════════════════════════════════════════════════════════
-# Part 2: CLI groom summarize
+# Part 2: CLI explore summarize
 # ══════════════════════════════════════════════════════════════
 
 
-def test_cmd_groom_summarize(tmp_path, monkeypatch, capsys):
-    """gotg groom summarize writes summary.md."""
+def test_cmd_explore_summarize(tmp_path, monkeypatch, capsys):
+    """gotg explore summarize writes summary.md."""
     team_dir = _make_team_dir(tmp_path)
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    (groom_dir / "grooming.json").write_text(json.dumps({
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    (explore_dir / "exploration.json").write_text(json.dumps({
         "schema_version": 2, "slug": "test-slug", "topic": "Test topic",
         "coach": False, "max_turns": 30, "status": "active", "context_from": None,
     }))
     # Write a conversation message
     from gotg.conversation import ConversationStore
-    store = ConversationStore(groom_dir / "conversation.jsonl")
+    store = ConversationStore(explore_dir / "conversation.jsonl")
     store.append({"from": "agent-1", "iteration": "test-slug", "content": "Hello"})
 
     monkeypatch.chdir(tmp_path)
 
     # Mock the chat_completion and TeamContext
-    monkeypatch.setattr("gotg.commands.groom.TeamContext", type("TC", (), {
+    monkeypatch.setattr("gotg.commands.explore.TeamContext", type("TC", (), {
         "from_team_dir": staticmethod(lambda td: type("Ctx", (), {
             "coach": None, "model_config": MODEL_CONFIG,
         })()),
@@ -709,28 +709,28 @@ def test_cmd_groom_summarize(tmp_path, monkeypatch, capsys):
 
     import argparse
     args = argparse.Namespace(slug="test-slug")
-    from gotg.commands.groom import cmd_groom_summarize
-    cmd_groom_summarize(args)
+    from gotg.commands.explore import cmd_explore_summarize
+    cmd_explore_summarize(args)
 
-    assert (groom_dir / "summary.md").exists()
-    assert "Test summary." in (groom_dir / "summary.md").read_text()
+    assert (explore_dir / "summary.md").exists()
+    assert "Test summary." in (explore_dir / "summary.md").read_text()
     captured = capsys.readouterr()
     assert "Summary written to" in captured.out
 
 
-def test_cmd_groom_summarize_empty(tmp_path, monkeypatch, capsys):
+def test_cmd_explore_summarize_empty(tmp_path, monkeypatch, capsys):
     """Error on empty conversation."""
     team_dir = _make_team_dir(tmp_path)
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    (groom_dir / "grooming.json").write_text(json.dumps({
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    (explore_dir / "exploration.json").write_text(json.dumps({
         "schema_version": 2, "slug": "test-slug", "topic": "Test topic",
         "coach": False, "max_turns": 30, "status": "active", "context_from": None,
     }))
-    (groom_dir / "conversation.jsonl").touch()
+    (explore_dir / "conversation.jsonl").touch()
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("gotg.commands.groom.TeamContext", type("TC", (), {
+    monkeypatch.setattr("gotg.commands.explore.TeamContext", type("TC", (), {
         "from_team_dir": staticmethod(lambda td: type("Ctx", (), {
             "coach": None, "model_config": MODEL_CONFIG,
         })()),
@@ -738,32 +738,32 @@ def test_cmd_groom_summarize_empty(tmp_path, monkeypatch, capsys):
 
     import argparse
     args = argparse.Namespace(slug="test-slug")
-    from gotg.commands.groom import cmd_groom_summarize
+    from gotg.commands.explore import cmd_explore_summarize
     with pytest.raises(SystemExit):
-        cmd_groom_summarize(args)
+        cmd_explore_summarize(args)
 
     captured = capsys.readouterr()
     assert "No messages to summarize" in captured.err
 
 
 # ══════════════════════════════════════════════════════════════
-# Part 1: CLI groom continue --approve-iterations
+# Part 1: CLI explore continue --approve-iterations
 # ══════════════════════════════════════════════════════════════
 
 
-def test_groom_continue_approve_no_proposals(tmp_path, monkeypatch, capsys):
+def test_explore_continue_approve_no_proposals(tmp_path, monkeypatch, capsys):
     """Error when no pending proposals exist."""
     team_dir = _make_team_dir(tmp_path)
-    groom_dir = team_dir / "grooming" / "test-slug"
-    groom_dir.mkdir(parents=True)
-    (groom_dir / "grooming.json").write_text(json.dumps({
+    explore_dir = team_dir / "exploration" / "test-slug"
+    explore_dir.mkdir(parents=True)
+    (explore_dir / "exploration.json").write_text(json.dumps({
         "schema_version": 2, "slug": "test-slug", "topic": "Test topic",
         "coach": True, "max_turns": 30, "status": "active", "context_from": None,
     }))
-    (groom_dir / "conversation.jsonl").touch()
+    (explore_dir / "conversation.jsonl").touch()
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("gotg.commands.groom.TeamContext", type("TC", (), {
+    monkeypatch.setattr("gotg.commands.explore.TeamContext", type("TC", (), {
         "from_team_dir": staticmethod(lambda td: type("Ctx", (), {
             "agents": AGENTS, "coach": COACH, "model_config": MODEL_CONFIG,
             "project_root": tmp_path, "file_access": None, "model_resolver": None,
@@ -774,42 +774,42 @@ def test_groom_continue_approve_no_proposals(tmp_path, monkeypatch, capsys):
     args = argparse.Namespace(
         slug="test-slug", approve_iterations=True, message=None, max_turns=None,
     )
-    from gotg.commands.groom import cmd_groom_continue
+    from gotg.commands.explore import cmd_explore_continue
     with pytest.raises(SystemExit):
-        cmd_groom_continue(args)
+        cmd_explore_continue(args)
 
     captured = capsys.readouterr()
     assert "no pending iteration proposals" in captured.err
 
 
-def test_groom_continue_approve_and_message_exclusive():
+def test_explore_continue_approve_and_message_exclusive():
     """--approve-iterations and -m can't be combined (argparse mutual exclusion)."""
     from gotg.cli import main
     import sys
 
     with pytest.raises(SystemExit) as exc_info:
-        sys.argv = ["gotg", "groom", "continue", "test", "--approve-iterations", "-m", "hello"]
+        sys.argv = ["gotg", "explore", "continue", "test", "--approve-iterations", "-m", "hello"]
         main()
 
     assert exc_info.value.code == 2  # argparse exits with 2 on error
 
 
 # ══════════════════════════════════════════════════════════════
-# end_grooming Coach Tool
+# end_exploration Coach Tool
 # ══════════════════════════════════════════════════════════════
 
-_END_GROOMING_TOOL_CALL = {
-    "name": "end_grooming",
+_END_EXPLORATION_TOOL_CALL = {
+    "name": "end_exploration",
     "input": {"summary": "Discussed calculator UI — agreed on REPL-first approach."},
 }
 
 
-def test_coach_end_grooming_yields_session_complete():
-    """Coach end_grooming tool call → SessionComplete event."""
+def test_coach_end_exploration_yields_session_complete():
+    """Coach end_exploration tool call → SessionComplete event."""
     deps = _make_deps(
         coach_response={
             "content": "Great discussion. Wrapping up.",
-            "tool_calls": [_END_GROOMING_TOOL_CALL],
+            "tool_calls": [_END_EXPLORATION_TOOL_CALL],
         },
     )
     events = _collect(run_session(
@@ -828,12 +828,12 @@ def test_coach_end_grooming_yields_session_complete():
     assert "Wrapping up" in coach_msgs[0].msg["content"]
 
 
-def test_coach_end_grooming_fallback_text():
-    """Empty coach text gets fallback when end_grooming called."""
+def test_coach_end_exploration_fallback_text():
+    """Empty coach text gets fallback when end_exploration called."""
     deps = _make_deps(
         coach_response={
             "content": "",
-            "tool_calls": [_END_GROOMING_TOOL_CALL],
+            "tool_calls": [_END_EXPLORATION_TOOL_CALL],
         },
     )
     events = _collect(run_session(
@@ -845,16 +845,16 @@ def test_coach_end_grooming_fallback_text():
         e for e in _events_of_type(events, AppendMessage)
         if e.msg.get("from") == "coach"
     ]
-    assert "(Grooming concluded.)" in coach_msgs[0].msg["content"]
+    assert "(Exploration concluded.)" in coach_msgs[0].msg["content"]
 
 
-def test_coach_end_grooming_priority_over_ask_pm():
-    """When coach calls both end_grooming and ask_pm, end_grooming wins."""
+def test_coach_end_exploration_priority_over_ask_pm():
+    """When coach calls both end_exploration and ask_pm, end_exploration wins."""
     deps = _make_deps(
         coach_response={
             "content": "Wrapping up.",
             "tool_calls": [
-                _END_GROOMING_TOOL_CALL,
+                _END_EXPLORATION_TOOL_CALL,
                 {"name": "ask_pm", "input": {"question": "Anything else?"}},
             ],
         },
@@ -876,12 +876,12 @@ def test_coach_end_grooming_priority_over_ask_pm():
     assert "ask_pm" not in coach_msgs[0].msg
 
 
-def test_propose_iterations_priority_over_end_grooming():
-    """When coach calls both propose_iterations and end_grooming, proposals win."""
+def test_propose_iterations_priority_over_end_exploration():
+    """When coach calls both propose_iterations and end_exploration, proposals win."""
     deps = _make_deps(
         coach_response={
             "content": "Final proposals before wrapping up.",
-            "tool_calls": [_PROPOSE_TOOL_CALL, _END_GROOMING_TOOL_CALL],
+            "tool_calls": [_PROPOSE_TOOL_CALL, _END_EXPLORATION_TOOL_CALL],
         },
     )
     events = _collect(run_session(
@@ -895,13 +895,13 @@ def test_propose_iterations_priority_over_end_grooming():
     assert len(completes) == 0  # proposals take priority, session pauses for review
 
 
-def test_end_grooming_tool_in_grooming_coach_tools():
-    """Tool present in GROOMING_COACH_TOOLS."""
-    names = {t["name"] for t in GROOMING_COACH_TOOLS}
-    assert "end_grooming" in names
+def test_end_exploration_tool_in_exploration_coach_tools():
+    """Tool present in EXPLORATION_COACH_TOOLS."""
+    names = {t["name"] for t in EXPLORATION_COACH_TOOLS}
+    assert "end_exploration" in names
 
 
-def test_end_grooming_tool_not_in_iteration_coach_tools():
+def test_end_exploration_tool_not_in_iteration_coach_tools():
     """Tool NOT in COACH_TOOLS (iteration coach)."""
     names = {t["name"] for t in COACH_TOOLS}
-    assert "end_grooming" not in names
+    assert "end_exploration" not in names

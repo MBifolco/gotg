@@ -39,7 +39,7 @@ def list_iterations(team_dir: Path) -> list[dict]:
 
 
 def load_session_metadata(team_dir: Path, base_metadata: dict) -> dict:
-    """Bundle iteration/grooming metadata with agents and coach info.
+    """Bundle iteration/exploration metadata with agents and coach info.
 
     Returns a copy of base_metadata enriched with agents and coach
     loaded from team.json.

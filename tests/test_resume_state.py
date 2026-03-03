@@ -116,7 +116,7 @@ def test_task_status_bar_implementation():
     assert state.show_task_status_bar is True
 
 
-def test_none_phase_grooming():
+def test_none_phase_exploration():
     msgs = [_msg("alice", "Exploring ideas.")]
     state = reconstruct_resume_state(msgs, None)
     assert state.pause_reason is None

@@ -6,13 +6,13 @@ from pathlib import Path
 from gotg.prompts import (
     AGENT_TOOLS,
     COACH_TOOLS,
-    GROOMING_COACH_PROMPT,
-    GROOMING_COACH_TOOLS,
-    GROOMING_KICKOFF_TEMPLATE,
-    GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE,
-    GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE,
-    GROOMING_SYSTEM_SUPPLEMENT,
-    GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT,
+    EXPLORATION_COACH_PROMPT,
+    EXPLORATION_COACH_TOOLS,
+    EXPLORATION_KICKOFF_TEMPLATE,
+    EXPLORATION_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE,
+    EXPLORATION_KICKOFF_WITH_CONTEXT_TEMPLATE,
+    EXPLORATION_SYSTEM_SUPPLEMENT,
+    EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT,
 )
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
 from gotg.tasks import TaskRepo, format_tasks_summary
@@ -33,7 +33,7 @@ class SessionPolicy:
     agent_tools: tuple[dict, ...]
     coach_tools: tuple[dict, ...] | None  # None when no coach (NOT empty — truthiness)
     # Content artifacts
-    groomed_summary: str | None
+    refinement_summary: str | None
     tasks_summary: str | None
     diffs_summary: str | None
     kickoff_text: str | None
@@ -41,12 +41,12 @@ class SessionPolicy:
     fileguard: object | None
     approval_store: object | None
     worktree_map: dict | None
-    # Prompt supplements (grooming mode)
+    # Prompt supplements (exploration mode)
     system_supplement: str | None     # Extra text injected early in agent system prompt
     coach_system_prompt: str | None   # Overrides phase-based coach facilitation prompt
     # Phase context
     phase_skeleton: str | None = None  # Compressed prior-phase context
-    project_context: str | None = None  # Iteration artifacts for context injection (grooming, cross-iteration)
+    project_context: str | None = None  # Iteration artifacts for context injection (exploration, cross-iteration)
     iteration_plan: str | None = None  # Sibling iterations for scope awareness
     # Streaming
     streaming: bool = False           # opt-in via team.json, default off for safe rollout
@@ -89,7 +89,7 @@ def iteration_policy(
 
     # Load refinement_summary.md artifact
     summary_path = iter_dir / "refinement_summary.md"
-    groomed_summary = summary_path.read_text().strip() if summary_path.exists() else None
+    refinement_summary = summary_path.read_text().strip() if summary_path.exists() else None
 
     # Load phase skeleton (compressed prior-phase context)
     skeleton_path = iter_dir / "phase_skeleton.md"
@@ -146,7 +146,7 @@ def iteration_policy(
         stop_on_ask_pm=True,
         agent_tools=agent_tools,
         coach_tools=coach_tools,
-        groomed_summary=groomed_summary,
+        refinement_summary=refinement_summary,
         tasks_summary=tasks_summary,
         diffs_summary=diffs_summary,
         kickoff_text=kickoff_text,
@@ -161,7 +161,7 @@ def iteration_policy(
     )
 
 
-def grooming_policy(
+def exploration_policy(
     agents: list[dict],
     topic: str,
     history: list[dict],
@@ -172,7 +172,7 @@ def grooming_policy(
     project_root: Path | None = None,
     file_access: dict | None = None,
 ) -> SessionPolicy:
-    """Build policy for a freeform grooming conversation."""
+    """Build policy for a freeform exploration conversation."""
     first_agent = agents[0]["name"] if agents else "agent-1"
 
     # Build read-only file tools + fileguard when file_access is configured
@@ -188,23 +188,23 @@ def grooming_policy(
 
     # Select system supplement based on context availability
     system_supplement = (
-        GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT if project_context
-        else GROOMING_SYSTEM_SUPPLEMENT
+        EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT if project_context
+        else EXPLORATION_SYSTEM_SUPPLEMENT
     )
 
     # Only inject kickoff on first run (empty history)
     kickoff_text = None
     if not history:
         if project_context and fileguard:
-            kickoff_text = GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE.format(
+            kickoff_text = EXPLORATION_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE.format(
                 topic=topic, first_agent=first_agent,
             )
         elif project_context:
-            kickoff_text = GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE.format(
+            kickoff_text = EXPLORATION_KICKOFF_WITH_CONTEXT_TEMPLATE.format(
                 topic=topic, first_agent=first_agent,
             )
         else:
-            kickoff_text = GROOMING_KICKOFF_TEMPLATE.format(
+            kickoff_text = EXPLORATION_KICKOFF_TEMPLATE.format(
                 topic=topic, first_agent=first_agent,
             )
 
@@ -215,8 +215,8 @@ def grooming_policy(
         stop_on_phase_complete=False,
         stop_on_ask_pm=bool(coach),
         agent_tools=agent_tools,
-        coach_tools=tuple(GROOMING_COACH_TOOLS) if coach else None,
-        groomed_summary=None,
+        coach_tools=tuple(EXPLORATION_COACH_TOOLS) if coach else None,
+        refinement_summary=None,
         tasks_summary=None,
         diffs_summary=None,
         kickoff_text=kickoff_text,
@@ -224,7 +224,7 @@ def grooming_policy(
         approval_store=None,
         worktree_map=None,
         system_supplement=system_supplement,
-        coach_system_prompt=GROOMING_COACH_PROMPT if coach else None,
+        coach_system_prompt=EXPLORATION_COACH_PROMPT if coach else None,
         project_context=project_context,
         streaming=streaming,
     )

@@ -117,10 +117,10 @@ def test_load_session_metadata_no_coach(tmp_path):
     }
     (tmp_path / "team.json").write_text(json.dumps(team_json))
 
-    meta = {"slug": "test-groom", "topic": "Explore errors"}
+    meta = {"slug": "test-explore", "topic": "Explore errors"}
     result = load_session_metadata(tmp_path, meta)
 
-    assert result["slug"] == "test-groom"
+    assert result["slug"] == "test-explore"
     assert result["coach"] is None
 
 

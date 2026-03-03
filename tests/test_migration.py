@@ -1,12 +1,12 @@
 """Tests for gotg.migration — pure data transformation tests."""
 
 from gotg.migration import (
-    CURRENT_GROOMING_VERSION,
+    CURRENT_EXPLORATION_VERSION,
     CURRENT_ITERATION_VERSION,
     CURRENT_TASKS_VERSION,
     CURRENT_TEAM_VERSION,
     _safe_version,
-    migrate_grooming_metadata,
+    migrate_exploration_metadata,
     migrate_iteration_data,
     migrate_tasks_data,
     migrate_team_config,
@@ -69,7 +69,7 @@ def test_migrate_iteration_v0_no_version():
     assert it["status"] == "pending"
 
 
-def test_migrate_iteration_v0_normalizes_grooming_phase():
+def test_migrate_iteration_v0_normalizes_legacy_grooming_phase():
     data = {
         "iterations": [{"id": "iter-1", "phase": "grooming", "max_turns": 10}],
         "current": "iter-1",
@@ -234,39 +234,39 @@ def test_stamp_tasks_no_downstamp():
     assert result["schema_version"] == 99
 
 
-# ── grooming.json ─────────────────────────────────────────────
+# ── exploration.json ───────────────────────────────────────────
 
-def test_migrate_grooming_v0_adds_status():
+def test_migrate_exploration_v0_adds_status():
     data = {"slug": "test", "topic": "hello"}
-    result = migrate_grooming_metadata(data)
-    assert result["schema_version"] == CURRENT_GROOMING_VERSION
+    result = migrate_exploration_metadata(data)
+    assert result["schema_version"] == CURRENT_EXPLORATION_VERSION
     assert result["status"] == "active"
 
 
-def test_migrate_grooming_v0_preserves_existing_status():
+def test_migrate_exploration_v0_preserves_existing_status():
     data = {"slug": "test", "topic": "hello", "status": "closed"}
-    result = migrate_grooming_metadata(data)
+    result = migrate_exploration_metadata(data)
     assert result["status"] == "closed"
 
 
-def test_migrate_grooming_v1_to_v2_adds_context_from():
+def test_migrate_exploration_v1_to_v2_adds_context_from():
     data = {"schema_version": 1, "slug": "test", "status": "active"}
-    result = migrate_grooming_metadata(data)
+    result = migrate_exploration_metadata(data)
     assert result["schema_version"] == 2
     assert result["context_from"] is None
 
 
-def test_migrate_grooming_v2_passthrough():
+def test_migrate_exploration_v2_passthrough():
     data = {"schema_version": 2, "slug": "test", "status": "active", "context_from": "iter-1"}
-    result = migrate_grooming_metadata(data)
+    result = migrate_exploration_metadata(data)
     assert result["schema_version"] == 2
     assert result["context_from"] == "iter-1"
 
 
-def test_migrate_grooming_forward_version_warns():
+def test_migrate_exploration_forward_version_warns():
     data = {"schema_version": 99, "slug": "test"}
     warnings: list[str] = []
-    result = migrate_grooming_metadata(data, warnings=warnings)
+    result = migrate_exploration_metadata(data, warnings=warnings)
     assert len(warnings) == 1
     assert "schema_version 99" in warnings[0]
 

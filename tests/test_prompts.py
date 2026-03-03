@@ -7,7 +7,6 @@ from gotg.prompts import (
     COACH_FACILITATION_PROMPT,
     COACH_FACILITATION_PROMPTS,
     COACH_REFINEMENT_PROMPT,
-    COACH_GROOMING_PROMPT,
     COACH_PLANNING_PROMPT,
     COACH_NOTES_EXTRACTION_PROMPT,
     PHASE_KICKOFF_MESSAGES,
@@ -52,7 +51,6 @@ def test_kickoff_messages_has_all_phases():
 
 def test_extraction_prompts_exist():
     assert isinstance(COACH_REFINEMENT_PROMPT, str) and COACH_REFINEMENT_PROMPT
-    assert COACH_GROOMING_PROMPT is COACH_REFINEMENT_PROMPT  # backward-compat alias
     assert isinstance(COACH_PLANNING_PROMPT, str) and COACH_PLANNING_PROMPT
     assert isinstance(COACH_NOTES_EXTRACTION_PROMPT, str) and COACH_NOTES_EXTRACTION_PROMPT
 

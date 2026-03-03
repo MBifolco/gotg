@@ -57,7 +57,7 @@ def _make_policy(**overrides):
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
         agent_tools=tuple(AGENT_TOOLS), coach_tools=tuple(COACH_TOOLS),
-        groomed_summary=None, tasks_summary=None, diffs_summary=None,
+        refinement_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
         phase_skeleton=None,
@@ -284,12 +284,12 @@ def test_kickoff_injection():
     deps = _make_deps()
     events = _collect(run_session(
         agents=AGENTS, iteration=ITERATION, model_config=MODEL_CONFIG,
-        deps=deps, history=[], policy=_make_policy(max_turns=1, kickoff_text="Welcome to grooming!"),
+        deps=deps, history=[], policy=_make_policy(max_turns=1, kickoff_text="Welcome to exploration!"),
     ))
     msgs = _events_of_type(events, AppendMessage)
     # First AppendMessage should be the kickoff
     assert msgs[0].msg["from"] == "system"
-    assert msgs[0].msg["content"] == "Welcome to grooming!"
+    assert msgs[0].msg["content"] == "Welcome to exploration!"
 
 
 def test_no_kickoff_when_none():

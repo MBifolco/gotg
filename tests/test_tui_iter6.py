@@ -520,11 +520,11 @@ async def test_home_n_cancel_does_nothing(tmp_path):
         assert len(data["iterations"]) == 0
 
 
-# ── HomeScreen: G key — new grooming ──────────────────────────
+# ── HomeScreen: G key — new exploration ──────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_home_g_creates_grooming_and_opens_chat(tmp_path):
+async def test_home_g_creates_exploration_and_opens_chat(tmp_path):
     """Pressing G opens TextInputModal, submitting creates session and pushes ChatScreen."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
@@ -547,12 +547,12 @@ async def test_home_g_creates_grooming_and_opens_chat(tmp_path):
         await pilot.pause()
         await pilot.pause()
 
-        # Verify grooming session was created on disk
-        groom_dir = team_dir / "grooming"
-        assert groom_dir.exists()
-        slugs = [d.name for d in groom_dir.iterdir() if d.is_dir()]
+        # Verify exploration session was created on disk
+        explore_dir = team_dir / "exploration"
+        assert explore_dir.exists()
+        slugs = [d.name for d in explore_dir.iterdir() if d.is_dir()]
         assert len(slugs) == 1
-        meta = json.loads((groom_dir / slugs[0] / "grooming.json").read_text())
+        meta = json.loads((explore_dir / slugs[0] / "exploration.json").read_text())
         assert meta["topic"] == "Explore caching strategies"
 
         # Verify we landed on ChatScreen (not back on HomeScreen)
@@ -561,7 +561,7 @@ async def test_home_g_creates_grooming_and_opens_chat(tmp_path):
 
 @pytest.mark.asyncio
 async def test_home_g_cancel_does_nothing(tmp_path):
-    """Pressing G then Escape creates no grooming session."""
+    """Pressing G then Escape creates no exploration session."""
     team_dir = _make_team_dir(tmp_path)
     from gotg.tui.app import GotgApp
     from gotg.tui.modals.text_input import TextInputModal
@@ -578,13 +578,13 @@ async def test_home_g_cancel_does_nothing(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
 
-        groom_dir = team_dir / "grooming"
-        assert not groom_dir.exists() or len(list(groom_dir.iterdir())) == 0
+        explore_dir = team_dir / "exploration"
+        assert not explore_dir.exists() or len(list(explore_dir.iterdir())) == 0
 
 
 @pytest.mark.asyncio
 async def test_home_g_works_from_iterations_tab(tmp_path):
-    """G key works even when the iterations tab is active (not just grooming tab)."""
+    """G key works even when the iterations tab is active (not just exploration tab)."""
     iterations = [
         {"id": "iter-1", "description": "Test", "phase": "refinement",
          "status": "in-progress", "max_turns": 10},
@@ -605,15 +605,15 @@ async def test_home_g_works_from_iterations_tab(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_home_grooming_row_select_passes_session_kind(tmp_path):
-    """Selecting a grooming row opens ChatScreen with session_kind='grooming'."""
-    grooming = [{"slug": "test-groom", "topic": "Test topic", "coach": True, "max_turns": 30, "status": "active"}]
-    # Make the iteration 'done' — grooming should still open fine
+async def test_home_exploration_row_select_passes_session_kind(tmp_path):
+    """Selecting an exploration row opens ChatScreen with session_kind='exploration'."""
+    exploration = [{"slug": "test-explore", "topic": "Test topic", "coach": True, "max_turns": 30, "status": "active"}]
+    # Make the iteration 'done' — exploration should still open fine
     iterations = [
         {"id": "iter-1", "description": "Done iter", "phase": "code-review",
          "status": "done", "max_turns": 10},
     ]
-    team_dir = _make_team_dir(tmp_path, iterations=iterations, grooming=grooming)
+    team_dir = _make_team_dir(tmp_path, iterations=iterations, exploration=exploration)
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.chat import ChatScreen
     from textual.widgets import DataTable, TabbedContent
@@ -622,23 +622,23 @@ async def test_home_grooming_row_select_passes_session_kind(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
 
-        # Switch to the grooming tab
+        # Switch to the exploration tab
         tc = app.screen.query_one(TabbedContent)
-        tc.active = "tab-grooming"
+        tc.active = "tab-exploration"
         await pilot.pause()
         await pilot.pause()
 
-        # Focus the grooming table and select the row
-        groom_table = app.screen.query_one("#groom-table", DataTable)
-        groom_table.focus()
+        # Focus the exploration table and select the row
+        explore_table = app.screen.query_one("#explore-table", DataTable)
+        explore_table.focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
 
-        # Should open ChatScreen with session_kind="grooming"
+        # Should open ChatScreen with session_kind="exploration"
         assert isinstance(app.screen, ChatScreen)
-        assert app.screen._session_kind == "grooming"
+        assert app.screen._session_kind == "exploration"
 
 
 # ── HomeScreen: E key — edit iteration ────────────────────────
@@ -788,7 +788,7 @@ async def test_run_pending_without_description_prompts(tmp_path):
 # ── Shared fixture ────────────────────────────────────────────
 
 
-def _make_team_dir(tmp_path, iterations=None, grooming=None):
+def _make_team_dir(tmp_path, iterations=None, exploration=None):
     """Create a minimal .team/ directory for testing."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
@@ -820,13 +820,13 @@ def _make_team_dir(tmp_path, iterations=None, grooming=None):
         "current": current,
     }))
 
-    for g in (grooming or []):
+    for g in (exploration or []):
         g = dict(g)
-        groom_dir = team_dir / "grooming" / g["slug"]
-        groom_dir.mkdir(parents=True)
+        explore_dir = team_dir / "exploration" / g["slug"]
+        explore_dir.mkdir(parents=True)
         msgs = g.pop("_messages", [])
-        (groom_dir / "grooming.json").write_text(json.dumps(g))
-        log = groom_dir / "conversation.jsonl"
+        (explore_dir / "exploration.json").write_text(json.dumps(g))
+        log = explore_dir / "conversation.jsonl"
         lines = [json.dumps(m) for m in msgs]
         log.write_text("\n".join(lines) + "\n" if lines else "")
 

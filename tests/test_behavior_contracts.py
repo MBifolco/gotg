@@ -32,7 +32,7 @@ def _make_policy(**overrides):
         stop_on_ask_pm=True,
         agent_tools=tuple(AGENT_TOOLS),
         coach_tools=None,
-        groomed_summary=None,
+        refinement_summary=None,
         tasks_summary=None,
         diffs_summary=None,
         kickoff_text=None,

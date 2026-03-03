@@ -48,37 +48,20 @@ Behavior: Negative tests assert clear failure modes, not just absence of crash.
 Governance enforcement:
 - `.github/workflows/behavior-map-guard.yml` ensures critical execution changes include behavior-map and test updates.
 
-## Prioritized Next 10 High-Value Tests
+## High-Value Tests (Implemented)
+
+All 10 originally planned tests were consolidated into `tests/test_e2e_quality_gate.py` plus supporting contract tests in `tests/test_behavior_contracts.py`:
 
 1. Full deterministic end-to-end iteration lifecycle.
-Target file: `tests/test_e2e_iteration_lifecycle.py`
-
 2. Multi-layer implementation boundary with merge and next-layer sequencing.
-Target file: `tests/test_e2e_layer_progression.py`
-
 3. Streaming parity for display and persistence across discussion and implementation.
-Target file: `tests/test_e2e_streaming_parity.py`
-
 4. Approval pause and resume with approve and deny branches.
-Target file: `tests/test_e2e_approval_resume.py`
-
 5. Cross-turn suppression guard for pass-turn followed by substantive next-agent response.
-Target file: `tests/test_e2e_turn_suppression.py`
-
 6. Coach streaming behavior for tool-only and mixed text+tool turns.
-Target file: `tests/test_e2e_coach_streaming.py`
-
 7. Resume from `implementation_state.json` mid-layer after interruption.
-Target file: `tests/test_e2e_impl_resume_state.py`
-
 8. Drift-check contract behavior.
-Target file: `tests/test_e2e_drift_contract.py`
-
 9. Worktree isolation contract.
-Target file: `tests/test_e2e_worktree_isolation.py`
-
 10. Checkpoint and restore correctness for phase and artifacts.
-Target file: `tests/test_e2e_checkpoint_restore_contract.py`
 
 ## Other Assessment Lenses (Beyond Coverage Percent)
 

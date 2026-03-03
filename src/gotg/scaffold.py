@@ -7,7 +7,7 @@ from gotg.errors import ConfigError
 from gotg.prompts import (  # noqa: F401 — re-export for backward compatibility
     DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS,
     COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS,
-    COACH_REFINEMENT_PROMPT, COACH_GROOMING_PROMPT,
+    COACH_REFINEMENT_PROMPT,
     COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
     PHASE_KICKOFF_MESSAGES, AGENT_TOOLS, COACH_TOOLS,
 )
@@ -221,4 +221,4 @@ def init_project(path: Path) -> None:
     print("  .team/team.json")
     print("  .team/iteration.json")
     print()
-    print("Next: run 'gotg groom start \"topic\"' to explore, or 'gotg new \"description\"' to create an iteration.")
+    print("Next: run 'gotg explore start \"topic\"' to explore, or 'gotg new \"description\"' to create an iteration.")

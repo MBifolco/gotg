@@ -71,7 +71,7 @@ _EMPTY = PhaseCapabilities()
 def get_phase_caps(phase: str | None) -> PhaseCapabilities:
     """Look up capabilities for a phase (strict).
 
-    Returns empty caps for None (grooming/no phase).
+    Returns empty caps for None (exploration/no phase).
     Raises ValueError for unknown non-None phases (catches typos).
     Use this in core paths (session.py) where callers translate
     ValueError into domain errors (SessionSetupError, ReviewError).

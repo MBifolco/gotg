@@ -3,15 +3,15 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from gotg.errors import GroomingError
-from gotg.groom import (
+from gotg.errors import ExplorationError
+from gotg.explore import (
     generate_slug,
     validate_slug,
-    write_grooming_metadata,
-    load_grooming_metadata,
-    list_grooming_sessions,
+    write_exploration_metadata,
+    load_exploration_metadata,
+    list_exploration_sessions,
     existing_slugs,
-    run_grooming_conversation,
+    run_exploration_conversation,
 )
 
 
@@ -69,7 +69,7 @@ def test_generate_slug_all_stop_words_fallback():
 
 def test_generate_slug_empty_topic_fallback():
     slug = generate_slug("???!!!")
-    assert slug == "groom"
+    assert slug == "explore"
 
 
 def test_generate_slug_no_existing():
@@ -101,53 +101,53 @@ def test_validate_slug_invalid():
 def test_write_and_load_metadata(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    groom_dir = write_grooming_metadata(team_dir, "test-slug", "Test topic", coach=False, max_turns=30)
-    assert groom_dir.exists()
-    assert (groom_dir / "grooming.json").exists()
-    assert (groom_dir / "conversation.jsonl").exists()
+    explore_dir = write_exploration_metadata(team_dir, "test-slug", "Test topic", coach=False, max_turns=30)
+    assert explore_dir.exists()
+    assert (explore_dir / "exploration.json").exists()
+    assert (explore_dir / "conversation.jsonl").exists()
 
-    meta, loaded_dir = load_grooming_metadata(team_dir, "test-slug")
+    meta, loaded_dir = load_exploration_metadata(team_dir, "test-slug")
     assert meta["slug"] == "test-slug"
     assert meta["topic"] == "Test topic"
     assert meta["coach"] is False
     assert meta["max_turns"] == 30
-    assert loaded_dir == groom_dir
+    assert loaded_dir == explore_dir
 
 
 def test_load_metadata_missing_raises(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    with pytest.raises(GroomingError):
-        load_grooming_metadata(team_dir, "nonexistent")
+    with pytest.raises(ExplorationError):
+        load_exploration_metadata(team_dir, "nonexistent")
 
 
 def test_list_sessions_empty(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    assert list_grooming_sessions(team_dir) == []
+    assert list_exploration_sessions(team_dir) == []
 
 
 def test_list_sessions_returns_all(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    write_grooming_metadata(team_dir, "aaa-topic", "Topic A", coach=False, max_turns=30)
-    write_grooming_metadata(team_dir, "bbb-topic", "Topic B", coach=True, max_turns=20)
-    sessions = list_grooming_sessions(team_dir)
+    write_exploration_metadata(team_dir, "aaa-topic", "Topic A", coach=False, max_turns=30)
+    write_exploration_metadata(team_dir, "bbb-topic", "Topic B", coach=True, max_turns=20)
+    sessions = list_exploration_sessions(team_dir)
     assert len(sessions) == 2
     assert sessions[0]["slug"] == "aaa-topic"
     assert sessions[1]["slug"] == "bbb-topic"
 
 
 def test_list_sessions_forward_version_warns(tmp_path, capsys):
-    """list_grooming_sessions prints warning for forward-version metadata."""
+    """list_exploration_sessions prints warning for forward-version metadata."""
     team_dir = tmp_path / ".team"
-    groom_dir = team_dir / "grooming" / "future-topic"
-    groom_dir.mkdir(parents=True)
+    explore_dir = team_dir / "exploration" / "future-topic"
+    explore_dir.mkdir(parents=True)
     import json
-    (groom_dir / "grooming.json").write_text(json.dumps({
+    (explore_dir / "exploration.json").write_text(json.dumps({
         "schema_version": 99, "slug": "future-topic", "topic": "future",
     }))
-    sessions = list_grooming_sessions(team_dir)
+    sessions = list_exploration_sessions(team_dir)
     assert len(sessions) == 1
     captured = capsys.readouterr()
     assert "schema_version 99" in captured.err
@@ -156,8 +156,8 @@ def test_list_sessions_forward_version_warns(tmp_path, capsys):
 def test_existing_slugs(tmp_path):
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    write_grooming_metadata(team_dir, "slug-a", "Topic A", coach=False, max_turns=30)
-    write_grooming_metadata(team_dir, "slug-b", "Topic B", coach=False, max_turns=30)
+    write_exploration_metadata(team_dir, "slug-a", "Topic A", coach=False, max_turns=30)
+    write_exploration_metadata(team_dir, "slug-b", "Topic B", coach=False, max_turns=30)
     slugs = existing_slugs(team_dir)
     assert slugs == {"slug-a", "slug-b"}
 
@@ -187,10 +187,10 @@ def _make_iteration(slug="test-slug", topic="Test topic"):
     return {"id": slug, "description": topic, "phase": None}
 
 
-def test_run_grooming_writes_messages(tmp_path):
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+def test_run_exploration_writes_messages(tmp_path):
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
 
     call_count = 0
 
@@ -201,52 +201,52 @@ def test_run_grooming_writes_messages(tmp_path):
 
     with patch("gotg.model.agentic_completion", mock_agent), \
          patch("gotg.model.chat_completion"):
-        run_grooming_conversation(
-            groom_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
+        run_exploration_conversation(
+            explore_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
             topic="Test topic", max_turns_override=2,
         )
 
-    messages = [json.loads(line) for line in (groom_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
+    messages = [json.loads(line) for line in (explore_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
     # Kickoff (system) + 2 agent messages
     agent_msgs = [m for m in messages if m["from"] not in ("system",)]
     assert len(agent_msgs) == 2
 
 
-def test_run_grooming_kickoff_injected(tmp_path):
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+def test_run_exploration_kickoff_injected(tmp_path):
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
 
     def mock_agent(**kw):
         return {"content": "hello", "operations": []}
 
     with patch("gotg.model.agentic_completion", mock_agent), \
          patch("gotg.model.chat_completion"):
-        run_grooming_conversation(
-            groom_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
+        run_exploration_conversation(
+            explore_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
             topic="Test topic", max_turns_override=1,
         )
 
-    messages = [json.loads(line) for line in (groom_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
+    messages = [json.loads(line) for line in (explore_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
     assert messages[0]["from"] == "system"
-    assert "Grooming: Test topic" in messages[0]["content"]
+    assert "Exploration: Test topic" in messages[0]["content"]
 
 
-def test_run_grooming_no_kickoff_on_continue(tmp_path):
+def test_run_exploration_no_kickoff_on_continue(tmp_path):
     """When conversation already has history, kickoff should not be re-injected."""
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    log_path = groom_dir / "conversation.jsonl"
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    log_path = explore_dir / "conversation.jsonl"
     # Pre-existing message
-    log_path.write_text(json.dumps({"from": "system", "iteration": "test-slug", "content": "--- Grooming: Test ---"}) + "\n")
+    log_path.write_text(json.dumps({"from": "system", "iteration": "test-slug", "content": "--- Exploration: Test ---"}) + "\n")
 
     def mock_agent(**kw):
         return {"content": "hello", "operations": []}
 
     with patch("gotg.model.agentic_completion", mock_agent), \
          patch("gotg.model.chat_completion"):
-        run_grooming_conversation(
-            groom_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
+        run_exploration_conversation(
+            explore_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
             topic="Test topic", max_turns_override=1,
         )
 
@@ -256,10 +256,10 @@ def test_run_grooming_no_kickoff_on_continue(tmp_path):
     assert len(system_msgs) == 1  # Only the pre-existing one
 
 
-def test_run_grooming_with_coach(tmp_path):
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+def test_run_exploration_with_coach(tmp_path):
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
 
     coach = {"name": "coach", "role": "Agile Coach"}
 
@@ -271,20 +271,20 @@ def test_run_grooming_with_coach(tmp_path):
 
     with patch("gotg.model.agentic_completion", mock_agent), \
          patch("gotg.model.chat_completion", mock_coach):
-        run_grooming_conversation(
-            groom_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
+        run_exploration_conversation(
+            explore_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
             topic="Test topic", coach=coach, max_turns_override=4,
         )
 
-    messages = [json.loads(line) for line in (groom_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
+    messages = [json.loads(line) for line in (explore_dir / "conversation.jsonl").read_text().splitlines() if line.strip()]
     coach_msgs = [m for m in messages if m["from"] == "coach"]
     assert len(coach_msgs) >= 1
 
 
-def test_run_grooming_coach_ask_pm(tmp_path, capsys):
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+def test_run_exploration_coach_ask_pm(tmp_path, capsys):
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
 
     coach = {"name": "coach", "role": "Agile Coach"}
 
@@ -299,10 +299,10 @@ def test_run_grooming_coach_ask_pm(tmp_path, capsys):
 
     with patch("gotg.model.agentic_completion", mock_agent), \
          patch("gotg.model.chat_completion", mock_coach):
-        run_grooming_conversation(
-            groom_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
+        run_exploration_conversation(
+            explore_dir, AGENTS, _make_iteration(), MODEL_CONFIG,
             topic="Test topic", coach=coach, max_turns_override=4,
         )
 
     output = capsys.readouterr().out
-    assert "gotg groom continue test-slug" in output
+    assert "gotg explore continue test-slug" in output

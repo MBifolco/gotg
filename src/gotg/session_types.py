@@ -195,7 +195,7 @@ class SessionSetup:
     """Everything needed to run a session.
 
     Built by prepare_session() or manually by consumers with different
-    policy factories (e.g. grooming uses grooming_policy, not iteration_policy).
+    policy factories (e.g. exploration uses exploration_policy, not iteration_policy).
     """
     agents: list[dict]
     iteration: dict

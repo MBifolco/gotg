@@ -292,7 +292,7 @@ def test_coach_facilitation_planning_mentions_scope_coverage():
     from gotg.scaffold import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["planning"].lower()
     assert "requirements" in prompt
-    assert "groomed scope" in prompt
+    assert "refined scope" in prompt
 
 
 def test_coach_facilitation_pre_code_review_mentions_all_layers():

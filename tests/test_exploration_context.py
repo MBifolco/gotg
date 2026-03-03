@@ -1,4 +1,4 @@
-"""Tests for grooming context injection — mechanisms 0-3."""
+"""Tests for exploration context injection — mechanisms 0-3."""
 
 import json
 from pathlib import Path
@@ -6,18 +6,18 @@ from pathlib import Path
 import pytest
 
 from gotg.migration import (
-    CURRENT_GROOMING_VERSION,
-    migrate_grooming_metadata,
+    CURRENT_EXPLORATION_VERSION,
+    migrate_exploration_metadata,
 )
-from gotg.groom import write_grooming_metadata, load_grooming_metadata
-from gotg.policy import grooming_policy
+from gotg.explore import write_exploration_metadata, load_exploration_metadata
+from gotg.policy import exploration_policy
 from gotg.prompts import (
     AGENT_TOOLS,
-    GROOMING_KICKOFF_TEMPLATE,
-    GROOMING_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE,
-    GROOMING_KICKOFF_WITH_CONTEXT_TEMPLATE,
-    GROOMING_SYSTEM_SUPPLEMENT,
-    GROOMING_SYSTEM_SUPPLEMENT_WITH_CONTEXT,
+    EXPLORATION_KICKOFF_TEMPLATE,
+    EXPLORATION_KICKOFF_WITH_CONTEXT_AND_TOOLS_TEMPLATE,
+    EXPLORATION_KICKOFF_WITH_CONTEXT_TEMPLATE,
+    EXPLORATION_SYSTEM_SUPPLEMENT,
+    EXPLORATION_SYSTEM_SUPPLEMENT_WITH_CONTEXT,
 )
 from gotg.tools import READ_ONLY_FILE_TOOLS, FILE_TOOLS
 from gotg.agent import build_prompt, build_coach_prompt
@@ -33,7 +33,7 @@ AGENTS = [
     {"name": "agent-2", "role": "Software Engineer"},
 ]
 COACH = {"name": "coach", "role": "Agile Coach"}
-ITERATION_GROOM = {"id": "test-slug", "description": "test topic", "phase": None}
+ITERATION_EXPLORE = {"id": "test-slug", "description": "test topic", "phase": None}
 
 
 def _make_team_dir(tmp_path, iterations=None):
@@ -70,100 +70,100 @@ def _add_tasks_json(team_dir, iter_id, tasks=None):
 
 
 # ══════════════════════════════════════════════════════════════
-# Mechanism 0: grooming.json Linkage
+# Mechanism 0: exploration.json Linkage
 # ══════════════════════════════════════════════════════════════
 
 
-def test_migrate_grooming_v1_to_v2():
+def test_migrate_exploration_v1_to_v2():
     """v1→v2 migration adds context_from: null."""
     data = {"schema_version": 1, "slug": "test", "status": "active"}
-    result = migrate_grooming_metadata(data)
+    result = migrate_exploration_metadata(data)
     assert result["schema_version"] == 2
     assert result["context_from"] is None
 
 
-def test_write_grooming_metadata_with_context_from(tmp_path):
-    """context_from string is persisted in grooming.json."""
+def test_write_exploration_metadata_with_context_from(tmp_path):
+    """context_from string is persisted in exploration.json."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    groom_dir = write_grooming_metadata(
+    explore_dir = write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=True, max_turns=30, context_from="iter-1",
     )
-    meta = json.loads((groom_dir / "grooming.json").read_text())
+    meta = json.loads((explore_dir / "exploration.json").read_text())
     assert meta["context_from"] == "iter-1"
-    assert meta["schema_version"] == CURRENT_GROOMING_VERSION
+    assert meta["schema_version"] == CURRENT_EXPLORATION_VERSION
 
 
-def test_write_grooming_metadata_no_context(tmp_path):
+def test_write_exploration_metadata_no_context(tmp_path):
     """context_from=False (--no-context) is persisted as false in JSON."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    groom_dir = write_grooming_metadata(
+    explore_dir = write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from=False,
     )
-    meta = json.loads((groom_dir / "grooming.json").read_text())
+    meta = json.loads((explore_dir / "exploration.json").read_text())
     assert meta["context_from"] is False
 
 
-def test_write_grooming_metadata_null_context(tmp_path):
+def test_write_exploration_metadata_null_context(tmp_path):
     """Default context_from=None is persisted as null in JSON."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    groom_dir = write_grooming_metadata(
+    explore_dir = write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30,
     )
-    meta = json.loads((groom_dir / "grooming.json").read_text())
+    meta = json.loads((explore_dir / "exploration.json").read_text())
     assert meta["context_from"] is None
 
 
-def test_groom_continue_reads_context_from_string(tmp_path):
+def test_explore_continue_reads_context_from_string(tmp_path):
     """String context_from is loadable after write + load cycle."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    write_grooming_metadata(
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=True, max_turns=30, context_from="iter-1",
     )
-    meta, _ = load_grooming_metadata(team_dir, "test-slug")
+    meta, _ = load_exploration_metadata(team_dir, "test-slug")
     assert meta["context_from"] == "iter-1"
 
 
-def test_groom_continue_context_from_null_skips(tmp_path):
+def test_explore_continue_context_from_null_skips(tmp_path):
     """null context_from is preserved through write+load cycle."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    write_grooming_metadata(
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from=None,
     )
-    meta, _ = load_grooming_metadata(team_dir, "test-slug")
+    meta, _ = load_exploration_metadata(team_dir, "test-slug")
     assert meta["context_from"] is None
 
 
-def test_groom_continue_context_from_false_skips(tmp_path):
+def test_explore_continue_context_from_false_skips(tmp_path):
     """false context_from is preserved through write+load cycle."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    write_grooming_metadata(
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from=False,
     )
-    meta, _ = load_grooming_metadata(team_dir, "test-slug")
+    meta, _ = load_exploration_metadata(team_dir, "test-slug")
     assert meta["context_from"] is False
 
 
@@ -286,13 +286,13 @@ def test_no_context_flag_suppresses_injection(tmp_path):
     """--no-context → context_from=False is respected on continue."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
-    (team_dir / "grooming").mkdir(parents=True)
+    (team_dir / "exploration").mkdir(parents=True)
 
-    write_grooming_metadata(
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from=False,
     )
-    meta, _ = load_grooming_metadata(team_dir, "test-slug")
+    meta, _ = load_exploration_metadata(team_dir, "test-slug")
     context_from = meta.get("context_from")
     # False → skip loading
     assert context_from is False
@@ -304,18 +304,18 @@ def test_no_context_flag_suppresses_injection(tmp_path):
 # ══════════════════════════════════════════════════════════════
 
 
-def test_grooming_policy_with_project_context():
+def test_exploration_policy_with_project_context():
     """project_context field is set on policy when provided."""
-    p = grooming_policy(
+    p = exploration_policy(
         AGENTS, "Discuss feature X", history=[],
         project_context="=== Refinement Summary ===\nTest context",
     )
     assert p.project_context == "=== Refinement Summary ===\nTest context"
 
 
-def test_grooming_policy_without_project_context():
+def test_exploration_policy_without_project_context():
     """project_context remains None by default (backward compat)."""
-    p = grooming_policy(AGENTS, "Discuss feature X", history=[])
+    p = exploration_policy(AGENTS, "Discuss feature X", history=[])
     assert p.project_context is None
 
 
@@ -327,7 +327,7 @@ def test_grooming_policy_without_project_context():
 def test_build_prompt_project_context():
     """PROJECT CONTEXT block is rendered in agent system prompt."""
     msgs = build_prompt(
-        AGENTS[0], ITERATION_GROOM, [],
+        AGENTS[0], ITERATION_EXPLORE, [],
         project_context="=== Refinement Summary ===\nTest context",
     )
     system_content = msgs[0]["content"]
@@ -337,7 +337,7 @@ def test_build_prompt_project_context():
 
 def test_build_prompt_no_project_context():
     """No PROJECT CONTEXT block when project_context is None."""
-    msgs = build_prompt(AGENTS[0], ITERATION_GROOM, [])
+    msgs = build_prompt(AGENTS[0], ITERATION_EXPLORE, [])
     system_content = msgs[0]["content"]
     assert "PROJECT CONTEXT:" not in system_content
 
@@ -345,7 +345,7 @@ def test_build_prompt_no_project_context():
 def test_build_coach_prompt_project_context():
     """PROJECT CONTEXT block is rendered in coach system prompt."""
     msgs = build_coach_prompt(
-        COACH, ITERATION_GROOM, [],
+        COACH, ITERATION_EXPLORE, [],
         project_context="=== Task Breakdown ===\nTask data",
     )
     system_content = msgs[0]["content"]
@@ -366,9 +366,9 @@ def test_read_only_file_tools_excludes_write():
     assert "file_write" not in names
 
 
-def test_grooming_policy_with_file_access(tmp_path):
+def test_exploration_policy_with_file_access(tmp_path):
     """fileguard is set and read-only tools in agent_tools when file_access provided."""
-    p = grooming_policy(
+    p = exploration_policy(
         AGENTS, "Discuss feature X", history=[],
         project_root=tmp_path,
         file_access={"writable_paths": ["src/"]},
@@ -383,15 +383,15 @@ def test_grooming_policy_with_file_access(tmp_path):
     assert "file_write" not in tool_names
 
 
-def test_grooming_policy_without_file_access():
+def test_exploration_policy_without_file_access():
     """No fileguard or file tools when file_access not provided (backward compat)."""
-    p = grooming_policy(AGENTS, "Discuss feature X", history=[])
+    p = exploration_policy(AGENTS, "Discuss feature X", history=[])
     assert p.fileguard is None
     tool_names = {t["name"] for t in p.agent_tools}
     assert "file_read" not in tool_names
 
 
-def test_grooming_fileguard_blocks_writes(tmp_path):
+def test_exploration_fileguard_blocks_writes(tmp_path):
     """FileGuard with empty writable_paths rejects writes."""
     from gotg.fileguard import FileGuard, SecurityError
 
@@ -401,7 +401,7 @@ def test_grooming_fileguard_blocks_writes(tmp_path):
         fg.validate_write("src/main.py")
 
 
-def test_grooming_file_read_works(tmp_path):
+def test_exploration_file_read_works(tmp_path):
     """file_read succeeds through read-only fileguard."""
     from gotg.fileguard import FileGuard
 
@@ -412,22 +412,22 @@ def test_grooming_file_read_works(tmp_path):
     assert resolved.read_text() == "hello"
 
 
-def test_build_prompt_grooming_file_access(tmp_path):
+def test_build_prompt_exploration_file_access(tmp_path):
     """Read-only file access prompt injected for phase=None with fileguard."""
     from gotg.fileguard import FileGuard
 
     config = {"writable_paths": [], "enable_approvals": False}
     fg = FileGuard(tmp_path, config)
 
-    msgs = build_prompt(AGENTS[0], ITERATION_GROOM, [], fileguard=fg)
+    msgs = build_prompt(AGENTS[0], ITERATION_EXPLORE, [], fileguard=fg)
     system_content = msgs[0]["content"]
     assert "FILE ACCESS (read-only)" in system_content
     assert "file_read" in system_content
 
 
-def test_build_prompt_no_file_access_grooming():
-    """No file access prompt when no fileguard for grooming."""
-    msgs = build_prompt(AGENTS[0], ITERATION_GROOM, [])
+def test_build_prompt_no_file_access_exploration():
+    """No file access prompt when no fileguard for exploration."""
+    msgs = build_prompt(AGENTS[0], ITERATION_EXPLORE, [])
     system_content = msgs[0]["content"]
     assert "FILE ACCESS" not in system_content
 
@@ -437,9 +437,9 @@ def test_build_prompt_no_file_access_grooming():
 # ══════════════════════════════════════════════════════════════
 
 
-def test_grooming_kickoff_context_and_tools(tmp_path):
+def test_exploration_kickoff_context_and_tools(tmp_path):
     """Uses context+tools kickoff template when both available."""
-    p = grooming_policy(
+    p = exploration_policy(
         AGENTS, "Building a calculator UI", history=[],
         project_context="Some context",
         project_root=tmp_path,
@@ -452,9 +452,9 @@ def test_grooming_kickoff_context_and_tools(tmp_path):
     assert "agent-1" in p.kickoff_text
 
 
-def test_grooming_kickoff_context_only():
+def test_exploration_kickoff_context_only():
     """Uses context-only template when context but no file tools."""
-    p = grooming_policy(
+    p = exploration_policy(
         AGENTS, "Building a calculator UI", history=[],
         project_context="Some context",
     )
@@ -464,28 +464,28 @@ def test_grooming_kickoff_context_only():
     assert "agent-1" in p.kickoff_text
 
 
-def test_grooming_kickoff_generic():
+def test_exploration_kickoff_generic():
     """Uses original generic template (backward compat) when no context."""
-    p = grooming_policy(AGENTS, "Building a calculator UI", history=[])
+    p = exploration_policy(AGENTS, "Building a calculator UI", history=[])
     assert p.kickoff_text is not None
     assert "open exploration" in p.kickoff_text.lower()
     assert "agent-1" in p.kickoff_text
 
 
-def test_grooming_system_supplement_with_context():
+def test_exploration_system_supplement_with_context():
     """Uses context-aware system supplement when project_context set."""
-    p = grooming_policy(
+    p = exploration_policy(
         AGENTS, "test", history=[],
         project_context="Some context",
     )
-    assert "GROOMING" in p.system_supplement
+    assert "EXPLORATION" in p.system_supplement
     assert "Previous iteration context" in p.system_supplement
 
 
-def test_grooming_system_supplement_without_context():
+def test_exploration_system_supplement_without_context():
     """Uses default system supplement when no project_context."""
-    p = grooming_policy(AGENTS, "test", history=[])
-    assert p.system_supplement == GROOMING_SYSTEM_SUPPLEMENT
+    p = exploration_policy(AGENTS, "test", history=[])
+    assert p.system_supplement == EXPLORATION_SYSTEM_SUPPLEMENT
 
 
 # ══════════════════════════════════════════════════════════════
@@ -552,7 +552,7 @@ def _make_full_team_dir(tmp_path, with_artifacts=True):
     return team_dir
 
 
-def test_cmd_groom_start_no_context_suppresses_injection(tmp_path, monkeypatch):
+def test_cmd_explore_start_no_context_suppresses_injection(tmp_path, monkeypatch):
     """--no-context flag persists context_from=False and skips loading."""
     team_dir = _make_full_team_dir(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -569,9 +569,9 @@ def test_cmd_groom_start_no_context_suppresses_injection(tmp_path, monkeypatch):
         context_from=None,
     )
 
-    with patch("gotg.commands.groom._cli") as mock_cli:
+    with patch("gotg.commands.explore._cli") as mock_cli:
         mock_cli.find_team_dir.return_value = team_dir
-        with patch("gotg.commands.groom.TeamContext") as MockCtx:
+        with patch("gotg.commands.explore.TeamContext") as MockCtx:
             ctx = MagicMock()
             ctx.agents = [
                 {"name": "agent-1", "role": "Software Engineer"},
@@ -583,23 +583,23 @@ def test_cmd_groom_start_no_context_suppresses_injection(tmp_path, monkeypatch):
             ctx.file_access = None
             ctx.model_resolver = None
             MockCtx.from_team_dir.return_value = ctx
-            with patch("gotg.commands.groom.run_grooming_conversation") as mock_run:
+            with patch("gotg.commands.explore.run_exploration_conversation") as mock_run:
                 with patch("gotg.config.load_streaming_config", return_value=False):
-                    from gotg.commands.groom import cmd_groom_start
-                    cmd_groom_start(args)
+                    from gotg.commands.explore import cmd_explore_start
+                    cmd_explore_start(args)
 
     # Verify context_from=False was persisted
-    from gotg.groom import list_grooming_sessions
-    sessions = list_grooming_sessions(team_dir)
+    from gotg.explore import list_exploration_sessions
+    sessions = list_exploration_sessions(team_dir)
     assert len(sessions) == 1
     assert sessions[0]["context_from"] is False
 
-    # Verify run_grooming_conversation was called with project_context=None
+    # Verify run_exploration_conversation was called with project_context=None
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs["project_context"] is None
 
 
-def test_cmd_groom_start_auto_detect_persists_context_from(tmp_path, monkeypatch):
+def test_cmd_explore_start_auto_detect_persists_context_from(tmp_path, monkeypatch):
     """Default auto-detect persists resolved iteration ID in context_from."""
     team_dir = _make_full_team_dir(tmp_path)
     monkeypatch.chdir(tmp_path)
@@ -616,9 +616,9 @@ def test_cmd_groom_start_auto_detect_persists_context_from(tmp_path, monkeypatch
         context_from=None,
     )
 
-    with patch("gotg.commands.groom._cli") as mock_cli:
+    with patch("gotg.commands.explore._cli") as mock_cli:
         mock_cli.find_team_dir.return_value = team_dir
-        with patch("gotg.commands.groom.TeamContext") as MockCtx:
+        with patch("gotg.commands.explore.TeamContext") as MockCtx:
             ctx = MagicMock()
             ctx.agents = [
                 {"name": "agent-1", "role": "Software Engineer"},
@@ -630,14 +630,14 @@ def test_cmd_groom_start_auto_detect_persists_context_from(tmp_path, monkeypatch
             ctx.file_access = None
             ctx.model_resolver = None
             MockCtx.from_team_dir.return_value = ctx
-            with patch("gotg.commands.groom.run_grooming_conversation") as mock_run:
+            with patch("gotg.commands.explore.run_exploration_conversation") as mock_run:
                 with patch("gotg.config.load_streaming_config", return_value=False):
-                    from gotg.commands.groom import cmd_groom_start
-                    cmd_groom_start(args)
+                    from gotg.commands.explore import cmd_explore_start
+                    cmd_explore_start(args)
 
     # Verify context_from="iter-1" was persisted (auto-detected)
-    from gotg.groom import list_grooming_sessions
-    sessions = list_grooming_sessions(team_dir)
+    from gotg.explore import list_exploration_sessions
+    sessions = list_exploration_sessions(team_dir)
     assert len(sessions) == 1
     assert sessions[0]["context_from"] == "iter-1"
 
@@ -647,13 +647,13 @@ def test_cmd_groom_start_auto_detect_persists_context_from(tmp_path, monkeypatch
     assert "calculator" in call_kwargs["project_context"].lower()
 
 
-def test_cmd_groom_continue_context_from_false_skips(tmp_path, monkeypatch):
+def test_cmd_explore_continue_context_from_false_skips(tmp_path, monkeypatch):
     """On continue, context_from=False means no context loading."""
     team_dir = _make_full_team_dir(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    from gotg.groom import write_grooming_metadata
-    write_grooming_metadata(
+    from gotg.explore import write_exploration_metadata
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from=False,
     )
@@ -667,9 +667,9 @@ def test_cmd_groom_continue_context_from_false_skips(tmp_path, monkeypatch):
         max_turns=None,
     )
 
-    with patch("gotg.commands.groom._cli") as mock_cli:
+    with patch("gotg.commands.explore._cli") as mock_cli:
         mock_cli.find_team_dir.return_value = team_dir
-        with patch("gotg.commands.groom.TeamContext") as MockCtx:
+        with patch("gotg.commands.explore.TeamContext") as MockCtx:
             ctx = MagicMock()
             ctx.agents = [
                 {"name": "agent-1", "role": "Software Engineer"},
@@ -681,23 +681,23 @@ def test_cmd_groom_continue_context_from_false_skips(tmp_path, monkeypatch):
             ctx.file_access = None
             ctx.model_resolver = None
             MockCtx.from_team_dir.return_value = ctx
-            with patch("gotg.commands.groom.run_grooming_conversation") as mock_run:
+            with patch("gotg.commands.explore.run_exploration_conversation") as mock_run:
                 with patch("gotg.config.load_streaming_config", return_value=False):
-                    from gotg.commands.groom import cmd_groom_continue
-                    cmd_groom_continue(args)
+                    from gotg.commands.explore import cmd_explore_continue
+                    cmd_explore_continue(args)
 
     # Verify project_context=None even though artifacts exist
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs["project_context"] is None
 
 
-def test_cmd_groom_continue_context_from_string_loads(tmp_path, monkeypatch):
+def test_cmd_explore_continue_context_from_string_loads(tmp_path, monkeypatch):
     """On continue, context_from='iter-1' loads that iteration's artifacts."""
     team_dir = _make_full_team_dir(tmp_path)
     monkeypatch.chdir(tmp_path)
 
-    from gotg.groom import write_grooming_metadata
-    write_grooming_metadata(
+    from gotg.explore import write_exploration_metadata
+    write_exploration_metadata(
         team_dir, "test-slug", "test topic",
         coach=False, max_turns=30, context_from="iter-1",
     )
@@ -711,9 +711,9 @@ def test_cmd_groom_continue_context_from_string_loads(tmp_path, monkeypatch):
         max_turns=None,
     )
 
-    with patch("gotg.commands.groom._cli") as mock_cli:
+    with patch("gotg.commands.explore._cli") as mock_cli:
         mock_cli.find_team_dir.return_value = team_dir
-        with patch("gotg.commands.groom.TeamContext") as MockCtx:
+        with patch("gotg.commands.explore.TeamContext") as MockCtx:
             ctx = MagicMock()
             ctx.agents = [
                 {"name": "agent-1", "role": "Software Engineer"},
@@ -725,10 +725,10 @@ def test_cmd_groom_continue_context_from_string_loads(tmp_path, monkeypatch):
             ctx.file_access = None
             ctx.model_resolver = None
             MockCtx.from_team_dir.return_value = ctx
-            with patch("gotg.commands.groom.run_grooming_conversation") as mock_run:
+            with patch("gotg.commands.explore.run_exploration_conversation") as mock_run:
                 with patch("gotg.config.load_streaming_config", return_value=False):
-                    from gotg.commands.groom import cmd_groom_continue
-                    cmd_groom_continue(args)
+                    from gotg.commands.explore import cmd_explore_continue
+                    cmd_explore_continue(args)
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs["project_context"] is not None
@@ -736,24 +736,24 @@ def test_cmd_groom_continue_context_from_string_loads(tmp_path, monkeypatch):
 
 
 # ══════════════════════════════════════════════════════════════
-# TUI parity: HomeScreen grooming creation
+# TUI parity: HomeScreen exploration creation
 # ══════════════════════════════════════════════════════════════
 
 
-def test_tui_new_grooming_persists_context_from(tmp_path):
-    """TUI _on_new_grooming auto-detects and persists context_from."""
+def test_tui_new_exploration_persists_context_from(tmp_path):
+    """TUI _on_new_exploration auto-detects and persists context_from."""
     team_dir = _make_full_team_dir(tmp_path)
 
     from unittest.mock import patch, MagicMock
 
     # We can't easily run the full TUI, but we can test the logic
-    # by calling write_grooming_metadata with the same auto-detect
-    # pattern that _on_new_grooming now uses.
+    # by calling write_exploration_metadata with the same auto-detect
+    # pattern that _on_new_exploration now uses.
     from gotg.session_setup import load_iteration_context
     from gotg.config import IterationStore
-    from gotg.groom import generate_slug, existing_slugs, write_grooming_metadata
+    from gotg.explore import generate_slug, existing_slugs, write_exploration_metadata
 
-    topic = "test TUI grooming"
+    topic = "test TUI exploration"
     slug = generate_slug(topic, existing_slugs(team_dir))
 
     # Replicate TUI auto-detect logic
@@ -768,12 +768,12 @@ def test_tui_new_grooming_persists_context_from(tmp_path):
             if (d / "refinement_summary.md").exists() or (d / "tasks.json").exists():
                 context_from_value = it["id"]
 
-    write_grooming_metadata(
+    write_exploration_metadata(
         team_dir, slug, topic=topic, coach=True, max_turns=30,
         context_from=context_from_value,
     )
 
     # Verify persisted
-    from gotg.groom import load_grooming_metadata
-    meta, _ = load_grooming_metadata(team_dir, slug)
+    from gotg.explore import load_exploration_metadata
+    meta, _ = load_exploration_metadata(team_dir, slug)
     assert meta["context_from"] == "iter-1"

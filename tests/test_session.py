@@ -650,7 +650,7 @@ def test_run_and_persist_rejects_stream_only_without_streaming_policy(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -689,7 +689,7 @@ def test_run_and_persist_discussion(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -726,7 +726,7 @@ def test_run_and_persist_implementation(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -766,7 +766,7 @@ def test_run_and_persist_only_persists_append_events(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -796,7 +796,7 @@ def test_run_and_persist_patch_target_compat(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -825,7 +825,7 @@ def test_run_and_persist_impl_patch_target_compat(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -857,7 +857,7 @@ def test_run_and_persist_debug_events(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -986,7 +986,7 @@ def test_no_double_persistence_after_wrapper_deletion(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,
@@ -1009,63 +1009,63 @@ def test_no_double_persistence_after_wrapper_deletion(tmp_path):
     assert json.loads(lines[1])["content"] == "world"
 
 
-# ── prepare_grooming_session ──────────────────────────────────────
+# ── prepare_exploration_session ──────────────────────────────────────
 
-from gotg.session import prepare_grooming_session
+from gotg.session import prepare_exploration_session
 
 
-def test_prepare_grooming_session_basic(tmp_path):
-    """Returns SessionSetup with grooming defaults."""
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+def test_prepare_exploration_session_basic(tmp_path):
+    """Returns SessionSetup with exploration defaults."""
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
     agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
     iteration = {"id": "test-topic", "description": "test", "phase": None}
     deps = _make_deps()
 
-    setup = prepare_grooming_session(
-        groom_dir, agents, iteration, {"provider": "test"}, deps,
+    setup = prepare_exploration_session(
+        explore_dir, agents, iteration, {"provider": "test"}, deps,
         topic="test topic",
     )
 
     assert setup.use_implementation is False
     assert setup.tasks_data is None
     assert setup.fileguard is None
-    assert setup.log_path == groom_dir / "conversation.jsonl"
+    assert setup.log_path == explore_dir / "conversation.jsonl"
     assert setup.policy.streaming is False
 
 
-def test_prepare_grooming_session_with_coach(tmp_path):
+def test_prepare_exploration_session_with_coach(tmp_path):
     """Policy includes coach when provided."""
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    (groom_dir / "conversation.jsonl").touch()
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    (explore_dir / "conversation.jsonl").touch()
     agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
     iteration = {"id": "slug", "description": "test", "phase": None}
     coach = {"name": "coach", "role": "Coach"}
     deps = _make_deps()
 
-    setup = prepare_grooming_session(
-        groom_dir, agents, iteration, {"provider": "test"}, deps,
+    setup = prepare_exploration_session(
+        explore_dir, agents, iteration, {"provider": "test"}, deps,
         topic="test", coach=coach,
     )
 
     assert setup.policy.coach == coach
 
 
-def test_prepare_grooming_session_reads_existing_history(tmp_path):
+def test_prepare_exploration_session_reads_existing_history(tmp_path):
     """History is populated from existing conversation log."""
-    groom_dir = tmp_path / "groom"
-    groom_dir.mkdir()
-    log_path = groom_dir / "conversation.jsonl"
+    explore_dir = tmp_path / "explore"
+    explore_dir.mkdir()
+    log_path = explore_dir / "conversation.jsonl"
     conv_append_message(log_path, {"from": "a1", "content": "hello"})
     conv_append_message(log_path, {"from": "a2", "content": "hi"})
     agents = [{"name": "a1", "role": "SE"}, {"name": "a2", "role": "SE"}]
     iteration = {"id": "slug", "description": "test", "phase": None}
     deps = _make_deps()
 
-    setup = prepare_grooming_session(
-        groom_dir, agents, iteration, {"provider": "test"}, deps,
+    setup = prepare_exploration_session(
+        explore_dir, agents, iteration, {"provider": "test"}, deps,
         topic="test",
     )
 
@@ -1201,11 +1201,11 @@ def test_prepare_continue_injection_order_matches_persistence(tmp_path):
     assert cont.injected_messages[0]["content"] == persisted["content"]
 
 
-# ── console_events grooming contract ──────────────────────────────
+# ── console_events exploration contract ──────────────────────────────
 
 
-def test_grooming_console_events_resume_hint(capsys):
-    """handle_console_events uses custom resume_hint for grooming."""
+def test_exploration_console_events_resume_hint(capsys):
+    """handle_console_events uses custom resume_hint for exploration."""
     from gotg.console_events import handle_console_events
     from gotg.events import CoachAskedPM
 
@@ -1217,12 +1217,12 @@ def test_grooming_console_events_resume_hint(capsys):
 
     handle_console_events(
         iter(events),
-        resume_hint="gotg groom continue test-slug",
-        complete_label="Grooming",
+        resume_hint="gotg explore continue test-slug",
+        complete_label="Exploration",
     )
 
     captured = capsys.readouterr()
-    assert "gotg groom continue test-slug" in captured.out
+    assert "gotg explore continue test-slug" in captured.out
     assert "your answer" in captured.out
 
 
@@ -1234,7 +1234,7 @@ def test_run_and_persist_translates_validate_error(tmp_path):
     policy = SessionPolicy(
         max_turns=10, coach=None, coach_cadence=None,
         stop_on_phase_complete=True, stop_on_ask_pm=True,
-        agent_tools=(), coach_tools=None, groomed_summary=None,
+        agent_tools=(), coach_tools=None, refinement_summary=None,
         tasks_summary=None, diffs_summary=None, kickoff_text=None,
         fileguard=None, approval_store=None, worktree_map=None,
         system_supplement=None, coach_system_prompt=None,

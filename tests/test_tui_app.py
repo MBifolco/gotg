@@ -16,7 +16,7 @@ from textual.widgets import DataTable, Static
 # ── Fixtures ────────────────────────────────────────────────────
 
 
-def _make_team_dir(tmp_path, iterations=None, grooming=None):
+def _make_team_dir(tmp_path, iterations=None, exploration=None):
     """Create a minimal .team/ directory for TUI testing."""
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
@@ -50,14 +50,14 @@ def _make_team_dir(tmp_path, iterations=None, grooming=None):
         "current": current,
     }))
 
-    # Create grooming sessions
-    for g in (grooming or []):
+    # Create exploration sessions
+    for g in (exploration or []):
         g = dict(g)  # shallow copy
-        groom_dir = team_dir / "grooming" / g["slug"]
-        groom_dir.mkdir(parents=True)
+        explore_dir = team_dir / "exploration" / g["slug"]
+        explore_dir.mkdir(parents=True)
         msgs = g.pop("_messages", [])
-        (groom_dir / "grooming.json").write_text(json.dumps(g))
-        log = groom_dir / "conversation.jsonl"
+        (explore_dir / "exploration.json").write_text(json.dumps(g))
+        log = explore_dir / "conversation.jsonl"
         lines = [json.dumps(m) for m in msgs]
         log.write_text("\n".join(lines) + "\n" if lines else "")
 
@@ -123,17 +123,17 @@ async def test_home_shows_multiple_iterations(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_home_shows_grooming_sessions(tmp_path):
-    grooming = [
+async def test_home_shows_exploration_sessions(tmp_path):
+    exploration = [
         {"slug": "error-handling", "topic": "Error handling", "coach": False,
          "max_turns": 30, "status": "active",
          "_messages": [{"from": "agent-1", "content": "test"}]},
     ]
-    team_dir = _make_team_dir(tmp_path, grooming=grooming)
+    team_dir = _make_team_dir(tmp_path, exploration=exploration)
     app = GotgApp(team_dir)
     async with app.run_test() as pilot:
         await pilot.pause()
-        table = app.screen.query_one("#groom-table", DataTable)
+        table = app.screen.query_one("#explore-table", DataTable)
         assert table.row_count == 1
 
 
@@ -144,9 +144,9 @@ async def test_home_empty_tables(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         iter_table = app.screen.query_one("#iter-table", DataTable)
-        groom_table = app.screen.query_one("#groom-table", DataTable)
+        explore_table = app.screen.query_one("#explore-table", DataTable)
         assert iter_table.row_count == 0
-        assert groom_table.row_count == 0
+        assert explore_table.row_count == 0
 
 
 @pytest.mark.asyncio

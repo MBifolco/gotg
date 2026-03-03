@@ -1,4 +1,4 @@
-"""Shared console event rendering for CLI and grooming adapters.
+"""Shared console event rendering for CLI and exploration adapters.
 
 Adapter-only module: rendering and printing. No persistence, no config writes.
 """
@@ -87,7 +87,7 @@ def handle_console_events(
     complete_label: str = "Conversation",
     use_implementation: bool = False,
 ) -> None:
-    """Unified console event handler for CLI and grooming.
+    """Unified console event handler for CLI and exploration.
 
     Args:
         events: Iterator of engine/implementation events (from run_and_persist).

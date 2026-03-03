@@ -4,14 +4,14 @@ from pathlib import Path
 import gotg.cli as _cli
 from gotg.context import TeamContext
 from gotg.conversation import ConversationStore, render_message
-from gotg.groom import (
+from gotg.explore import (
     generate_slug, validate_slug, existing_slugs,
-    write_grooming_metadata, load_grooming_metadata,
-    list_grooming_sessions, run_grooming_conversation,
+    write_exploration_metadata, load_exploration_metadata,
+    list_exploration_sessions, run_exploration_conversation,
 )
 
 
-def cmd_groom_start(args):
+def cmd_explore_start(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
     if team_dir is None:
@@ -76,7 +76,7 @@ def cmd_groom_start(args):
             except (FileNotFoundError, KeyError):
                 pass
 
-    groom_dir = write_grooming_metadata(
+    explore_dir = write_exploration_metadata(
         team_dir, slug, topic, coach=bool(coach), max_turns=max_turns,
         context_from=context_from_value,
     )
@@ -86,8 +86,8 @@ def cmd_groom_start(args):
     from gotg.config import load_streaming_config
     streaming = load_streaming_config(team_dir)
 
-    run_grooming_conversation(
-        groom_dir, ctx.agents, iteration, ctx.model_config,
+    run_exploration_conversation(
+        explore_dir, ctx.agents, iteration, ctx.model_config,
         topic=topic, coach=coach, max_turns_override=max_turns,
         streaming=streaming, model_resolver=ctx.model_resolver,
         project_context=project_context,
@@ -96,7 +96,7 @@ def cmd_groom_start(args):
     )
 
 
-def cmd_groom_continue(args):
+def cmd_explore_continue(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
     if team_dir is None:
@@ -104,7 +104,7 @@ def cmd_groom_continue(args):
         raise SystemExit(1)
 
     ctx = TeamContext.from_team_dir(team_dir)
-    metadata, groom_dir = load_grooming_metadata(team_dir, args.slug)
+    metadata, explore_dir = load_exploration_metadata(team_dir, args.slug)
 
     if len(ctx.agents) < 2:
         print("Error: need at least 2 agents in .team/team.json.", file=sys.stderr)
@@ -112,7 +112,7 @@ def cmd_groom_continue(args):
 
     coach = ctx.coach if metadata.get("coach") else None
 
-    log_path = groom_dir / "conversation.jsonl"
+    log_path = explore_dir / "conversation.jsonl"
     store = ConversationStore(log_path)
     history = store.read_full()
 
@@ -139,7 +139,7 @@ def cmd_groom_continue(args):
         results = apply_iteration_proposals(
             team_dir, proposals_msg["proposals"],
             batch_id=proposals_msg["batch_id"],
-            groom_slug=args.slug, store=store,
+            explore_slug=args.slug, store=store,
         )
         for r in results:
             print(render_message(r))
@@ -185,8 +185,8 @@ def cmd_groom_continue(args):
     from gotg.config import load_streaming_config
     streaming = load_streaming_config(team_dir)
 
-    run_grooming_conversation(
-        groom_dir, ctx.agents, iteration, ctx.model_config,
+    run_exploration_conversation(
+        explore_dir, ctx.agents, iteration, ctx.model_config,
         topic=metadata["topic"], coach=coach, max_turns_override=target_total,
         streaming=streaming, model_resolver=ctx.model_resolver,
         project_context=project_context,
@@ -195,16 +195,16 @@ def cmd_groom_continue(args):
     )
 
 
-def cmd_groom_list(args):
+def cmd_explore_list(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
     if team_dir is None:
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    sessions = list_grooming_sessions(team_dir)
+    sessions = list_exploration_sessions(team_dir)
     if not sessions:
-        print("No grooming sessions.")
+        print("No exploration sessions.")
         return
 
     for s in sessions:
@@ -212,15 +212,15 @@ def cmd_groom_list(args):
         print(f"  {s['slug']:<30} {s['topic']}{coach_flag}")
 
 
-def cmd_groom_show(args):
+def cmd_explore_show(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
     if team_dir is None:
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    _, groom_dir = load_grooming_metadata(team_dir, args.slug)
-    log_path = groom_dir / "conversation.jsonl"
+    _, explore_dir = load_exploration_metadata(team_dir, args.slug)
+    log_path = explore_dir / "conversation.jsonl"
     messages = ConversationStore(log_path).read_full()
 
     if not messages:
@@ -232,7 +232,7 @@ def cmd_groom_show(args):
         print()
 
 
-def cmd_groom_summarize(args):
+def cmd_explore_summarize(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
     if team_dir is None:
@@ -240,22 +240,22 @@ def cmd_groom_summarize(args):
         raise SystemExit(1)
 
     ctx = TeamContext.from_team_dir(team_dir)
-    metadata, groom_dir = load_grooming_metadata(team_dir, args.slug)
+    metadata, explore_dir = load_exploration_metadata(team_dir, args.slug)
 
-    history = ConversationStore(groom_dir / "conversation.jsonl").read_full()
+    history = ConversationStore(explore_dir / "conversation.jsonl").read_full()
     if not history:
         print("No messages to summarize.", file=sys.stderr)
         raise SystemExit(1)
 
-    from gotg.transitions import extract_grooming_summary_doc
+    from gotg.transitions import extract_exploration_summary_doc
     from gotg.model import chat_completion
 
     coach_name = ctx.coach["name"] if ctx.coach and metadata.get("coach") else None
-    summary = extract_grooming_summary_doc(
+    summary = extract_exploration_summary_doc(
         history, ctx.model_config, coach_name,
         chat_call=chat_completion, topic=metadata["topic"],
     )
 
-    summary_path = groom_dir / "summary.md"
+    summary_path = explore_dir / "summary.md"
     summary_path.write_text(summary)
     print(f"Summary written to {summary_path}")
