@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.cli import main, find_team_dir, run_conversation, _auto_checkpoint
+from gotg.cli import main, find_team_dir, run_conversation
 from gotg.session import validate_iteration_for_run, resolve_layer, setup_worktrees, SessionSetupError
 from gotg.conversation import read_log, read_phase_history, append_message
 
@@ -1255,212 +1255,6 @@ def test_validate_task_assignments_missing_tasks_json(tmp_path):
         validate_iteration_for_run(iteration, iter_dir, _DUMMY_AGENTS)
 
 
-# --- auto-checkpoint ---
-
-def test_auto_checkpoint_creates_checkpoint(tmp_path):
-    """_auto_checkpoint should create a checkpoint directory."""
-    iter_dir = tmp_path / "iter-1"
-    iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
-
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    _auto_checkpoint(iter_dir, iteration)
-
-    assert (iter_dir / "checkpoints" / "1").is_dir()
-    assert (iter_dir / "checkpoints" / "1" / "state.json").exists()
-
-
-def test_auto_checkpoint_prints_message(tmp_path, capsys):
-    """_auto_checkpoint should print confirmation."""
-    iter_dir = tmp_path / "iter-1"
-    iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
-
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    _auto_checkpoint(iter_dir, iteration)
-
-    output = capsys.readouterr().out
-    assert "Checkpoint 1 created (auto)" in output
-
-
-def test_cmd_run_creates_auto_checkpoint(tmp_path):
-    """gotg run should create auto-checkpoint after conversation ends."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-
-    with patch("sys.argv", ["gotg", "run", "--max-turns", "2"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
-                main()
-
-    assert (iter_dir / "checkpoints" / "1").is_dir()
-
-
-def test_cmd_continue_creates_auto_checkpoint(tmp_path):
-    """gotg continue should create auto-checkpoint after conversation ends."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-
-    with patch("sys.argv", ["gotg", "continue", "--max-turns", "2"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("gotg.cli.agentic_completion", return_value={"content": "response", "operations": []}):
-                main()
-
-    assert (iter_dir / "checkpoints" / "1").is_dir()
-
-
-def test_cmd_advance_creates_auto_checkpoint(tmp_path):
-    """gotg advance should create auto-checkpoint after phase transition."""
-    team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
-
-    with patch("sys.argv", ["gotg", "advance"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            main()
-
-    assert (iter_dir / "checkpoints" / "1").is_dir()
-    # Checkpoint should have the NEW phase
-    state = json.loads((iter_dir / "checkpoints" / "1" / "state.json").read_text())
-    assert state["phase"] == "planning"
-
-
-# --- checkpoint command ---
-
-def test_cmd_checkpoint_creates_manual(tmp_path, capsys):
-    """gotg checkpoint should create a manual checkpoint."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"hi"}\n')
-
-    with patch("sys.argv", ["gotg", "checkpoint", "my save point"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            main()
-
-    assert (iter_dir / "checkpoints" / "1").is_dir()
-    state = json.loads((iter_dir / "checkpoints" / "1" / "state.json").read_text())
-    assert state["trigger"] == "manual"
-    assert state["description"] == "my save point"
-    output = capsys.readouterr().out
-    assert "Checkpoint 1 created" in output
-
-
-# --- checkpoints command ---
-
-def test_cmd_checkpoints_empty(tmp_path, capsys):
-    """gotg checkpoints with no checkpoints should show message."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-
-    with patch("sys.argv", ["gotg", "checkpoints"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            main()
-
-    output = capsys.readouterr().out
-    assert "No checkpoints yet" in output
-
-
-def test_cmd_checkpoints_lists(tmp_path, capsys):
-    """gotg checkpoints should list existing checkpoints."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-    (iter_dir / "conversation.jsonl").touch()
-
-    from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    create_checkpoint(iter_dir, iteration, description="first", trigger="auto")
-    create_checkpoint(iter_dir, iteration, description="second", trigger="manual")
-
-    with patch("sys.argv", ["gotg", "checkpoints"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            main()
-
-    output = capsys.readouterr().out
-    assert "first" in output
-    assert "second" in output
-    assert "auto" in output
-    assert "manual" in output
-
-
-# --- restore command ---
-
-def test_cmd_restore_restores_state(tmp_path, capsys):
-    """gotg restore should restore conversation and update iteration.json."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-    # Set phase in iteration.json
-    iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "refinement"
-    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
-
-    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"original"}\n')
-
-    from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    create_checkpoint(iter_dir, iteration, description="checkpoint 1")
-
-    # Modify state after checkpoint
-    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"modified"}\n')
-
-    with patch("sys.argv", ["gotg", "restore", "1"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("builtins.input", return_value="n"):  # skip safety checkpoint
-                main()
-
-    # Conversation should be restored
-    assert "original" in (iter_dir / "conversation.jsonl").read_text()
-    output = capsys.readouterr().out
-    assert "Restored to checkpoint 1" in output
-
-
-def test_cmd_restore_safety_checkpoint_yes(tmp_path):
-    """Restore with Y should create safety checkpoint first."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-    iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "refinement"
-    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
-
-    (iter_dir / "conversation.jsonl").write_text('{"from":"agent-1","iteration":"iter-1","content":"current"}\n')
-
-    from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    create_checkpoint(iter_dir, iteration)
-
-    with patch("sys.argv", ["gotg", "restore", "1"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("builtins.input", return_value=""):  # default = yes
-                main()
-
-    # Safety checkpoint should exist as #2
-    assert (iter_dir / "checkpoints" / "2").is_dir()
-    state = json.loads((iter_dir / "checkpoints" / "2" / "state.json").read_text())
-    assert "Safety" in state["description"]
-
-
-def test_cmd_restore_safety_checkpoint_no(tmp_path):
-    """Restore with 'n' should skip safety checkpoint."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-    iter_json = json.loads((team / "iteration.json").read_text())
-    iter_json["iterations"][0]["phase"] = "refinement"
-    (team / "iteration.json").write_text(json.dumps(iter_json, indent=2))
-
-    (iter_dir / "conversation.jsonl").touch()
-
-    from gotg.checkpoint import create_checkpoint
-    iteration = {"id": "iter-1", "phase": "refinement", "status": "in-progress", "max_turns": 10}
-    create_checkpoint(iter_dir, iteration)
-
-    with patch("sys.argv", ["gotg", "restore", "1"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with patch("builtins.input", return_value="n"):
-                main()
-
-    # Only original checkpoint, no safety
-    assert not (iter_dir / "checkpoints" / "2").exists()
-
-
-def test_cmd_restore_invalid_number(tmp_path, capsys):
-    """Restore with nonexistent checkpoint should error."""
-    team, iter_dir = _make_full_team_dir(tmp_path)
-
-    with patch("sys.argv", ["gotg", "restore", "99"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            with pytest.raises(SystemExit):
-                main()
-
-
 # --- File tools integration ---
 
 def test_run_conversation_no_fileguard_backward_compat(tmp_path):
@@ -1579,9 +1373,8 @@ def test_cmd_run_loads_file_access(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation") as mock_run:
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "run"]):
-                main()
+        with patch("sys.argv", ["gotg", "run"]):
+            main()
 
     # Verify fileguard was passed
     call_kwargs = mock_run.call_args
@@ -1609,9 +1402,8 @@ def test_cmd_run_no_file_access_passes_none(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation") as mock_run:
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "run"]):
-                main()
+        with patch("sys.argv", ["gotg", "run"]):
+            main()
 
     call_kwargs = mock_run.call_args
     fileguard = call_kwargs[1].get("fileguard") if call_kwargs[1] else None
@@ -1705,9 +1497,8 @@ def test_continue_applies_approved_writes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation"):
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "continue"]):
-                main()
+        with patch("sys.argv", ["gotg", "continue"]):
+            main()
 
     # File should have been written
     assert (tmp_path / "Dockerfile").read_text() == "FROM python:3.12"
@@ -1745,9 +1536,8 @@ def test_continue_injects_denial_messages(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation"):
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "continue"]):
-                main()
+        with patch("sys.argv", ["gotg", "continue"]):
+            main()
 
     messages = read_log(iter_dir / "conversation.jsonl")
     denial_msgs = [m for m in messages if m["from"] == "system" and "DENIED by PM" in m["content"]]
@@ -1915,9 +1705,8 @@ def test_cmd_run_with_enable_approvals_constructs_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation") as mock_run:
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "run"]):
-                main()
+        with patch("sys.argv", ["gotg", "run"]):
+            main()
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs.get("approval_store") is not None
@@ -1947,9 +1736,8 @@ def test_cmd_run_without_enable_approvals_no_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation") as mock_run:
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "run"]):
-                main()
+        with patch("sys.argv", ["gotg", "run"]):
+            main()
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs.get("approval_store") is None
@@ -2107,9 +1895,8 @@ def test_setup_worktrees_disabled(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     with patch("gotg.cli.run_conversation") as mock_run:
-        with patch("gotg.cli._auto_checkpoint"):
-            with patch("sys.argv", ["gotg", "run"]):
-                main()
+        with patch("sys.argv", ["gotg", "run"]):
+            main()
 
     call_kwargs = mock_run.call_args[1]
     assert call_kwargs.get("worktree_map") is None
@@ -2977,19 +2764,6 @@ def test_next_layer_logs_transition_message(tmp_path):
     assert len(messages) >= 1
     system_msgs = [m for m in messages if m["from"] == "system"]
     assert any("layer 0" in m["content"].lower() and "layer 1" in m["content"].lower() for m in system_msgs)
-
-
-def test_next_layer_auto_checkpoints(tmp_path):
-    """next-layer creates an auto checkpoint."""
-    team, iter_dir = _make_next_layer_team_dir(tmp_path, current_layer=0)
-    with patch("sys.argv", ["gotg", "next-layer"]):
-        with patch("gotg.cli.find_team_dir", return_value=team):
-            main()
-
-    # Check that a checkpoint was created
-    cp_dir = iter_dir / "checkpoints"
-    assert cp_dir.exists()
-    assert len(list(cp_dir.iterdir())) >= 1
 
 
 def test_next_layer_verifies_head_on_main(tmp_path, capsys):

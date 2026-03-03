@@ -104,7 +104,6 @@ def _make_advance_result(from_phase="refinement", to_phase="planning"):
         to_phase=to_phase,
         boundary_msg={"from": "system", "content": "--- boundary ---", "phase_boundary": True},
         transition_msg={"from": "system", "content": f"Phase: {from_phase} -> {to_phase}"},
-        checkpoint_number=1,
         warnings=[],
     )
 

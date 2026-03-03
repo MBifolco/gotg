@@ -39,23 +39,6 @@ from gotg.tui.widgets.message_list import MessageList
 from gotg.tui.widgets.participant_panel import ParticipantPanel
 
 
-class _ChatInput(TextArea):
-    """TextArea subclass that posts Submitted on Ctrl+Enter."""
-
-    class Submitted(TextArea.Changed):
-        """Posted when the user presses Ctrl+Enter."""
-
-    def _on_key(self, event) -> None:
-        # Ctrl+Enter: various terminals send ctrl+j, ctrl+m, or ctrl+enter
-        if event.key in ("ctrl+j", "ctrl+enter"):
-            if self.text.strip():
-                self.post_message(self.Submitted(self))
-            event.prevent_default()
-            event.stop()
-            return
-        return super()._on_key(event)
-
-
 class SessionState(Enum):
     VIEWING = auto()
     RUNNING = auto()
@@ -68,17 +51,18 @@ class ChatScreen(Screen):
     """Displays a conversation log with live streaming support."""
 
     BINDINGS = [
+        Binding("ctrl+s", "send_message", "Send", priority=True),
+        Binding("r", "run_session", "Run"),
+        Binding("c", "continue_session", "Continue"),
+        Binding("p", "advance_phase", "Advance"),
+        Binding("d", "open_review", "Diffs"),
+        Binding("t", "manage_tasks", "Tasks"),
+        Binding("w", "rework", "Rework"),
+        Binding("a", "manage_approvals", "Approvals"),
+        Binding("i", "review_proposals", "Proposals"),
         Binding("escape", "go_back", "Back"),
-        Binding("home", "scroll_top", "Top"),
-        Binding("end", "scroll_bottom", "Bottom"),
-        Binding("r", "run_session", "Run", show=False),
-        Binding("c", "continue_session", "Continue", show=False),
-        Binding("a", "manage_approvals", "Approvals", show=False),
-        Binding("p", "advance_phase", "Advance", show=False),
-        Binding("d", "open_review", "Diffs", show=False),
-        Binding("t", "manage_tasks", "Tasks", show=False),
-        Binding("w", "rework", "Rework", show=False),
-        Binding("i", "review_proposals", "Proposals", show=False),
+        Binding("home", "scroll_top", "Top", show=False),
+        Binding("end", "scroll_bottom", "Bottom", show=False),
     ]
 
     session_state: reactive[SessionState] = reactive(SessionState.VIEWING)
@@ -116,14 +100,14 @@ class ChatScreen(Screen):
                 yield MessageList(id="message-list")
                 yield ActionBar(id="action-bar")
                 with Horizontal(id="input-row"):
-                    yield _ChatInput(
+                    yield TextArea(
                         language="markdown",
                         theme="css",
                         soft_wrap=True,
                         compact=True,
                         show_line_numbers=False,
                         tab_behavior="indent",
-                        placeholder="Ctrl+Enter to send...",
+                        placeholder="Ctrl+S to send...",
                         id="chat-input",
                     )
                     yield Button("Send", id="send-btn", variant="primary")
@@ -247,13 +231,53 @@ class ChatScreen(Screen):
                 bar.show(f"Advanced to {phase}. Press R to run.")
                 return
 
+    # ── Dynamic bindings ────────────────────────────────────
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Show/hide bindings based on current state."""
+        state = self.session_state
+        phase = self.metadata.get("phase")
+        is_iter = self._session_kind == "iteration"
+        pr = self._pause_reason
+        paused = state == SessionState.PAUSED
+
+        if action == "send_message":
+            return state in (SessionState.VIEWING, SessionState.PAUSED, SessionState.COMPLETE)
+        if action == "run_session":
+            return state == SessionState.VIEWING
+        if action == "continue_session":
+            return state in (SessionState.VIEWING, SessionState.PAUSED, SessionState.COMPLETE)
+        if action == "advance_phase":
+            return paused and pr == PauseReason.PHASE_COMPLETE and is_iter
+        if action == "open_review":
+            if not (paused and pr == PauseReason.PHASE_COMPLETE and is_iter):
+                return False
+            from gotg.phases import get_phase_caps_safe
+            return get_phase_caps_safe(phase).can_open_review_screen
+        if action == "manage_tasks":
+            if not (state == SessionState.VIEWING and is_iter):
+                return False
+            from gotg.phases import get_phase_caps_safe
+            return get_phase_caps_safe(phase).show_task_status_bar
+        if action == "rework":
+            return (
+                paused and pr == PauseReason.PHASE_COMPLETE and is_iter
+                and phase == "code-review"
+                and self._phase_complete_outcome == "changes_requested"
+            )
+        if action == "manage_approvals":
+            return paused and pr == PauseReason.APPROVALS
+        if action == "review_proposals":
+            return paused and pr == PauseReason.ITERATIONS_PROPOSED
+        return True
+
     # ── State machine ────────────────────────────────────────
 
     def watch_session_state(self, state: SessionState) -> None:
         """React to state changes by updating UI."""
         if not self.is_mounted:
             return  # Children not composed yet; on_mount handles initial state
-        ta = self.query_one("#chat-input", _ChatInput)
+        ta = self.query_one("#chat-input", TextArea)
         btn = self.query_one("#send-btn", Button)
         info = self.query_one("#info-tile", InfoTile)
 
@@ -272,7 +296,7 @@ class ChatScreen(Screen):
             ta.disabled = False
             btn.disabled = False
             if self._pause_reason == PauseReason.COACH_QUESTION:
-                ta.placeholder = "Type reply and Ctrl+Enter to send..."
+                ta.placeholder = "Type reply and Ctrl+S to send..."
                 ta.focus()
             else:
                 ta.placeholder = "Press C to continue..."
@@ -287,6 +311,8 @@ class ChatScreen(Screen):
             ta.disabled = True
             btn.disabled = True
             info.update_session_status("Advancing")
+
+        self.refresh_bindings()
 
     # ── Session lifecycle ────────────────────────────────────
 
@@ -726,17 +752,17 @@ class ChatScreen(Screen):
 
     def _send_input(self) -> None:
         """Extract text from the input, clear it, and continue the session."""
-        ta = self.query_one("#chat-input", _ChatInput)
+        ta = self.query_one("#chat-input", TextArea)
         text = ta.text.strip()
         if not text:
             return
         ta.clear()
 
-        if self.session_state in (SessionState.PAUSED, SessionState.COMPLETE):
+        if self.session_state in (SessionState.VIEWING, SessionState.PAUSED, SessionState.COMPLETE):
             self._start_session("continue", human_message=text)
 
-    def on__chat_input_submitted(self, event: _ChatInput.Submitted) -> None:
-        """Handle Ctrl+Enter in the TextArea."""
+    def action_send_message(self) -> None:
+        """Handle Ctrl+S to send the message."""
         self._send_input()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -766,7 +792,7 @@ class ChatScreen(Screen):
     def action_continue_session(self) -> None:
         if self.session_state in (SessionState.PAUSED, SessionState.COMPLETE, SessionState.VIEWING):
             human_msg = None
-            ta = self.query_one("#chat-input", _ChatInput)
+            ta = self.query_one("#chat-input", TextArea)
             text = ta.text.strip()
             if text:
                 human_msg = text
@@ -852,7 +878,6 @@ class ChatScreen(Screen):
             self.post_message(EngineEvent(AdvanceComplete(
                 from_phase=result.from_phase,
                 to_phase=result.to_phase,
-                checkpoint_number=result.checkpoint_number,
             )))
 
         except PhaseAdvanceError as e:
@@ -972,7 +997,6 @@ class ChatScreen(Screen):
             self.post_message(EngineEvent(AdvanceComplete(
                 from_phase="code-review",
                 to_phase="implementation",
-                checkpoint_number=result.checkpoint_number,
             )))
 
         except ReworkError as e:

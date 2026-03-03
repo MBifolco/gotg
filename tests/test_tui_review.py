@@ -318,7 +318,7 @@ async def test_next_layer_after_all_merged(tmp_path):
         from_layer=0, to_layer=1, all_done=False,
         boundary_msg={"from": "system", "content": "---", "phase_boundary": True},
         transition_msg={"from": "system", "content": "Layer 1"},
-        checkpoint_number=1, task_count=2,
+        task_count=2,
     )
 
     app = GotgApp(team_dir)

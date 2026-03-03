@@ -54,7 +54,6 @@ def cmd_run(args):
         worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
         streaming=infra.streaming, model_resolver=ctx.model_resolver,
     )
-    _cli._auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")
 
 
 def cmd_continue(args):
@@ -139,4 +138,3 @@ def cmd_continue(args):
         worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
         streaming=infra.streaming, model_resolver=ctx.model_resolver,
     )
-    _cli._auto_checkpoint(iter_dir, iteration, coach_name=ctx.coach["name"] if ctx.coach else "coach")

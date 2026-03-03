@@ -69,7 +69,6 @@ def advance_phase(
 
     Returns AdvanceResult. Raises PhaseAdvanceError on validation failure.
     """
-    from gotg.checkpoint import create_checkpoint
     from gotg.config import (
         IterationStore, load_coach, load_model_config, load_worktree_config,
     )
@@ -184,7 +183,7 @@ def advance_phase(
     coach_name_for_skeleton = coach["name"] if coach else "coach"
 
     # Save phase change + boundary markers
-    _progress("Saving phase change and creating checkpoint...")
+    _progress("Saving phase change...")
     if current_phase == "implementation" and next_phase == "code-review":
         iter_store.save_fields(iteration["id"], phase=next_phase, review_outcome=None)
     else:
@@ -204,23 +203,13 @@ def advance_phase(
     accumulated = (existing_skeleton + "\n\n" + new_skeleton).strip()
     skeleton_path.write_text(accumulated + "\n")
 
-    # Auto-checkpoint
     iteration["phase"] = next_phase
-    checkpoint_number = None
-    try:
-        coach_name = coach["name"] if coach else "coach"
-        checkpoint_number = create_checkpoint(
-            iter_dir, iteration, trigger="auto", coach_name=coach_name
-        )
-    except Exception as e:
-        warnings.append(f"Auto-checkpoint failed: {e}")
 
     return AdvanceResult(
         from_phase=current_phase,
         to_phase=next_phase,
         boundary_msg=boundary_msg,
         transition_msg=transition_msg,
-        checkpoint_number=checkpoint_number,
         warnings=warnings,
     )
 
@@ -313,8 +302,7 @@ def advance_next_layer(
     on_progress: Callable[[str], None] | None = None,
 ) -> NextLayerResult:
     """Advance to next layer after implementation/code-review. Raises ReviewError on failure."""
-    from gotg.checkpoint import create_checkpoint
-    from gotg.config import IterationStore, load_coach, load_worktree_config
+    from gotg.config import IterationStore, load_worktree_config
 
     def _progress(msg: str) -> None:
         if on_progress:
@@ -391,18 +379,8 @@ def advance_next_layer(
     }
     store.append(transition_msg)
 
-    # Auto-checkpoint
     iteration["phase"] = "implementation"
     iteration["current_layer"] = next_layer
-    checkpoint_number = None
-    coach = load_coach(team_dir)
-    try:
-        coach_name = coach["name"] if coach else "coach"
-        checkpoint_number = create_checkpoint(
-            iter_dir, iteration, trigger="auto", coach_name=coach_name,
-        )
-    except Exception as e:
-        _progress(f"Warning: auto-checkpoint failed: {e}")
 
     return NextLayerResult(
         from_layer=current_layer,
@@ -410,7 +388,6 @@ def advance_next_layer(
         all_done=False,
         boundary_msg=boundary_msg,
         transition_msg=transition_msg,
-        checkpoint_number=checkpoint_number,
         task_count=len(next_layer_tasks),
         removed_worktrees=removed_worktrees,
     )
@@ -449,7 +426,6 @@ def advance_rework(
 
     Raises ReworkError on validation failure or empty feedback.
     """
-    from gotg.checkpoint import create_checkpoint
     from gotg.config import IterationStore, load_coach, load_model_config
     from gotg.tasks import TaskRepo
     from gotg.transitions import build_rework_messages, extract_review_feedback
@@ -520,21 +496,12 @@ def advance_rework(
         iteration["id"], phase="implementation", review_outcome=None,
     )
 
-    # Auto-checkpoint
     iteration["phase"] = "implementation"
-    checkpoint_number = None
-    try:
-        checkpoint_number = create_checkpoint(
-            iter_dir, iteration, trigger="auto", coach_name=coach_name,
-        )
-    except Exception as e:
-        warnings.append(f"Auto-checkpoint failed: {e}")
 
     return ReworkResult(
         layer=current_layer,
         tasks_with_feedback=tasks_with_feedback,
         boundary_msg=boundary_msg,
         transition_msg=transition_msg,
-        checkpoint_number=checkpoint_number,
         warnings=warnings,
     )

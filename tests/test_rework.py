@@ -689,12 +689,11 @@ def test_cli_continue_clears_review_outcome(tmp_path):
     from gotg.config import IterationStore
 
     with patch("gotg.commands.run._cli.run_conversation"):
-        with patch("gotg.commands.run._cli._auto_checkpoint"):
-            from gotg.commands.run import cmd_continue
-            args = type("A", (), {"iteration": None, "layer": None, "max_turns": None, "message": None})()
-            with patch("gotg.commands.run._cli.find_team_dir", return_value=team):
-                with patch("gotg.commands.run.Path.cwd", return_value=tmp_path):
-                    cmd_continue(args)
+        from gotg.commands.run import cmd_continue
+        args = type("A", (), {"iteration": None, "layer": None, "max_turns": None, "message": None})()
+        with patch("gotg.commands.run._cli.find_team_dir", return_value=team):
+            with patch("gotg.commands.run.Path.cwd", return_value=tmp_path):
+                cmd_continue(args)
 
     # Check that review_outcome was cleared in iteration.json
     data = json.loads((team / "iteration.json").read_text())

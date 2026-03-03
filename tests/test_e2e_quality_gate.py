@@ -10,7 +10,6 @@ import json
 import re
 
 from gotg.approvals import ApprovalStore
-from gotg.checkpoint import create_checkpoint, restore_checkpoint
 from gotg.cli import run_conversation
 from gotg.config import get_current_iteration, save_iteration_fields
 from gotg.conversation import read_log
@@ -239,70 +238,6 @@ def test_e2e_iteration_lifecycle_refinement_to_code_review(tmp_path, monkeypatch
     assert any(m.get("phase_boundary") for m in messages)
     assert any("pre-code-review → implementation" in m.get("content", "") for m in messages)
     assert all(t.get("status") == "done" for t in tasks if t.get("layer") == 0)
-
-
-def test_e2e_checkpoint_restore_contract(tmp_path, monkeypatch):
-    """Checkpoint restore should rewind both iteration state and iteration artifacts."""
-    team_dir, iter_dir = _make_team(tmp_path, phase="refinement", max_turns=1, streaming=False)
-    model_config = json.loads((team_dir / "team.json").read_text())["model"]
-    agents = json.loads((team_dir / "team.json").read_text())["agents"]
-
-    monkeypatch.setattr(
-        "gotg.cli.agentic_completion",
-        lambda **_kw: {"content": "baseline discussion", "operations": []},
-    )
-    monkeypatch.setattr(
-        "gotg.cli.chat_completion",
-        lambda **_kw: {"content": "unused coach", "tool_calls": []},
-    )
-
-    # Baseline run in refinement.
-    iteration, _ = get_current_iteration(team_dir)
-    run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
-
-    # Create checkpoint snapshot from baseline.
-    checkpoint_no = create_checkpoint(iter_dir, iteration, description="baseline", trigger="manual")
-    assert checkpoint_no == 1
-    baseline_files = {
-        p.name: p.read_text()
-        for p in iter_dir.iterdir()
-        if p.is_file() and p.name not in {"debug.jsonl"}
-    }
-
-    # Mutate state/artifacts after checkpoint.
-    save_iteration_fields(team_dir, "iter-1", phase="planning")
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": [{"id": "post-checkpoint"}]}, indent=2) + "\n")
-    (iter_dir / "refinement_summary.md").write_text("mutated after checkpoint\n")
-    with (iter_dir / "conversation.jsonl").open("a") as f:
-        f.write(json.dumps({"from": "system", "content": "post-checkpoint mutation"}) + "\n")
-
-    iteration_now, _ = get_current_iteration(team_dir)
-    assert iteration_now["phase"] == "planning"
-    assert (iter_dir / "tasks.json").exists()
-
-    # Restore and sync iteration.json fields (same behavior as CLI restore flow).
-    state = restore_checkpoint(iter_dir, checkpoint_no)
-    save_iteration_fields(
-        team_dir,
-        "iter-1",
-        phase=state["phase"],
-        status=state["status"],
-        max_turns=state["max_turns"],
-    )
-
-    restored_iteration, _ = get_current_iteration(team_dir)
-    assert restored_iteration["phase"] == "refinement"
-
-    # Artifact-level contract: files match checkpoint snapshot exactly.
-    restored_files = {
-        p.name: p.read_text()
-        for p in iter_dir.iterdir()
-        if p.is_file() and p.name not in {"debug.jsonl"}
-    }
-    assert restored_files == baseline_files
-    assert not (iter_dir / "tasks.json").exists()
-    assert not (iter_dir / "refinement_summary.md").exists()
-    assert (iter_dir / "checkpoints" / "1").exists()
 
 
 def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
