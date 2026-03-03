@@ -16,16 +16,6 @@ def find_team_dir(cwd: Path) -> Path | None:
     return None
 
 
-def _auto_checkpoint(iter_dir: Path, iteration: dict, coach_name: str = "coach") -> None:
-    """Create an automatic checkpoint after a command completes."""
-    from gotg.checkpoint import create_checkpoint
-    try:
-        number = create_checkpoint(iter_dir, iteration, trigger="auto", coach_name=coach_name)
-        print(f"Checkpoint {number} created (auto)")
-    except Exception as e:
-        print(f"Warning: auto-checkpoint failed: {e}", file=sys.stderr)
-
-
 def run_conversation(
     iter_dir: Path,
     agents: list[dict],
@@ -87,9 +77,6 @@ def __getattr__(name):
         "cmd_init": ("gotg.commands.admin", "cmd_init"),
         "cmd_model": ("gotg.commands.admin", "cmd_model"),
         "cmd_show": ("gotg.commands.admin", "cmd_show"),
-        "cmd_checkpoint": ("gotg.commands.admin", "cmd_checkpoint"),
-        "cmd_checkpoints": ("gotg.commands.admin", "cmd_checkpoints"),
-        "cmd_restore": ("gotg.commands.admin", "cmd_restore"),
         "cmd_approvals": ("gotg.commands.admin", "cmd_approvals"),
         "cmd_approve": ("gotg.commands.admin", "cmd_approve"),
         "cmd_deny": ("gotg.commands.admin", "cmd_deny"),
@@ -141,14 +128,6 @@ def main():
     continue_parser.add_argument("--layer", type=int, default=None, help="Worktree layer (default: current layer)")
 
     subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
-
-    cp_parser = subparsers.add_parser("checkpoint", help="Create a manual checkpoint")
-    cp_parser.add_argument("description", nargs="?", default=None, help="Checkpoint description")
-
-    subparsers.add_parser("checkpoints", help="List checkpoints for current iteration")
-
-    restore_parser = subparsers.add_parser("restore", help="Restore iteration to a checkpoint")
-    restore_parser.add_argument("number", type=int, help="Checkpoint number to restore")
 
     model_parser = subparsers.add_parser("model", help="View or change model config")
     model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
@@ -237,15 +216,6 @@ def main():
         elif args.command == "advance":
             from gotg.commands.advance import cmd_advance
             cmd_advance(args)
-        elif args.command == "checkpoint":
-            from gotg.commands.admin import cmd_checkpoint
-            cmd_checkpoint(args)
-        elif args.command == "checkpoints":
-            from gotg.commands.admin import cmd_checkpoints
-            cmd_checkpoints(args)
-        elif args.command == "restore":
-            from gotg.commands.admin import cmd_restore
-            cmd_restore(args)
         elif args.command == "approvals":
             from gotg.commands.admin import cmd_approvals
             cmd_approvals(args)

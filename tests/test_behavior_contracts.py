@@ -434,8 +434,7 @@ def test_cli_continue_max_turns_absolute_ceiling(tmp_path, capsys, monkeypatch):
     args.message = None
     args.layer = None
 
-    with patch("gotg.cli.run_conversation") as mock_run, \
-         patch("gotg.cli._auto_checkpoint"):
+    with patch("gotg.cli.run_conversation") as mock_run:
         from gotg.commands.run import cmd_continue
         cmd_continue(args)
         # CLI passes iteration["max_turns"] (15) as absolute ceiling

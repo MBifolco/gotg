@@ -71,14 +71,6 @@ See the [User Guide](docs/guide.md#how-it-works) for phases, layers, and convers
 | `gotg next-layer` | Advance to the next task layer (after merging) |
 | `gotg rework` | Send tasks back for rework after changes_requested review |
 
-### Checkpoints
-
-| Command | Description |
-|---------|-------------|
-| `gotg checkpoint [description]` | Create a manual checkpoint |
-| `gotg checkpoints` | List all checkpoints |
-| `gotg restore N` | Restore to checkpoint N |
-
 ### File Approvals
 
 | Command | Description |

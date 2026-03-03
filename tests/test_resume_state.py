@@ -156,6 +156,34 @@ def test_system_tail_after_phase_complete():
 
 # ── Malformed payload robustness ────────────────────────────
 
+def test_ask_pm_agents_respond_before_passing():
+    """ask_pm should still be detected when agents respond and pass after it."""
+    ask_data = {"question": "Which approach?", "response_type": "feedback"}
+    msgs = [
+        _msg("alice", "I think we need clarification."),
+        _msg("coach", "Asking PM.", ask_pm=ask_data),
+        _msg("alice", "Waiting for PM response."),
+        _msg("bob", "I'll wait too."),
+        _msg("alice", "pass", pass_turn=True),
+        _msg("bob", "pass", pass_turn=True),
+    ]
+    state = reconstruct_resume_state(msgs, "refinement")
+    assert state.pause_reason == PauseReason.COACH_QUESTION
+    assert state.ask_pm_data == ask_data
+
+
+def test_ask_pm_answered_by_human():
+    """ask_pm followed by a human message should NOT restore as COACH_QUESTION."""
+    ask_data = {"question": "Which approach?"}
+    msgs = [
+        _msg("coach", "Asking PM.", ask_pm=ask_data),
+        _msg("human", "Go with approach A."),
+        _msg("alice", "Great, moving forward with A."),
+    ]
+    state = reconstruct_resume_state(msgs, "refinement")
+    assert state.pause_reason is None  # Answered — no pause
+
+
 def test_ask_pm_missing_question_key():
     """ask_pm without 'question' key should not be treated as COACH_QUESTION."""
     msgs = [_msg("coach", "Bad payload.", ask_pm={"options": ["A"]})]

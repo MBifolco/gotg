@@ -20,13 +20,13 @@ class HomeScreen(Screen):
     """Home screen showing iterations and exploration sessions."""
 
     BINDINGS = [
+        Binding("R", "run_session", "Run"),
+        Binding("c", "continue_session", "Continue"),
+        Binding("n", "new_item", "New"),
+        Binding("e", "edit_item", "Edit"),
+        Binding("g", "new_exploration", "Explore"),
+        Binding("s", "open_settings", "Settings"),
         Binding("r", "refresh", "Refresh"),
-        Binding("R", "run_session", "Run", show=False),
-        Binding("c", "continue_session", "Continue", show=False),
-        Binding("n", "new_item", "New", show=False),
-        Binding("e", "edit_item", "Edit", show=False),
-        Binding("s", "open_settings", "Settings", show=False),
-        Binding("g", "new_exploration", "Explore", show=False),
     ]
 
     def compose(self):

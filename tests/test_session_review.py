@@ -407,18 +407,6 @@ def test_advance_next_layer_all_done(tmp_path):
     assert data["iterations"][0]["phase"] == "code-review"
 
 
-def test_advance_next_layer_auto_checkpoints(tmp_path):
-    """Creates an auto checkpoint on advance."""
-    team, iter_dir, iteration = _make_team_dir(tmp_path)
-
-    result = advance_next_layer(team, iteration, iter_dir)
-    assert result.checkpoint_number is not None
-
-    cp_dir = iter_dir / "checkpoints"
-    assert cp_dir.exists()
-    assert len(list(cp_dir.iterdir())) >= 1
-
-
 def test_advance_next_layer_calls_on_progress(tmp_path):
     """on_progress callback receives step messages."""
     team, iter_dir, iteration = _make_team_dir(tmp_path)

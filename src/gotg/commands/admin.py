@@ -3,9 +3,8 @@ import sys
 from pathlib import Path
 
 import gotg.cli as _cli
-from gotg.checkpoint import create_checkpoint, list_checkpoints, restore_checkpoint
 from gotg.config import (
-    IterationStore, load_coach, save_model_config,
+    IterationStore, save_model_config,
     read_dotenv, ensure_dotenv_key,
 )
 from gotg.conversation import ConversationStore, render_message
@@ -131,85 +130,6 @@ def cmd_show(args):
     for msg in messages:
         print(render_message(msg))
         print()
-
-
-def cmd_checkpoint(args):
-    cwd = Path.cwd()
-    team_dir = _cli.find_team_dir(cwd)
-    if team_dir is None:
-        print("Error: no .team/ directory found.", file=sys.stderr)
-        raise SystemExit(1)
-
-    iteration, iter_dir = IterationStore(team_dir).get_current()
-    coach = load_coach(team_dir)
-    number = create_checkpoint(iter_dir, iteration, description=args.description, trigger="manual", coach_name=coach["name"] if coach else "coach")
-    print(f"Checkpoint {number} created")
-
-
-def cmd_checkpoints(args):
-    cwd = Path.cwd()
-    team_dir = _cli.find_team_dir(cwd)
-    if team_dir is None:
-        print("Error: no .team/ directory found.", file=sys.stderr)
-        raise SystemExit(1)
-
-    _, iter_dir = IterationStore(team_dir).get_current()
-    checkpoints = list_checkpoints(iter_dir)
-
-    if not checkpoints:
-        print("No checkpoints yet.")
-        return
-
-    print(f"{'#':<4} {'Phase':<18} {'Turns':<7} {'Trigger':<9} {'Description':<30} {'Timestamp'}")
-    print("-" * 100)
-    for cp in checkpoints:
-        print(
-            f"{cp['number']:<4} {cp['phase']:<18} {cp['turn_count']:<7} "
-            f"{cp['trigger']:<9} {cp.get('description', ''):<30} {cp['timestamp']}"
-        )
-
-
-def cmd_restore(args):
-    cwd = Path.cwd()
-    team_dir = _cli.find_team_dir(cwd)
-    if team_dir is None:
-        print("Error: no .team/ directory found.", file=sys.stderr)
-        raise SystemExit(1)
-
-    iteration, iter_dir = IterationStore(team_dir).get_current()
-
-    # Validate checkpoint exists before prompting
-    cp_path = iter_dir / "checkpoints" / str(args.number)
-    if not cp_path.exists():
-        print(f"Error: checkpoint {args.number} does not exist.", file=sys.stderr)
-        raise SystemExit(1)
-
-    # Safety prompt
-    coach = load_coach(team_dir)
-    answer = input("Create checkpoint of current state before restoring? [Y/n] ")
-    if answer.strip().lower() not in ("n", "no"):
-        number = create_checkpoint(
-            iter_dir, iteration,
-            description=f"Safety before restore to #{args.number}",
-            trigger="manual",
-            coach_name=coach["name"] if coach else "coach",
-        )
-        print(f"Checkpoint {number} created (safety)")
-
-    state = restore_checkpoint(iter_dir, args.number)
-
-    # Normalize legacy phase names before writing back
-    from gotg.migration import normalize_phase
-    restored_phase = normalize_phase(state["phase"])
-
-    # Update iteration.json to match checkpoint state
-    IterationStore(team_dir).save_fields(
-        iteration["id"],
-        phase=restored_phase,
-        max_turns=state["max_turns"],
-    )
-
-    print(f"Restored to checkpoint {args.number} (phase: {state['phase']}, turns: {state['turn_count']})")
 
 
 def cmd_approvals(args):

@@ -101,7 +101,6 @@ class NextLayerResult:
     all_done: bool
     boundary_msg: dict | None = None
     transition_msg: dict | None = None
-    checkpoint_number: int | None = None
     task_count: int = 0
     removed_worktrees: list[str] = field(default_factory=list)
 
@@ -113,7 +112,6 @@ class AdvanceResult:
     to_phase: str
     boundary_msg: dict
     transition_msg: dict
-    checkpoint_number: int | None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -124,7 +122,6 @@ class ReworkResult:
     tasks_with_feedback: list[str]  # task IDs that got feedback
     boundary_msg: dict
     transition_msg: dict
-    checkpoint_number: int | None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -286,13 +283,23 @@ def reconstruct_resume_state(messages: list[dict], phase: str | None) -> ResumeS
                 iteration_proposals=proposals_data,
             )
 
-    # Coach asked PM — require "question" key for well-formed payload
-    ask_pm_data = last_content_msg.get("ask_pm")
-    if isinstance(ask_pm_data, dict) and "question" in ask_pm_data:
-        return ResumeState(
-            pause_reason=PauseReason.COACH_QUESTION,
-            ask_pm_data=ask_pm_data,
-        )
+    # Coach asked PM — scan backwards for unanswered ask_pm.
+    # Agents may have responded with "waiting for PM" messages after the coach's
+    # ask_pm, so checking only last_content_msg is insufficient.
+    # An ask_pm is "unanswered" if no human message appears after it.
+    has_human_after = False
+    for msg in reversed(phase_messages):
+        if msg.get("from") == "human":
+            has_human_after = True
+            break
+        ask_pm_data = msg.get("ask_pm")
+        if isinstance(ask_pm_data, dict) and "question" in ask_pm_data:
+            if not has_human_after:
+                return ResumeState(
+                    pause_reason=PauseReason.COACH_QUESTION,
+                    ask_pm_data=ask_pm_data,
+                )
+            break
 
     # Fallback: check if phase shows task status bar
     caps = get_phase_caps_safe(phase)

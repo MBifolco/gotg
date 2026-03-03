@@ -113,7 +113,6 @@ class AdvanceComplete:
     """Phase advance finished successfully."""
     from_phase: str
     to_phase: str
-    checkpoint_number: int | None
 
 
 @dataclass

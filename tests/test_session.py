@@ -458,7 +458,6 @@ def test_advance_refinement_to_planning(tmp_path):
     assert result.to_phase == "planning"
     assert (iter_dir / "refinement_summary.md").exists()
     assert "Auth system" in (iter_dir / "refinement_summary.md").read_text()
-    assert result.checkpoint_number is not None
     assert len(result.warnings) == 0
 
 
@@ -491,7 +490,7 @@ def test_advance_on_progress_called(tmp_path):
         on_progress=progress_msgs.append,
     )
 
-    assert len(progress_msgs) >= 2  # at least extraction msg + checkpoint msg
+    assert len(progress_msgs) >= 2  # at least extraction msg + save msg
     assert any("refinement" in m.lower() or "summariz" in m.lower() for m in progress_msgs)
 
 
@@ -507,7 +506,7 @@ def test_advance_without_coach_skips_extraction(tmp_path):
     assert result.from_phase == "refinement"
     assert result.to_phase == "planning"
     assert not (iter_dir / "refinement_summary.md").exists()
-    assert result.checkpoint_number is not None
+    assert len(result.warnings) == 0
 
 
 def test_advance_pre_code_review_applies_files(tmp_path):

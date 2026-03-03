@@ -141,7 +141,6 @@ my-project/
         tasks.json             # Created on planning → pre-code-review advance
         debug.jsonl            # Diagnostic log (auto)
         approvals.json         # Approval requests (if enabled)
-        checkpoints/           # Checkpoint snapshots
     exploration/               # Freeform exploration conversations
       some-topic/
         exploration.json       # Session metadata (topic, coach, max_turns)
@@ -644,27 +643,6 @@ Note: `--context-from` and `--no-context` options are CLI-only. The TUI always a
 
 - **context_from** — `"iter-1"` (load that iteration's context), `null` (no context found), or `false` (user opted out with `--no-context`).
 
-## Checkpoints
-
-GOTG automatically checkpoints after every `run`, `continue`, `advance`, and `next-layer` command. You can also create manual checkpoints.
-
-Checkpoints are stored per-iteration under `.team/iterations/<id>/checkpoints/<N>/`. Each checkpoint contains a copy of all iteration files plus metadata.
-
-```bash
-gotg checkpoints                               # List all checkpoints
-gotg checkpoint "before prompt experiment"      # Manual snapshot
-gotg restore 3                                 # Roll back (prompts for safety checkpoint)
-```
-
-Example output:
-```
-   Phase              Turns   Trigger   Description                    Timestamp
-----------------------------------------------------------------------------------------------------
-1  refinement         8       auto                                     2026-02-07T20:15:33
-2  planning           14      auto                                     2026-02-07T20:22:10
-3  planning           14      manual    before prompt experiment       2026-02-07T20:25:00
-```
-
 ## Conversation Log Format
 
 Messages are stored as newline-delimited JSON (JSONL):
@@ -685,4 +663,3 @@ The log is append-only. Read with `gotg show`, or directly with `cat`, `jq`, or 
 - **Use exploration before iterations.** A 10-turn exploration session with context saves 20+ turns of agents rediscovering existing work.
 - **The PM decides when to advance.** After the coach signals, you review and decide whether to run `gotg advance`.
 - **Logs are just files.** JSONL — one JSON object per line. `grep`, `jq`, pipe, or script against them.
-- **Checkpoints are automatic.** After each run/advance, GOTG snapshots the iteration state. Use `gotg restore N` to roll back.
