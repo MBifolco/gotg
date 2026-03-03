@@ -16,7 +16,7 @@ from gotg.prompts import (
 )
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
 from gotg.tasks import TaskRepo, format_tasks_summary
-from gotg.tools import FILE_TOOLS, READ_ONLY_FILE_TOOLS
+from gotg.tools import APPROVAL_REQUIRED_FILE_TOOLS, FILE_TOOLS, READ_ONLY_FILE_TOOLS
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,22 @@ class SessionPolicy:
     # Phase context
     phase_skeleton: str | None = None  # Compressed prior-phase context
     project_context: str | None = None  # Iteration artifacts for context injection (grooming, cross-iteration)
+    iteration_plan: str | None = None  # Sibling iterations for scope awareness
     # Streaming
     streaming: bool = False           # opt-in via team.json, default off for safe rollout
+
+
+def _format_iteration_plan(current_id: str, all_iterations: list[dict]) -> str | None:
+    """Format sibling iterations as a brief plan summary for scope awareness."""
+    if len(all_iterations) <= 1:
+        return None
+    lines = []
+    for it in all_iterations:
+        marker = ">> " if it["id"] == current_id else "   "
+        title = it.get("title") or it.get("description", "")[:80]
+        status = it.get("status", "pending")
+        lines.append(f"{marker}{it['id']}: {title} [{status}]")
+    return "\n".join(lines)
 
 
 def iteration_policy(
@@ -91,6 +105,15 @@ def iteration_policy(
         impl_layer = iteration.get("current_layer") if caps.filter_tasks_by_layer else None
         tasks_summary = format_tasks_summary(tasks_data, layer=impl_layer)
 
+    # Build iteration plan (sibling iterations for scope awareness)
+    from gotg.config import IterationStore
+    team_dir = iter_dir.parent.parent  # .team/iterations/iter-N → .team
+    try:
+        all_iterations = IterationStore(team_dir).list_all()
+        iteration_plan = _format_iteration_plan(iteration["id"], all_iterations)
+    except Exception:
+        iteration_plan = None
+
     # Pre-compute kickoff
     phase = iteration.get("phase", "refinement")
     kickoff_text = None
@@ -99,9 +122,17 @@ def iteration_policy(
         if text:
             kickoff_text = text
 
-    # Build tool tuples
+    # Build tool tuples — code-review gets read-only file tools (no file_write)
     if fileguard:
-        agent_tools = tuple(list(AGENT_TOOLS) + list(FILE_TOOLS))
+        from gotg.phases import get_phase_caps_safe
+        caps_for_tools = get_phase_caps_safe(phase)
+        if caps_for_tools.inject_file_access_prompt:
+            base_file_tools = list(FILE_TOOLS)
+            if fileguard.enable_approvals and approval_store:
+                base_file_tools.extend(APPROVAL_REQUIRED_FILE_TOOLS)
+            agent_tools = tuple(list(AGENT_TOOLS) + base_file_tools)
+        else:
+            agent_tools = tuple(list(AGENT_TOOLS) + list(READ_ONLY_FILE_TOOLS))
     else:
         agent_tools = tuple(AGENT_TOOLS)
 
@@ -125,6 +156,7 @@ def iteration_policy(
         system_supplement=None,
         coach_system_prompt=None,
         phase_skeleton=phase_skeleton,
+        iteration_plan=iteration_plan,
         streaming=streaming,
     )
 

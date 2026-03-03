@@ -31,7 +31,7 @@ Behavior: Layer completion then next-layer transition updates state and logs.
 Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_layer_progression_next_layer_contract`
 - `tests/test_session_review.py::test_advance_next_layer_success`
-- `tests/test_e2e_quality_gate.py::test_replay_test16_next_layer_boundary_uses_implementation_phase`
+- `tests/test_e2e_quality_gate.py::test_replay_test16_next_layer_boundary_uses_code_review_phase`
 
 Behavior: Final next-layer call returns all-done when no more layers exist.
 Tests:
@@ -142,9 +142,76 @@ Tests:
 - `tests/test_session_review.py::test_validate_next_layer_unmerged_branches`
 - `tests/test_session_review.py::test_validate_next_layer_dirty_worktree`
 
+Behavior: Merge requires approved code review (phase gate).
+Tests:
+- `tests/test_rework.py::test_merge_blocked_when_changes_requested`
+- `tests/test_rework.py::test_merge_blocked_when_no_outcome`
+- `tests/test_rework.py::test_merge_blocked_when_not_code_review`
+
+Behavior: Next-layer requires approved code review outcome.
+Tests:
+- `tests/test_rework.py::test_next_layer_blocked_when_changes_requested`
+- `tests/test_rework.py::test_next_layer_blocked_when_no_outcome`
+
 Behavior: File writes during implementation are isolated per agent worktree root.
 Tests:
 - `tests/test_e2e_quality_gate.py::test_e2e_worktree_isolation_contract`
+
+## Code-Review Outcome and Rework Loop
+
+Behavior: Coach `signal_phase_complete` carries outcome (approved/changes_requested) and persists structured data on coach message.
+Tests:
+- `tests/test_rework.py::test_phase_complete_signaled_default_outcome`
+- `tests/test_rework.py::test_phase_complete_signaled_changes_requested`
+- `tests/test_engine.py::test_signal_phase_complete_extracts_outcome`
+- `tests/test_engine.py::test_signal_phase_complete_default_outcome`
+- `tests/test_engine.py::test_signal_phase_complete_persists_on_message`
+- `tests/test_engine.py::test_signal_phase_complete_fallback_includes_summary`
+
+Behavior: `reconstruct_resume_state` reads review outcome from structured data, legacy fallback, or new fallback text.
+Tests:
+- `tests/test_rework.py::test_reconstruct_resume_state_phase_complete_approved`
+- `tests/test_rework.py::test_reconstruct_resume_state_phase_complete_changes_requested`
+- `tests/test_rework.py::test_reconstruct_resume_state_legacy_fallback_text`
+- `tests/test_rework.py::test_reconstruct_resume_state_new_fallback_text`
+
+Behavior: Review feedback extraction via one-shot LLM call returns structured feedback map (includes coach messages, excludes system).
+Tests:
+- `tests/test_rework.py::test_extract_review_feedback_success`
+- `tests/test_rework.py::test_extract_review_feedback_all_approved`
+- `tests/test_rework.py::test_extract_review_feedback_bad_json`
+- `tests/test_rework.py::test_extract_review_feedback_filters_unknown_ids`
+- `tests/test_rework.py::test_extract_review_feedback_non_string_feedback`
+- `tests/test_rework.py::test_extract_review_feedback_includes_coach_messages`
+
+Behavior: `gotg rework` extracts feedback, applies to tasks, transitions code-review to implementation on same layer.
+Tests:
+- `tests/test_rework.py::test_advance_rework_applies_feedback`
+- `tests/test_rework.py::test_advance_rework_preserves_done_tasks`
+- `tests/test_rework.py::test_advance_rework_saves_phase`
+- `tests/test_rework.py::test_advance_rework_keeps_layer`
+- `tests/test_rework.py::test_advance_rework_empty_feedback_raises`
+- `tests/test_rework.py::test_advance_rework_clears_completion_metadata`
+- `tests/test_rework.py::test_advance_rework_clears_review_outcome`
+- `tests/test_rework.py::test_advance_rework_scoped_to_layer`
+- `tests/test_rework.py::test_cmd_rework_success`
+- `tests/test_rework.py::test_cmd_rework_wrong_phase`
+
+Behavior: Implementation prompts display review feedback and separate done from actionable tasks.
+Tests:
+- `tests/test_rework.py::test_format_agent_tasks_includes_review_feedback`
+- `tests/test_rework.py::test_format_agent_tasks_no_feedback`
+- `tests/test_rework.py::test_format_agent_tasks_separates_done_from_actionable`
+- `tests/test_rework.py::test_format_agent_tasks_all_actionable_no_done_section`
+- `tests/test_rework.py::test_handle_complete_tasks_clears_review_feedback`
+
+## Implementation Phase Gate
+
+Behavior: Implementation phase does not support merge/next-layer shortcuts (must advance through code-review first).
+Tests:
+- `tests/test_phases.py::test_implementation_caps`
+- `tests/test_rework.py::test_merge_blocked_when_not_code_review`
+- `tests/test_session_review.py::test_validate_next_layer_implementation_phase`
 
 ## Persistence Store Consolidation
 

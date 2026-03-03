@@ -53,30 +53,42 @@ def test_init_creates_team_json_agents_section(git_project):
     assert "system_prompt" not in agents[0]
 
 
-def test_init_creates_iteration_json_list_format(git_project):
+def test_init_creates_iteration_json_empty(git_project):
     init_project(git_project)
     data = json.loads((git_project / ".team" / "iteration.json").read_text())
-    assert data["current"] == "iter-1"
-    assert len(data["iterations"]) == 1
-    entry = data["iterations"][0]
-    assert entry["id"] == "iter-1"
-    assert entry["title"] == ""
-    assert entry["description"] == ""
-    assert entry["status"] == "pending"
-    assert entry["phase"] == "refinement"
-    assert entry["max_turns"] == 10
+    assert data["current"] is None
+    assert data["iterations"] == []
 
 
 def test_init_creates_iterations_directory(git_project):
     init_project(git_project)
-    assert (git_project / ".team" / "iterations" / "iter-1").is_dir()
+    assert (git_project / ".team" / "iterations").is_dir()
 
 
-def test_init_creates_empty_conversation_log(git_project):
+def test_load_iteration_empty_init_gives_clear_error(git_project):
+    """load_iteration on a fresh init (no iterations) gives a helpful error."""
     init_project(git_project)
-    log = git_project / ".team" / "iterations" / "iter-1" / "conversation.jsonl"
-    assert log.exists()
-    assert log.read_text() == ""
+    from gotg.config import load_iteration
+    with pytest.raises(ConfigError, match="No current iteration"):
+        load_iteration(git_project / ".team")
+
+
+
+def test_cmd_new_creates_iteration(git_project, capsys):
+    """gotg new creates an iteration and sets it as current."""
+    init_project(git_project)
+    from unittest.mock import patch
+    from gotg.commands.admin import cmd_new
+    args = type("A", (), {"description": "Build a calculator"})()
+    with patch("gotg.commands.admin._cli.find_team_dir", return_value=git_project / ".team"):
+        cmd_new(args)
+    data = json.loads((git_project / ".team" / "iteration.json").read_text())
+    assert data["current"] == "iter-1"
+    assert len(data["iterations"]) == 1
+    assert data["iterations"][0]["description"] == "Build a calculator"
+    assert (git_project / ".team" / "iterations" / "iter-1").is_dir()
+    out = capsys.readouterr().out
+    assert "iter-1" in out
 
 
 def test_init_refuses_if_team_exists(git_project):
@@ -187,10 +199,13 @@ def test_coach_facilitation_prompt_exists():
 def test_coach_tools_exists():
     from gotg.scaffold import COACH_TOOLS
     assert isinstance(COACH_TOOLS, list)
-    assert len(COACH_TOOLS) == 2
+    assert len(COACH_TOOLS) == 5
     tool = COACH_TOOLS[0]
-    assert tool["name"] == "signal_phase_complete"
+    assert tool["name"] == "coach_pass_turn"
     assert "input_schema" in tool
+    names = {t["name"] for t in COACH_TOOLS}
+    assert "propose_iterations" in names
+    assert "guide_discussion" in names
 
 
 def test_phase_prompts_has_planning_key():
@@ -542,6 +557,16 @@ def test_format_phase_kickoff_refinement_addresses_first_agent():
     assert "alice" in result
 
 
+def test_format_phase_kickoff_refinement_includes_task_description():
+    from gotg.scaffold import format_phase_kickoff
+    agents = [{"name": "agent-1"}, {"name": "agent-2"}]
+    iteration = {"id": "iter-1", "description": "Build a calculator with expression display"}
+    result = format_phase_kickoff("refinement", agents, iteration)
+    assert "TASK DESCRIPTION:" in result
+    assert "Build a calculator with expression display" in result
+    assert "Do not skip" in result
+
+
 def test_format_phase_kickoff_implementation_includes_layer():
     from gotg.scaffold import format_phase_kickoff
     agents = [{"name": "agent-1"}, {"name": "agent-2"}]
@@ -555,6 +580,38 @@ def test_format_phase_kickoff_unknown_phase_returns_empty():
     agents = [{"name": "agent-1"}]
     iteration = {"id": "iter-1", "description": "Build X"}
     assert format_phase_kickoff("unknown-phase", agents, iteration) == ""
+
+
+def test_planning_kickoff_includes_writable_paths():
+    """format_phase_kickoff('planning', ...) with fileguard renders writable_paths info."""
+    from gotg.scaffold import format_phase_kickoff
+    from types import SimpleNamespace
+    fileguard = SimpleNamespace(writable_paths=["src/**", "tests/**"])
+    agents = [{"name": "agent-1"}, {"name": "agent-2"}]
+    iteration = {"id": "iter-1", "description": "Build X"}
+    result = format_phase_kickoff("planning", agents, iteration, fileguard=fileguard)
+    assert "src/**" in result
+    assert "tests/**" in result
+    assert "File access" in result
+
+
+def test_pre_code_review_kickoff_includes_writable_paths(tmp_path):
+    """format_phase_kickoff('pre-code-review', ...) with fileguard renders writable_paths info."""
+    from gotg.scaffold import format_phase_kickoff
+    from types import SimpleNamespace
+    import json as _json
+    fileguard = SimpleNamespace(writable_paths=["src/**", "docs/**"])
+    agents = [{"name": "agent-1"}, {"name": "agent-2"}]
+    iteration = {"id": "iter-1", "description": "Build X"}
+    # pre-code-review needs tasks.json for agent_task_assignments
+    tasks = [{"id": "t1", "assigned_to": "agent-1", "layer": 0}]
+    (tmp_path / "tasks.json").write_text(_json.dumps(tasks))
+    result = format_phase_kickoff(
+        "pre-code-review", agents, iteration, fileguard=fileguard, iter_dir=tmp_path,
+    )
+    assert "src/**" in result
+    assert "docs/**" in result
+    assert "File access" in result
 
 
 # --- format_agent_task_assignments ---

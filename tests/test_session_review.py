@@ -74,6 +74,7 @@ def _make_team_dir(tmp_path, phase="code-review", current_layer=0, tasks=None):
     iteration = {
         "id": "iter-1", "description": "Test", "status": "in-progress",
         "phase": phase, "max_turns": 10, "current_layer": current_layer,
+        "review_outcome": "approved",
     }
     (team / "iteration.json").write_text(json.dumps({
         "iterations": [iteration],
@@ -176,7 +177,7 @@ def test_merge_single_branch_success(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path)
     _create_branch_with_changes(tmp_path, "agent-1", 0)
 
-    results = merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+    results = merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"], phase="code-review", review_outcome="approved")
     assert len(results) == 1
     assert results[0].success is True
     assert results[0].commit is not None
@@ -192,7 +193,7 @@ def test_merge_all_branches(tmp_path):
     _create_branch_with_changes(tmp_path, "agent-1", 0)
     _create_branch_with_changes(tmp_path, "agent-2", 0)
 
-    results = merge_branches(tmp_path, layer=0)
+    results = merge_branches(tmp_path, layer=0, phase="code-review", review_outcome="approved")
     assert len(results) == 2
     assert all(r.success for r in results)
 
@@ -210,11 +211,11 @@ def test_merge_stops_on_conflict(tmp_path):
     commit_worktree(wt2, "conflicting change")
 
     # Merge agent-1 first so agent-2 conflicts
-    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"], phase="code-review", review_outcome="approved")
 
     # Now try merging agent-2 — conflict
     from gotg.worktree import abort_merge
-    results = merge_branches(tmp_path, layer=0, branches=["agent-2/layer-0"])
+    results = merge_branches(tmp_path, layer=0, branches=["agent-2/layer-0"], phase="code-review", review_outcome="approved")
     assert len(results) == 1
     assert results[0].success is False
     assert len(results[0].conflicts) >= 1
@@ -234,7 +235,7 @@ def test_merge_raises_on_merge_in_progress(tmp_path):
     (wt2 / "src" / "agent-1.py").write_text("# conflict")
     commit_worktree(wt2, "conflict")
 
-    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"], phase="code-review", review_outcome="approved")
     # Start conflicting merge manually
     subprocess.run(
         ["git", "merge", "--no-ff", "agent-2/layer-0"],
@@ -242,23 +243,30 @@ def test_merge_raises_on_merge_in_progress(tmp_path):
     )
 
     with pytest.raises(ReviewError, match="merge is already in progress"):
-        merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+        merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"], phase="code-review", review_outcome="approved")
 
     # Cleanup
     from gotg.worktree import abort_merge
     abort_merge(tmp_path)
 
 
-def test_merge_raises_on_dirty_main(tmp_path):
-    """Raises ReviewError when main has uncommitted changes."""
+def test_merge_auto_stashes_dirty_main(tmp_path):
+    """Dirty main is auto-stashed before merge, then restored."""
     team, iter_dir, iteration = _make_team_dir(tmp_path)
     _create_branch_with_changes(tmp_path, "agent-1", 0)
 
     # Dirty the main worktree
     (tmp_path / "src" / "main.py").write_text("dirty")
 
-    with pytest.raises(ReviewError, match="uncommitted changes on main"):
-        merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+    progress = []
+    results = merge_branches(
+        tmp_path, layer=0, branches=["agent-1/layer-0"],
+        phase="code-review", review_outcome="approved",
+        on_progress=progress.append,
+    )
+    assert len(results) == 1
+    assert results[0].success
+    assert any("Stashing" in p for p in progress)
 
 
 def test_merge_auto_commits_dirty_worktrees(tmp_path):
@@ -273,6 +281,7 @@ def test_merge_auto_commits_dirty_worktrees(tmp_path):
     results = merge_branches(
         tmp_path, layer=0, branches=["agent-1/layer-0"],
         on_progress=progress_msgs.append,
+        phase="code-review", review_outcome="approved",
     )
     assert len(results) == 1
     assert results[0].success is True
@@ -291,6 +300,7 @@ def test_merge_calls_on_progress(tmp_path):
     merge_branches(
         tmp_path, layer=0, branches=["agent-1/layer-0"],
         on_progress=progress_msgs.append,
+        phase="code-review", review_outcome="approved",
     )
     assert len(progress_msgs) >= 1
     assert "agent-1/layer-0" in progress_msgs[0]
@@ -303,10 +313,10 @@ def test_merge_skips_already_merged(tmp_path):
     _create_branch_with_changes(tmp_path, "agent-2", 0)
 
     # Merge agent-1 first
-    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"])
+    merge_branches(tmp_path, layer=0, branches=["agent-1/layer-0"], phase="code-review", review_outcome="approved")
 
     # Now merge all — should only merge agent-2
-    results = merge_branches(tmp_path, layer=0)
+    results = merge_branches(tmp_path, layer=0, phase="code-review", review_outcome="approved")
     assert len(results) == 1
     assert results[0].branch == "agent-2/layer-0"
 
@@ -323,18 +333,17 @@ def test_validate_next_layer_success(tmp_path):
 
 
 def test_validate_next_layer_wrong_phase(tmp_path):
-    """Raises ReviewError when not in implementation or code-review phase."""
+    """Raises ReviewError when not in code-review phase."""
     team, iter_dir, iteration = _make_team_dir(tmp_path, phase="planning")
-    with pytest.raises(ReviewError, match="implementation or code-review"):
+    with pytest.raises(ReviewError, match="code-review phase"):
         validate_next_layer(team, iteration, iter_dir)
 
 
 def test_validate_next_layer_implementation_phase(tmp_path):
-    """Accepts implementation phase for next-layer."""
+    """Implementation phase is rejected for next-layer (must be in code-review)."""
     team, iter_dir, iteration = _make_team_dir(tmp_path, phase="implementation")
-    current, next_l = validate_next_layer(team, iteration, iter_dir)
-    assert current == 0
-    assert next_l == 1
+    with pytest.raises(ReviewError, match="code-review phase"):
+        validate_next_layer(team, iteration, iter_dir)
 
 
 def test_validate_next_layer_wrong_status(tmp_path):
@@ -421,9 +430,9 @@ def test_advance_next_layer_calls_on_progress(tmp_path):
 
 
 def test_advance_next_layer_wrong_phase(tmp_path):
-    """Raises ReviewError when not in implementation or code-review."""
+    """Raises ReviewError when not in code-review phase."""
     team, iter_dir, iteration = _make_team_dir(tmp_path, phase="planning")
-    with pytest.raises(ReviewError, match="implementation or code-review"):
+    with pytest.raises(ReviewError, match="code-review phase"):
         advance_next_layer(team, iteration, iter_dir)
 
 

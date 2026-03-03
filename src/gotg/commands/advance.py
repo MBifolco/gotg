@@ -75,3 +75,34 @@ def cmd_next_layer(args):
     print(f"Advanced to layer {result.to_layer} (implementation phase).")
     print(f"Layer {result.to_layer} has {result.task_count} task(s).")
     print("Turns reset for new phase.")
+
+
+def cmd_rework(args):
+    """Send tasks back for rework based on review feedback."""
+    cwd = Path.cwd()
+    team_dir = _cli.find_team_dir(cwd)
+    if team_dir is None:
+        print("Error: no .team/ directory found. Run 'gotg init' first.", file=sys.stderr)
+        raise SystemExit(1)
+
+    iteration, iter_dir = IterationStore(team_dir).get_current()
+
+    from gotg.session_advance import advance_rework
+    from gotg.session_types import ReworkError
+
+    try:
+        result = advance_rework(
+            team_dir, iteration, iter_dir,
+            chat_call=_cli.chat_completion,
+            on_progress=lambda msg: print(msg),
+        )
+    except ReworkError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    for w in result.warnings:
+        print(f"Warning: {w}", file=sys.stderr)
+    print(render_message(result.transition_msg))
+    print()
+    print(f"Rework: {len(result.tasks_with_feedback)} task(s) sent back for implementation (layer {result.layer}).")
+    print("Turns reset for new phase.")

@@ -44,6 +44,7 @@ def _make_team_dir(tmp_path, phase="code-review", current_layer=0):
     iteration = {
         "id": "iter-1", "description": "Test", "phase": phase,
         "status": "in-progress", "max_turns": 30, "current_layer": current_layer,
+        "review_outcome": "approved",
     }
     (team_dir / "iteration.json").write_text(json.dumps({
         "iterations": [iteration],
@@ -101,7 +102,7 @@ async def test_review_screen_shows_branches(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -120,7 +121,7 @@ async def test_review_screen_shows_diff_on_select(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -147,7 +148,7 @@ async def test_review_screen_merged_status(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -185,7 +186,7 @@ async def test_merge_selected_branch(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -232,7 +233,7 @@ async def test_merge_all_branches(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -265,7 +266,7 @@ async def test_merge_conflict_pushes_conflict_screen(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -325,7 +326,7 @@ async def test_next_layer_after_all_merged(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -361,7 +362,7 @@ async def test_next_layer_all_done_stays(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -394,7 +395,7 @@ async def test_load_error_pops_screen(tmp_path):
             "gotg.tui.screens.review.load_review_branches",
             side_effect=ReviewError("No branches found for layer 0."),
         ):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
             await pilot.pause()
@@ -417,7 +418,7 @@ async def test_escape_pops_review_screen(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -439,7 +440,7 @@ async def test_n_blocked_while_unmerged(tmp_path):
         await pilot.pause()
 
         with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
-            app.push_screen(ReviewScreen(team_dir, iteration, it_dir))
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
             await pilot.pause()
             await pilot.pause()
 
@@ -451,3 +452,75 @@ async def test_n_blocked_while_unmerged(tmp_path):
 
         # Still on ReviewScreen
         assert isinstance(app.screen, ReviewScreen)
+
+
+# ── Finding 2: ReviewScreen reloads iteration before actions ─────────
+
+
+@pytest.mark.asyncio
+async def test_review_screen_reload_iteration_before_merge(tmp_path):
+    """merge_selected reloads iteration from disk, not cached snapshot."""
+    team_dir, it_dir, iteration = _make_team_dir(tmp_path)
+    review_result = _make_review_result()
+
+    app = GotgApp(team_dir=team_dir)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        # Open ReviewScreen with approved outcome
+        with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
+            await pilot.pause()
+            await pilot.pause()
+
+        # Now change iteration.json to revoke approval
+        iter_data = json.loads((team_dir / "iteration.json").read_text())
+        iter_data["iterations"][0]["review_outcome"] = "changes_requested"
+        (team_dir / "iteration.json").write_text(json.dumps(iter_data))
+
+        # Select first branch (down arrow from header)
+        table = app.screen.query_one("#review-table", DataTable)
+        table.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        # Merge should be blocked because _reload_iteration picks up stale outcome
+        with patch("gotg.tui.screens.review.merge_branches") as mock_merge:
+            await pilot.press("m")
+            await pilot.pause()
+            mock_merge.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_review_screen_reload_iteration_before_next_layer(tmp_path):
+    """action_next_layer reloads iteration from disk before checking merge_allowed."""
+    # Create with approved, then revoke on disk after screen is open
+    team_dir, it_dir, iteration = _make_team_dir(tmp_path)
+    # All merged so next-layer check reaches _merge_allowed
+    all_merged = [
+        BranchReview(
+            branch="agent-1/layer-0", merged=True, empty=False,
+            stat="1 file", diff="diff", files_changed=1, insertions=1, deletions=0,
+        ),
+    ]
+    review_result = _make_review_result(branches=all_merged)
+
+    app = GotgApp(team_dir=team_dir)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        with patch("gotg.tui.screens.review.load_review_branches", return_value=review_result):
+            app.push_screen(ReviewScreen(team_dir, iteration, it_dir, review_outcome="approved"))
+            await pilot.pause()
+            await pilot.pause()
+
+        # Revoke on disk
+        iter_data = json.loads((team_dir / "iteration.json").read_text())
+        iter_data["iterations"][0]["review_outcome"] = None
+        (team_dir / "iteration.json").write_text(json.dumps(iter_data))
+
+        with patch("gotg.tui.screens.review.advance_next_layer") as mock_advance:
+            await pilot.press("n")
+            await pilot.pause()
+            mock_advance.assert_not_called()

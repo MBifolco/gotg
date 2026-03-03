@@ -2,9 +2,9 @@ import json
 import pytest
 from pathlib import Path
 
-from gotg.policy import SessionPolicy, iteration_policy, grooming_policy
+from gotg.policy import SessionPolicy, iteration_policy, grooming_policy, _format_iteration_plan
 from gotg.prompts import AGENT_TOOLS, COACH_TOOLS
-from gotg.tools import FILE_TOOLS
+from gotg.tools import FILE_TOOLS, READ_ONLY_FILE_TOOLS
 
 
 # --- Helpers ---
@@ -260,3 +260,208 @@ def test_iteration_policy_no_skeleton_file(tmp_path):
     iter_dir = _make_iter_dir(tmp_path)
     p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
     assert p.phase_skeleton is None
+
+
+# --- _format_iteration_plan tests ---
+
+
+def test_format_iteration_plan_single_iteration():
+    """Single iteration returns None (no plan needed)."""
+    result = _format_iteration_plan("iter-1", [
+        {"id": "iter-1", "title": "Do the thing", "status": "in-progress"},
+    ])
+    assert result is None
+
+
+def test_format_iteration_plan_multiple_iterations():
+    """Multiple iterations formatted with >> marker on current."""
+    result = _format_iteration_plan("iter-2", [
+        {"id": "iter-1", "title": "First thing", "status": "done"},
+        {"id": "iter-2", "title": "Second thing", "status": "in-progress"},
+        {"id": "iter-3", "title": "Third thing", "status": "pending"},
+    ])
+    assert result is not None
+    lines = result.split("\n")
+    assert len(lines) == 3
+    assert lines[0].startswith("   ")  # not current
+    assert "iter-1" in lines[0]
+    assert "[done]" in lines[0]
+    assert lines[1].startswith(">> ")  # current
+    assert "iter-2" in lines[1]
+    assert "[in-progress]" in lines[1]
+    assert lines[2].startswith("   ")
+    assert "iter-3" in lines[2]
+
+
+def test_format_iteration_plan_uses_description_fallback():
+    """Falls back to description[:80] when title is missing."""
+    result = _format_iteration_plan("iter-1", [
+        {"id": "iter-1", "description": "A long description here", "status": "in-progress"},
+        {"id": "iter-2", "description": "Another desc", "status": "pending"},
+    ])
+    assert "A long description here" in result
+
+
+def test_format_iteration_plan_empty_list():
+    """Empty list returns None."""
+    result = _format_iteration_plan("iter-1", [])
+    assert result is None
+
+
+# --- iteration_policy iteration_plan tests ---
+
+
+def _make_iter_dir_with_iteration_json(tmp_path, iterations):
+    """Create iter_dir and iteration.json with the given iterations list."""
+    team_dir = tmp_path / ".team"
+    iter_dir = team_dir / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    data = {
+        "schema_version": 1,
+        "iterations": iterations,
+        "current": "iter-1",
+    }
+    (team_dir / "iteration.json").write_text(json.dumps(data))
+    return iter_dir
+
+
+def test_iteration_policy_loads_iteration_plan(tmp_path):
+    iterations = [
+        {"id": "iter-1", "title": "First", "description": "Build", "status": "in-progress",
+         "phase": "refinement", "max_turns": 10},
+        {"id": "iter-2", "title": "Second", "description": "Polish", "status": "pending",
+         "phase": "refinement", "max_turns": 10},
+    ]
+    iter_dir = _make_iter_dir_with_iteration_json(tmp_path, iterations)
+    p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
+    assert p.iteration_plan is not None
+    assert ">> iter-1" in p.iteration_plan
+    assert "iter-2" in p.iteration_plan
+
+
+def test_iteration_policy_no_plan_for_single_iteration(tmp_path):
+    iterations = [
+        {"id": "iter-1", "title": "Only one", "description": "Build", "status": "in-progress",
+         "phase": "refinement", "max_turns": 10},
+    ]
+    iter_dir = _make_iter_dir_with_iteration_json(tmp_path, iterations)
+    p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
+    assert p.iteration_plan is None
+
+
+def test_iteration_policy_no_plan_when_no_iteration_json(tmp_path):
+    """No iteration.json → gracefully None (try/except in policy)."""
+    iter_dir = _make_iter_dir(tmp_path)
+    p = iteration_policy(AGENTS, ITERATION, iter_dir, history=[])
+    assert p.iteration_plan is None
+
+
+def test_iteration_policy_code_review_gets_read_only_tools(tmp_path):
+    """Code-review agents get read-only file tools (no file_write)."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = False
+
+    code_review_iter = {**ITERATION, "phase": "code-review"}
+    p = iteration_policy(AGENTS, code_review_iter, iter_dir, history=[], fileguard=FakeGuard())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_read" in tool_names
+    assert "file_list" in tool_names
+    assert "file_write" not in tool_names
+
+
+def test_iteration_policy_implementation_gets_full_tools(tmp_path):
+    """Implementation agents get full file tools (including file_write)."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = False
+
+    impl_iter = {**ITERATION, "phase": "implementation"}
+    p = iteration_policy(AGENTS, impl_iter, iter_dir, history=[], fileguard=FakeGuard())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_read" in tool_names
+    assert "file_list" in tool_names
+    assert "file_write" in tool_names
+
+
+def test_approval_tools_included_when_approvals_enabled(tmp_path):
+    """When approvals + approval_store are set, destructive tools are included."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+
+    class FakeStore:
+        pass
+
+    impl_iter = {**ITERATION, "phase": "implementation"}
+    p = iteration_policy(AGENTS, impl_iter, iter_dir, history=[],
+                         fileguard=FakeGuard(), approval_store=FakeStore())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" in tool_names
+    assert "file_rename" in tool_names
+
+
+def test_approval_tools_not_included_without_approvals(tmp_path):
+    """Without approvals, destructive tools are absent."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = False
+
+    impl_iter = {**ITERATION, "phase": "implementation"}
+    p = iteration_policy(AGENTS, impl_iter, iter_dir, history=[], fileguard=FakeGuard())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names
+
+
+def test_approval_tools_not_in_code_review(tmp_path):
+    """Code review phase uses read-only tools — no destructive tools."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+
+    class FakeStore:
+        pass
+
+    review_iter = {**ITERATION, "phase": "code-review"}
+    p = iteration_policy(AGENTS, review_iter, iter_dir, history=[],
+                         fileguard=FakeGuard(), approval_store=FakeStore())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names
+    assert "file_write" not in tool_names  # code-review is read-only
+
+
+def test_grooming_never_gets_destructive_tools():
+    """Grooming policy never includes destructive file tools."""
+    from gotg.policy import grooming_policy
+    p = grooming_policy(AGENTS, "test topic", history=[])
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names

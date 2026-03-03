@@ -90,6 +90,7 @@ def _anthropic_completion(
     messages: list[dict],
     api_key: str | None = None,
     tools: list[dict] | None = None,
+    tool_choice: dict | None = None,
 ) -> str | dict:
     url = f"{base_url.rstrip('/')}/v1/messages"
     headers = _build_headers(api_key)
@@ -105,6 +106,8 @@ def _anthropic_completion(
         body["system"] = system_block
     if tools:
         body["tools"] = tools
+    if tool_choice:
+        body["tool_choice"] = tool_choice
 
     _apply_message_cache_control(chat_messages)
 
@@ -265,6 +268,7 @@ def _anthropic_raw_stream(
     api_key: str | None = None,
     tools: list[dict] | None = None,
     max_tokens: int = 16384,
+    tool_choice: dict | None = None,
 ) -> Iterator[str]:
     """Anthropic streaming — yields text deltas, returns CompletionRound."""
     url = f"{base_url.rstrip('/')}/v1/messages"
@@ -282,6 +286,8 @@ def _anthropic_raw_stream(
         body["system"] = system_block
     if tools:
         body["tools"] = tools
+    if tool_choice:
+        body["tool_choice"] = tool_choice
 
     _apply_message_cache_control(chat_messages)
 

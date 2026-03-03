@@ -12,6 +12,8 @@ from gotg.session_types import (
     NextLayerResult,
     PhaseAdvanceError,
     ReviewError,
+    ReworkError,
+    ReworkResult,
 )
 
 __all__ = [
@@ -19,6 +21,8 @@ __all__ = [
     "advance_phase",
     "validate_next_layer",
     "advance_next_layer",
+    "validate_rework",
+    "advance_rework",
 ]
 
 
@@ -142,13 +146,15 @@ def advance_phase(
                 from gotg.tasks import TaskRepo
                 task_repo = TaskRepo(tasks_path)
                 tasks_data = task_repo.load()
-                notes_map, raw_text, error = extract_task_notes(
+                notes_map, files_map, raw_text, error = extract_task_notes(
                     history, tasks_data, model_config, coach["name"], chat_call,
                 )
                 if notes_map is not None:
                     for task in tasks_data:
                         if task["id"] in notes_map:
                             task["notes"] = notes_map[task["id"]]
+                        if files_map and task["id"] in files_map:
+                            task["files"] = files_map[task["id"]]
                     task_repo.save(tasks_data)
                     _progress(f"Updated {tasks_path} with task notes")
                     coach_ran = True
@@ -179,7 +185,10 @@ def advance_phase(
 
     # Save phase change + boundary markers
     _progress("Saving phase change and creating checkpoint...")
-    iter_store.save_phase(iteration["id"], next_phase)
+    if current_phase == "implementation" and next_phase == "code-review":
+        iter_store.save_fields(iteration["id"], phase=next_phase, review_outcome=None)
+    else:
+        iter_store.save_phase(iteration["id"], next_phase)
     boundary_msg, transition_msg = build_transition_messages(
         iteration["id"], current_phase, next_phase, tasks_written, coach_ran,
     )
@@ -236,7 +245,14 @@ def validate_next_layer(
         raise ReviewError(str(e)) from e
     if not caps.supports_next_layer:
         raise ReviewError(
-            f"next-layer requires implementation or code-review phase, currently in '{current_phase}'."
+            f"next-layer requires code-review phase, currently in '{current_phase}'."
+        )
+
+    review_outcome = iteration.get("review_outcome")
+    if review_outcome != "approved":
+        raise ReviewError(
+            "next-layer requires an approved code review. "
+            "Complete code-review phase first."
         )
 
     current_layer = iteration.get("current_layer", 0)
@@ -348,6 +364,7 @@ def advance_next_layer(
     _progress(f"Advancing to layer {next_layer}...")
     iter_store.save_fields(
         iteration["id"], phase="implementation", current_layer=next_layer,
+        review_outcome=None,
     )
 
     # Log transition with boundary marker
@@ -396,4 +413,128 @@ def advance_next_layer(
         checkpoint_number=checkpoint_number,
         task_count=len(next_layer_tasks),
         removed_worktrees=removed_worktrees,
+    )
+
+
+def validate_rework(iteration: dict) -> int:
+    """Validate that rework is possible. Returns current_layer.
+
+    Raises ReworkError if phase is not code-review or status is not in-progress.
+    """
+    if iteration.get("status") != "in-progress":
+        raise ReworkError(
+            f"Iteration status is '{iteration.get('status')}', expected 'in-progress'."
+        )
+    if iteration.get("phase") != "code-review":
+        raise ReworkError(
+            f"Rework requires code-review phase, currently in '{iteration.get('phase')}'."
+        )
+    review_outcome = iteration.get("review_outcome")
+    if review_outcome != "changes_requested":
+        raise ReworkError(
+            "Rework requires a 'changes_requested' review outcome. "
+            "Coach must signal code review with outcome='changes_requested' first."
+        )
+    return iteration.get("current_layer", 0)
+
+
+def advance_rework(
+    team_dir: Path,
+    iteration: dict,
+    iter_dir: Path,
+    chat_call: Callable,
+    on_progress: Callable[[str], None] | None = None,
+) -> ReworkResult:
+    """Extract review feedback, apply to tasks, transition code-review → implementation.
+
+    Raises ReworkError on validation failure or empty feedback.
+    """
+    from gotg.checkpoint import create_checkpoint
+    from gotg.config import IterationStore, load_coach, load_model_config
+    from gotg.tasks import TaskRepo
+    from gotg.transitions import build_rework_messages, extract_review_feedback
+
+    def _progress(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    current_layer = validate_rework(iteration)
+
+    log_path = iter_dir / "conversation.jsonl"
+    conv_store = ConversationStore(log_path)
+    iter_store = IterationStore(team_dir)
+
+    # Load tasks and filter to current layer
+    tasks_path = iter_dir / "tasks.json"
+    if not tasks_path.exists():
+        raise ReworkError("tasks.json not found.")
+    task_repo = TaskRepo(tasks_path)
+    tasks_data = task_repo.load()
+    layer_tasks = [t for t in tasks_data if t.get("layer") == current_layer]
+    if not layer_tasks:
+        raise ReworkError(f"No tasks found for layer {current_layer}.")
+
+    # Extract review feedback
+    _progress("Extracting review feedback...")
+    coach = load_coach(team_dir)
+    coach_name = coach["name"] if coach else "coach"
+    model_config = load_model_config(team_dir)
+    history = conv_store.read_phase_history()
+
+    feedback_map, raw_text, error = extract_review_feedback(
+        history, layer_tasks, model_config, coach_name, chat_call,
+    )
+
+    warnings: list[str] = []
+    if feedback_map is None:
+        raise ReworkError(f"Could not extract review feedback: {error}")
+
+    if not feedback_map:
+        raise ReworkError(
+            "No tasks have actionable feedback — all were approved. "
+            "Use `gotg merge` + `gotg next-layer` instead."
+        )
+
+    # Apply feedback to tasks
+    _progress(f"Applying feedback to {len(feedback_map)} task(s)...")
+    tasks_with_feedback: list[str] = []
+    for task in tasks_data:
+        if task["id"] in feedback_map:
+            task["status"] = "changes_requested"
+            task["review_feedback"] = feedback_map[task["id"]]
+            task.pop("completed_by", None)
+            task.pop("completion_summary", None)
+            tasks_with_feedback.append(task["id"])
+    task_repo.save(tasks_data)
+
+    # Write boundary marker + transition message
+    boundary_msg, transition_msg = build_rework_messages(
+        iteration["id"], current_layer, tasks_with_feedback,
+    )
+    conv_store.append(boundary_msg)
+    conv_store.append(transition_msg)
+
+    # Save phase change + clear review_outcome
+    _progress("Saving phase change...")
+    iter_store.save_fields(
+        iteration["id"], phase="implementation", review_outcome=None,
+    )
+
+    # Auto-checkpoint
+    iteration["phase"] = "implementation"
+    checkpoint_number = None
+    try:
+        checkpoint_number = create_checkpoint(
+            iter_dir, iteration, trigger="auto", coach_name=coach_name,
+        )
+    except Exception as e:
+        warnings.append(f"Auto-checkpoint failed: {e}")
+
+    return ReworkResult(
+        layer=current_layer,
+        tasks_with_feedback=tasks_with_feedback,
+        boundary_msg=boundary_msg,
+        transition_msg=transition_msg,
+        checkpoint_number=checkpoint_number,
+        warnings=warnings,
     )

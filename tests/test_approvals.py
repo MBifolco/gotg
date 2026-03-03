@@ -290,3 +290,147 @@ def test_apply_with_fileguard_for_agent(tmp_path):
     assert (wt2 / "README.md").read_text() == "agent 2 readme"
     # Main project root should NOT have the file
     assert not (tmp_path / "README.md").exists()
+
+
+# --- add_request: operation, destination fields ---
+
+
+def test_add_request_with_operation_field(store):
+    store.add_request("src/old.py", "", "agent-1", {}, operation="delete")
+    req = store._get("a1")
+    assert req["operation"] == "delete"
+
+
+def test_add_request_default_operation_is_write(store):
+    store.add_request("src/main.py", "content", "agent-1", {})
+    req = store._get("a1")
+    assert req["operation"] == "write"
+
+
+def test_add_request_content_defaults_empty(store):
+    store.add_request("src/old.py", "", "agent-1", {}, operation="delete")
+    req = store._get("a1")
+    assert req["content"] == ""
+    assert req["content_size"] == 0
+
+
+def test_add_request_destination_field(store):
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    req = store._get("a1")
+    assert req["destination"] == "src/new.py"
+
+
+# --- apply_approved_writes: delete ---
+
+
+def test_apply_delete_removes_file(project, store, guard):
+    (project / "src" / "old.py").write_text("old code")
+    store.add_request("src/old.py", "", "agent-1", {}, operation="delete")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    assert results[0]["operation"] == "delete"
+    assert "Deleted" in results[0]["message"]
+    assert not (project / "src" / "old.py").exists()
+
+
+def test_apply_delete_missing_file_succeeds(project, store, guard):
+    """Idempotent — file already gone between approval and apply."""
+    store.add_request("src/gone.py", "", "agent-1", {}, operation="delete")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    assert "already absent" in results[0]["message"]
+
+
+def test_apply_delete_directory_fails(project, store, guard):
+    """Directories can't be deleted even if approved."""
+    store.add_request("src", "", "agent-1", {}, operation="delete")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert len(results) == 1
+    assert results[0]["success"] is False
+    assert "not a file" in results[0]["message"]
+
+
+# --- apply_approved_writes: rename ---
+
+
+def test_apply_rename_moves_file(project, store, guard):
+    (project / "src" / "old.py").write_text("code")
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    assert results[0]["operation"] == "rename"
+    assert "Renamed" in results[0]["message"]
+    assert not (project / "src" / "old.py").exists()
+    assert (project / "src" / "new.py").read_text() == "code"
+
+
+def test_apply_rename_creates_parent_dirs(project, store, guard):
+    (project / "src" / "old.py").write_text("code")
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/subdir/new.py")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert results[0]["success"] is True
+    assert (project / "src" / "subdir" / "new.py").read_text() == "code"
+
+
+def test_apply_rename_source_missing_fails(project, store, guard):
+    store.add_request("src/gone.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert results[0]["success"] is False
+    assert "source not found" in results[0]["message"]
+
+
+def test_apply_rename_source_is_directory_fails(project, store, guard):
+    store.add_request("src", "", "agent-1", {}, operation="rename", destination="src2")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert results[0]["success"] is False
+    assert "not a file" in results[0]["message"]
+
+
+def test_apply_rename_dest_exists_fails(project, store, guard):
+    (project / "src" / "old.py").write_text("old")
+    (project / "src" / "new.py").write_text("new")
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert results[0]["success"] is False
+    assert "destination already exists" in results[0]["message"]
+    # Both files should still exist
+    assert (project / "src" / "old.py").exists()
+    assert (project / "src" / "new.py").exists()
+
+
+# --- Backward compat + operation field in results ---
+
+
+def test_backward_compat_no_operation_field(project, store, guard):
+    """Requests without operation field default to 'write'."""
+    # Manually inject a request without operation field
+    store._data["requests"].append({
+        "id": "a1", "status": "approved", "path": "src/test.py",
+        "content": "hello", "content_size": 5, "requested_by": "agent-1",
+        "tool_input": {}, "requested_at": "", "resolved_at": "",
+        "resolved_by": "pm", "denial_reason": None,
+    })
+    store._save()
+    results = apply_approved_writes(store, guard)
+    assert len(results) == 1
+    assert results[0]["success"] is True
+    assert results[0]["operation"] == "write"
+
+
+def test_result_includes_operation_field(project, store, guard):
+    (project / "src" / "main.py").write_text("code")
+    store.add_request("src/main.py", "", "agent-1", {}, operation="delete")
+    store.approve("a1")
+    results = apply_approved_writes(store, guard)
+    assert results[0]["operation"] == "delete"

@@ -14,6 +14,7 @@ def build_prompt(
     system_supplement: str | None = None,
     phase_skeleton: str | None = None,
     project_context: str | None = None,
+    iteration_plan: str | None = None,
 ) -> list[dict]:
     agent_name = agent_config["name"]
     task = iteration["description"]
@@ -74,11 +75,26 @@ def build_prompt(
     # File access info for phases that support it (or grooming with file tools)
     from gotg.phases import get_phase_caps_safe
     if fileguard and (get_phase_caps_safe(phase).inject_file_access_prompt or phase is None):
+        has_approvals = getattr(fileguard, "enable_approvals", False)
         if fileguard.writable_paths:
             writable = ", ".join(fileguard.writable_paths)
+            if has_approvals:
+                system_parts.append(
+                    f"FILE ACCESS: You can read project files and write to: {writable}. "
+                    "Writes to other paths require PM approval. "
+                    "You also have file_delete and file_rename — both always require PM approval. "
+                    "System files (.team/, .git/, .env) are always blocked."
+                )
+            else:
+                system_parts.append(
+                    f"FILE ACCESS: You can read project files and write to: {writable}. "
+                    "Writes to other paths will be denied. "
+                    "System files (.team/, .git/, .env) are always blocked."
+                )
+        elif has_approvals:
             system_parts.append(
-                f"FILE ACCESS: You can read project files and write to: {writable}. "
-                "Writes to other paths will be denied. "
+                "FILE ACCESS: You can read project files. All writes require PM approval. "
+                "You also have file_delete and file_rename — both always require PM approval. "
                 "System files (.team/, .git/, .env) are always blocked."
             )
         else:
@@ -108,6 +124,13 @@ def build_prompt(
 
     if project_context:
         system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
+
+    if iteration_plan:
+        system_parts.append(
+            "ITERATION PLAN (current iteration marked with >>):\n\n" + iteration_plan + "\n\n"
+            "Focus on the current iteration's scope. Reference sibling iterations "
+            "only when relevant to avoid scope creep."
+        )
 
     if diffs_summary:
         system_parts.append("IMPLEMENTATION DIFFS:\n\n" + diffs_summary)
@@ -181,6 +204,7 @@ def build_coach_prompt(
     diffs_summary: str | None = None,
     coach_system_prompt: str | None = None,
     project_context: str | None = None,
+    iteration_plan: str | None = None,
 ) -> list[dict]:
     """Build prompt for the coach facilitator during conversation."""
     coach_name = coach_config["name"]
@@ -215,6 +239,13 @@ def build_coach_prompt(
 
     if project_context:
         system_parts.append("PROJECT CONTEXT:\n\n" + project_context)
+
+    if iteration_plan:
+        system_parts.append(
+            "ITERATION PLAN (current iteration marked with >>):\n\n" + iteration_plan + "\n\n"
+            "Keep the team focused on the current iteration's scope. Reference sibling "
+            "iterations only when relevant to avoid scope creep."
+        )
 
     system_content = "\n\n".join(system_parts)
     messages = [{"role": "system", "content": system_content}]

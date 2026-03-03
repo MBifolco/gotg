@@ -38,6 +38,7 @@ COACH_PLANNING_PROMPT: str = _DEFAULTS["extraction"]["task_extraction"]["prompt"
 COACH_NOTES_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["notes_extraction"]["prompt"]
 GROOMING_SUMMARY_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["grooming_summary"]["prompt"]
 MERGE_CONFLICT_PROMPT: str = _DEFAULTS["extraction"]["merge_conflict"]["prompt"]
+REVIEW_FEEDBACK_EXTRACTION_PROMPT: str = _DEFAULTS["extraction"]["review_feedback"]["prompt"]
 DRIFT_CHECK_PROMPT: str = _DEFAULTS["verification"]["drift_check"]["prompt"]
 
 PHASE_KICKOFF_MESSAGES: dict[str, str] = {
@@ -66,7 +67,33 @@ AGENT_TOOLS: list[dict] = [
     }
 ]
 
+COACH_PASS_TURN_TOOL: dict = {
+    "name": "coach_pass_turn",
+    "description": _DEFAULTS["tools"]["coach_pass_turn"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+GUIDE_DISCUSSION_TOOL: dict = {
+    "name": "guide_discussion",
+    "description": _DEFAULTS["tools"]["guide_discussion"]["description"],
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": "Your facilitation message — redirect, summarize, assign speakers, or focus the team.",
+            },
+        },
+        "required": ["message"],
+    },
+}
+
 COACH_TOOLS: list[dict] = [
+    COACH_PASS_TURN_TOOL,
+    GUIDE_DISCUSSION_TOOL,
     {
         "name": "signal_phase_complete",
         "description": _DEFAULTS["tools"]["signal_phase_complete"]["description"],
@@ -76,7 +103,15 @@ COACH_TOOLS: list[dict] = [
                 "summary": {
                     "type": "string",
                     "description": "Brief summary of what was resolved in this phase",
-                }
+                },
+                "outcome": {
+                    "type": "string",
+                    "enum": ["approved", "changes_requested"],
+                    "description": (
+                        "For code-review: 'approved' when all concerns resolved, "
+                        "'changes_requested' when rework needed. Defaults to 'approved'."
+                    ),
+                },
             },
             "required": ["summary"],
         },
@@ -213,6 +248,12 @@ END_GROOMING_TOOL: dict = {
     },
 }
 
+# Add propose_iterations to iteration coach tools (update sibling iterations during any phase)
+COACH_TOOLS.append(PROPOSE_ITERATIONS_TOOL)
+
 GROOMING_COACH_TOOLS: list[dict] = [
+    COACH_PASS_TURN_TOOL,
+    GUIDE_DISCUSSION_TOOL,
+] + [
     t for t in COACH_TOOLS if t["name"] == "ask_pm"
 ] + [PROPOSE_ITERATIONS_TOOL, END_GROOMING_TOOL]

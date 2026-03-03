@@ -17,6 +17,7 @@ __all__ = [
     "SessionSetupError",
     "PhaseAdvanceError",
     "ReviewError",
+    "ReworkError",
     # Enums
     "PauseReason",
     "ResolutionStrategy",
@@ -26,6 +27,7 @@ __all__ = [
     "MergeResult",
     "NextLayerResult",
     "AdvanceResult",
+    "ReworkResult",
     "ResumeState",
     "ConflictFileInfo",
     "ConflictInfo",
@@ -51,6 +53,11 @@ class PhaseAdvanceError(Exception):
 
 class ReviewError(Exception):
     """Raised when review/merge/next-layer cannot proceed. Caller decides how to display."""
+    pass
+
+
+class ReworkError(Exception):
+    """Raised when rework cannot proceed. Caller decides how to display."""
     pass
 
 
@@ -110,6 +117,17 @@ class AdvanceResult:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ReworkResult:
+    """Result of a successful rework transition."""
+    layer: int
+    tasks_with_feedback: list[str]  # task IDs that got feedback
+    boundary_msg: dict
+    transition_msg: dict
+    checkpoint_number: int | None
+    warnings: list[str] = field(default_factory=list)
+
+
 class PauseReason(Enum):
     """Why a session is paused. Domain knowledge, not UI state."""
     APPROVALS = auto()
@@ -123,6 +141,7 @@ class ResumeState:
     """Reconstructed session state from persisted messages."""
     pause_reason: PauseReason | None = None
     phase_complete_shows_review: bool = False
+    phase_complete_outcome: str = "approved"
     ask_pm_data: dict | None = None
     show_task_status_bar: bool = False
     iteration_proposals: dict | None = None
@@ -239,12 +258,18 @@ def reconstruct_resume_state(messages: list[dict], phase: str | None) -> ResumeS
     if not last_content_msg:
         return ResumeState()
 
-    # Phase complete signal
-    if last_content_msg.get("content", "").strip() == "(Phase complete signal sent.)":
+    # Phase complete signal — check structured data first, then fallback text
+    signal_data = last_content_msg.get("signal_phase_complete")
+    content_text = last_content_msg.get("content", "").strip()
+    is_legacy_signal = content_text == "(Phase complete signal sent.)"
+    is_new_signal = content_text.startswith("(Phase complete:")
+    if isinstance(signal_data, dict) or is_legacy_signal or is_new_signal:
         caps = get_phase_caps_safe(phase)
+        outcome = signal_data.get("outcome", "approved") if isinstance(signal_data, dict) else "approved"
         return ResumeState(
             pause_reason=PauseReason.PHASE_COMPLETE,
             phase_complete_shows_review=caps.phase_complete_shows_review_hint,
+            phase_complete_outcome=outcome,
         )
 
     # Coach proposed iterations — check before ask_pm (proposals take priority)

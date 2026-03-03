@@ -36,6 +36,7 @@ class PauseForApprovals:
 @dataclass
 class PhaseCompleteSignaled:
     phase: str | None
+    outcome: str = "approved"  # "approved" or "changes_requested"
 
 
 @dataclass

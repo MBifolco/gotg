@@ -1,6 +1,6 @@
 import json
 
-from gotg.engine import SessionDeps, run_session
+from gotg.engine import SessionDeps, build_tool_executor, run_session
 from gotg.tools import classify_tool_result
 from gotg.events import (
     AgentTurnComplete,
@@ -241,7 +241,7 @@ def test_coach_empty_text_fallback_signal():
     ))
     coach_msgs = [e for e in _events_of_type(events, AppendMessage) if e.msg["from"] == "coach"]
     assert len(coach_msgs) == 1
-    assert coach_msgs[0].msg["content"] == "(Phase complete signal sent.)"
+    assert coach_msgs[0].msg["content"] == "(Phase complete: approved. done)"
 
 
 def test_coach_empty_text_fallback_ask_pm():
@@ -830,3 +830,256 @@ def test_run_session_validates_coach_completion():
             deps=deps, history=[],
             policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=2),
         ))
+
+
+# ── signal_phase_complete outcome ─────────────────────────────
+
+
+def test_signal_phase_complete_extracts_outcome():
+    """Outcome from tool input flows to PhaseCompleteSignaled event."""
+    coach_resp = {
+        "content": "Review complete.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "all resolved", "outcome": "changes_requested",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "code-review", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    pcs = [e for e in events if isinstance(e, PhaseCompleteSignaled)]
+    assert len(pcs) == 1
+    assert pcs[0].outcome == "changes_requested"
+    assert pcs[0].phase == "code-review"
+
+
+def test_signal_phase_complete_default_outcome():
+    """Missing outcome defaults to 'approved'."""
+    coach_resp = {
+        "content": "Done.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "done"}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    pcs = [e for e in events if isinstance(e, PhaseCompleteSignaled)]
+    assert len(pcs) == 1
+    assert pcs[0].outcome == "approved"
+
+
+def test_signal_phase_complete_persists_on_message():
+    """Coach message has signal_phase_complete dict with outcome."""
+    coach_resp = {
+        "content": "Review done.",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "all good", "outcome": "approved",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "code-review", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    assert len(coach_msgs) >= 1
+    last_coach = coach_msgs[-1].msg
+    assert "signal_phase_complete" in last_coach
+    assert last_coach["signal_phase_complete"]["outcome"] == "approved"
+    assert last_coach["signal_phase_complete"]["summary"] == "all good"
+
+
+def test_signal_phase_complete_fallback_includes_summary():
+    """Empty coach text + signal yields '(Phase complete: outcome. summary)'."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "signal_phase_complete", "input": {
+            "summary": "resolved", "outcome": "changes_requested",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "(Phase complete: changes_requested. resolved)"
+
+
+def test_coach_pass_turn_fallback_text():
+    """coach_pass_turn with empty text produces fallback and sets flag on message."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "coach_pass_turn", "input": {}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "(Coach observing — no intervention needed.)"
+    assert last_coach.get("coach_pass_turn") is True
+
+
+def test_coach_pass_turn_preserves_text():
+    """coach_pass_turn with text keeps original text, sets flag."""
+    coach_resp = {
+        "content": "Looks good team, carry on.",
+        "tool_calls": [{"name": "coach_pass_turn", "input": {}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Looks good team, carry on."
+    assert last_coach.get("coach_pass_turn") is True
+
+
+def test_coach_guide_discussion_with_content():
+    """guide_discussion uses coach's text as-is when content is present."""
+    coach_resp = {
+        "content": "Let's focus on the unresolved item.",
+        "tool_calls": [{"name": "guide_discussion", "input": {"message": "ignored"}}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Let's focus on the unresolved item."
+    assert "coach_pass_turn" not in last_coach
+
+
+def test_coach_guide_discussion_empty_content_extracts_message():
+    """guide_discussion with empty content extracts message from tool input."""
+    coach_resp = {
+        "content": "",
+        "tool_calls": [{"name": "guide_discussion", "input": {
+            "message": "Let's check requirement coverage before signaling completion.",
+        }}],
+    }
+    deps = _make_deps(coach_response=coach_resp)
+    events = _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    coach_msgs = [
+        e for e in events
+        if isinstance(e, AppendMessage) and e.msg.get("from") == "coach"
+    ]
+    last_coach = coach_msgs[-1].msg
+    assert last_coach["content"] == "Let's check requirement coverage before signaling completion."
+
+
+def test_coach_tool_choice_passed_to_completion():
+    """Engine passes tool_choice to coach completion call."""
+    captured = {}
+    def mock_coach(**kw):
+        captured.update(kw)
+        return {"content": "ok", "tool_calls": []}
+    deps = SessionDeps(
+        agent_completion=lambda **kw: {"content": "hi", "operations": []},
+        coach_completion=mock_coach,
+    )
+    _collect(run_session(
+        agents=AGENTS,
+        iteration={"id": "i", "description": "t", "phase": "refinement", "max_turns": 2},
+        model_config=MODEL_CONFIG,
+        deps=deps, history=[],
+        policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
+    ))
+    assert captured.get("tool_choice") == {"type": "any"}
+
+
+# --- write limit applies to delete and rename ---
+
+
+def test_write_limit_applies_to_delete_and_rename():
+    """file_delete and file_rename should count against max_files_per_turn write limit."""
+    from gotg.fileguard import FileGuard
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 2
+        max_file_size = 1048576
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+        project_root = None
+
+        def with_root(self, root):
+            return self
+
+    class FakeApprovalStore:
+        def get_pending(self):
+            return []
+
+        def add_request(self, *args, **kwargs):
+            return "a1"
+
+    fg = FakeGuard()
+    astore = FakeApprovalStore()
+
+    agent = {"name": "agent-1", "role": "Software Engineer"}
+    policy = _make_policy(
+        fileguard=fg,
+        approval_store=astore,
+    )
+
+    _, executor = build_tool_executor(agent, policy)
+
+    # First two calls succeed (file_delete + file_rename = 2 writes)
+    r1 = executor("file_delete", {"path": "src/a.py", "reason": "cleanup"})
+    r2 = executor("file_rename", {"source": "src/b.py", "destination": "src/c.py", "reason": "move"})
+    # Third call should hit write limit
+    r3 = executor("file_write", {"path": "src/d.py", "content": "x"})
+    assert "write limit reached" in r3

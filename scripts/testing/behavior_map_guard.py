@@ -14,6 +14,9 @@ CRITICAL_FILES = {
     "src/gotg/implementation.py",
     "src/gotg/cli.py",
     "src/gotg/session.py",
+    "src/gotg/session_advance.py",
+    "src/gotg/session_review.py",
+    "src/gotg/console_events.py",
 }
 BEHAVIOR_MAP = "docs/testing-behavior-map.md"
 

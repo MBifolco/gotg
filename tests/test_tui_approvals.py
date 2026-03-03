@@ -48,7 +48,9 @@ def _make_store(path, requests=None):
             req.get("path", "file.txt"),
             req.get("content", "content"),
             req.get("agent", "agent-1"),
-            {},
+            req.get("tool_input", {}),
+            operation=req.get("operation", "write"),
+            destination=req.get("destination", ""),
         )
         if req.get("status") == "approved":
             store.approve(store._data["requests"][-1]["id"])
@@ -305,3 +307,114 @@ async def test_escape_pops_screen(tmp_path):
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ApprovalScreen)
+
+
+# --- Operation column and operation-aware display ---
+
+
+@pytest.mark.asyncio
+async def test_approval_screen_op_column(tmp_path):
+    """DataTable has an Op column with correct values for each operation type."""
+    approvals_path = tmp_path / "approvals.json"
+    _make_store(approvals_path, [
+        {"path": "src/main.py", "content": "code", "agent": "agent-1", "operation": "write"},
+        {"path": "src/old.py", "content": "", "agent": "agent-1", "operation": "delete"},
+        {"path": "src/a.py", "content": "", "agent": "agent-1", "operation": "rename",
+         "destination": "src/b.py"},
+    ])
+
+    team_dir = _make_team_dir(tmp_path)
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ApprovalScreen(approvals_path))
+        await pilot.pause()
+
+        table = app.screen.query_one("#approval-table", DataTable)
+        assert table.row_count == 3
+
+        # Check Op column values (column index 1 = "op")
+        rows = list(table.ordered_rows)
+        row0 = table.get_row(rows[0].key)
+        row1 = table.get_row(rows[1].key)
+        row2 = table.get_row(rows[2].key)
+        assert row0[1] == "write"
+        assert row1[1] == "delete"
+        assert row2[1] == "rename"
+
+
+@pytest.mark.asyncio
+async def test_approval_screen_blank_size_for_delete(tmp_path):
+    """Size cell is blank for non-write operations."""
+    approvals_path = tmp_path / "approvals.json"
+    _make_store(approvals_path, [
+        {"path": "src/old.py", "content": "", "agent": "agent-1", "operation": "delete"},
+    ])
+
+    team_dir = _make_team_dir(tmp_path)
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ApprovalScreen(approvals_path))
+        await pilot.pause()
+
+        table = app.screen.query_one("#approval-table", DataTable)
+        rows = list(table.ordered_rows)
+        row = table.get_row(rows[0].key)
+        # Size column (index 4) should be empty string for delete
+        assert row[4] == ""
+
+
+@pytest.mark.asyncio
+async def test_approval_screen_rename_path_display(tmp_path):
+    """Path column shows src -> dst for rename operations."""
+    approvals_path = tmp_path / "approvals.json"
+    _make_store(approvals_path, [
+        {"path": "src/old.py", "content": "", "agent": "agent-1", "operation": "rename",
+         "destination": "src/new.py"},
+    ])
+
+    team_dir = _make_team_dir(tmp_path)
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ApprovalScreen(approvals_path))
+        await pilot.pause()
+
+        table = app.screen.query_one("#approval-table", DataTable)
+        rows = list(table.ordered_rows)
+        row = table.get_row(rows[0].key)
+        # Path column (index 2) should show src -> dst
+        assert "src/old.py -> src/new.py" in str(row[2])
+
+
+@pytest.mark.asyncio
+async def test_approval_screen_delete_content_placeholder(tmp_path):
+    """Content viewer shows placeholder text for delete operations."""
+    approvals_path = tmp_path / "approvals.json"
+    _make_store(approvals_path, [
+        {"path": "src/old.py", "content": "", "agent": "agent-1", "operation": "delete"},
+    ])
+
+    team_dir = _make_team_dir(tmp_path)
+    app = GotgApp(team_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.push_screen(ApprovalScreen(approvals_path))
+        await pilot.pause()
+
+        viewer = app.screen.query_one("#content-viewer")
+        # The content viewer renders "(file will be deleted)" via show_content
+        # show_content passes it through Rich Syntax, so check the Syntax object's code
+        statics = viewer.query("Static")
+        found = False
+        for s in statics:
+            content = s._Static__content if hasattr(s, "_Static__content") else None
+            if content is None:
+                continue
+            # Could be a Rich Syntax object or a plain string
+            code = getattr(content, "code", str(content))
+            if "file will be deleted" in code:
+                found = True
+                break
+        assert found, "Expected '(file will be deleted)' in content viewer"

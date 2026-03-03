@@ -759,7 +759,7 @@ def _default_coach():
     return {"name": "coach", "role": "Agile Coach"}
 
 
-def _mock_chat_with_tools(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+def _mock_chat_with_tools(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
     """Mock chat_completion that handles tools parameter (returns dict for coach calls)."""
     if tools:
         return {"content": "response", "tool_calls": []}
@@ -778,7 +778,7 @@ def test_run_conversation_coach_injects_after_rotation(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         call_log.append("agent")
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         call_log.append("coach")
         return {"content": "response", "tool_calls": []}
 
@@ -828,7 +828,7 @@ def test_run_conversation_coach_early_exit(tmp_path):
         return {"content": "response", "operations": []}
 
     coach_call_count = 0
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         nonlocal coach_call_count
         coach_call_count += 1
         if coach_call_count == 1:
@@ -1067,7 +1067,7 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         captured_prompts.append(messages)
         return {"content": "response", "tool_calls": []}
 
@@ -2208,7 +2208,8 @@ def _make_git_project_with_team(tmp_path):
     team.mkdir()
     (team / "team.json").write_text("{}")
     (team / "iteration.json").write_text(json.dumps({
-        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress", "max_turns": 10}],
+        "iterations": [{"id": "iter-1", "title": "", "description": "T", "status": "in-progress",
+                         "max_turns": 10, "phase": "code-review", "review_outcome": "approved"}],
         "current": "iter-1",
     }))
     (team / "iterations" / "iter-1").mkdir(parents=True)
@@ -2469,8 +2470,8 @@ def test_cmd_review_specific_branch_no_layer_label(tmp_path, monkeypatch, capsys
     assert "1 branch(es)" in output
 
 
-def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
-    """Dirty main checkout blocks merge."""
+def test_cmd_merge_dirty_main_auto_stashes(tmp_path, monkeypatch, capsys):
+    """Dirty main is auto-stashed before merge (not blocked)."""
     _make_git_project_with_team(tmp_path)
     from gotg.worktree import create_worktree, commit_worktree
     wt = create_worktree(tmp_path, "agent-1", 0)
@@ -2481,12 +2482,11 @@ def test_cmd_merge_dirty_main_blocks(tmp_path, monkeypatch, capsys):
     (tmp_path / "src" / "main.py").write_text("modified on main")
 
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit):
-        with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
-            main()
+    with patch("sys.argv", ["gotg", "merge", "agent-1/layer-0"]):
+        main()
 
-    output = capsys.readouterr().err
-    assert "uncommitted changes on main" in output
+    output = capsys.readouterr().out
+    assert "Merged" in output or "merged" in output.lower()
 
 
 def test_cmd_merge_all_handles_worktree_error(tmp_path, monkeypatch, capsys):
@@ -2594,7 +2594,7 @@ def test_run_conversation_diffs_passed_to_coach(tmp_path):
     def mock_agent(base_url, model, messages, api_key=None, provider="ollama", **kwargs):
         captured_prompts.append(messages)
         return {"content": "response", "operations": []}
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         captured_prompts.append(messages)
         return {"content": "response", "tool_calls": []}
 
@@ -2617,8 +2617,12 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
         "id": "iter-1", "description": "A task",
         "status": "in-progress", "phase": "code-review", "max_turns": 2,
     }
+    # run_conversation derives team_dir from iter_dir and persists review_outcome
+    (tmp_path / "iteration.json").write_text(json.dumps({
+        "iterations": [iteration], "current": "iter-1",
+    }))
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All concerns resolved.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -2630,7 +2634,7 @@ def test_coach_completion_code_review_message(tmp_path, capsys):
                          _default_model_config(), coach=_default_coach())
 
     output = capsys.readouterr().out
-    assert "code review complete" in output
+    assert "code review approved" in output.lower()
     assert "gotg merge" in output
     assert "gotg next-layer" in output
     assert "gotg advance" not in output
@@ -2644,7 +2648,7 @@ def test_coach_completion_non_last_phase_message(tmp_path, capsys):
         "status": "in-progress", "phase": "refinement", "max_turns": 2,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All done.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -2874,7 +2878,7 @@ def test_coach_completion_implementation_suggests_advance(tmp_path, capsys):
         "status": "in-progress", "phase": "implementation", "max_turns": 2,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "All tasks done.",
             "tool_calls": [{"name": "signal_phase_complete", "input": {"summary": "Done"}}],
@@ -2900,7 +2904,7 @@ def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", ta
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": phase, "max_turns": 10,
-         "current_layer": current_layer},
+         "current_layer": current_layer, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -2916,8 +2920,8 @@ def _make_next_layer_team_dir(tmp_path, current_layer=0, phase="code-review", ta
     return team, iter_dir
 
 
-def test_next_layer_requires_implementation_or_code_review_phase(tmp_path, capsys):
-    """next-layer errors if not in implementation or code-review phase."""
+def test_next_layer_requires_code_review_phase(tmp_path, capsys):
+    """next-layer errors if not in code-review phase."""
     team, iter_dir = _make_next_layer_team_dir(tmp_path, phase="planning")
     with patch("sys.argv", ["gotg", "next-layer"]):
         with patch("gotg.cli.find_team_dir", return_value=team):
@@ -2925,7 +2929,7 @@ def test_next_layer_requires_implementation_or_code_review_phase(tmp_path, capsy
                 main()
 
     err = capsys.readouterr().err
-    assert "implementation or code-review" in err
+    assert "code-review phase" in err
 
 
 def test_next_layer_advances_to_layer_1(tmp_path, capsys):
@@ -3011,7 +3015,7 @@ def test_next_layer_verifies_head_on_main(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3061,7 +3065,7 @@ def test_next_layer_blocks_on_unmerged_branches(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3109,7 +3113,7 @@ def test_next_layer_cleans_up_worktrees(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3331,7 +3335,7 @@ def test_next_layer_blocks_on_dirty_worktrees(tmp_path, capsys):
     _write_iteration_json(team, iterations=[
         {"id": "iter-1", "title": "", "description": "A task",
          "status": "in-progress", "phase": "code-review", "max_turns": 10,
-         "current_layer": 0},
+         "current_layer": 0, "review_outcome": "approved"},
     ])
     iter_dir = team / "iterations" / "iter-1"
     iter_dir.mkdir(parents=True)
@@ -3434,7 +3438,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     }
 
     coach_call_count = 0
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         nonlocal coach_call_count
         coach_call_count += 1
         if coach_call_count == 1:
@@ -3452,7 +3456,7 @@ def test_empty_coach_message_gets_fallback(tmp_path):
     messages = read_log(iter_dir / "conversation.jsonl")
     coach_msgs = [m for m in messages if m["from"] == "coach"]
     assert len(coach_msgs) == 1
-    assert coach_msgs[0]["content"] == "(Phase complete signal sent.)"
+    assert coach_msgs[0]["content"] == "(Phase complete: approved. Done.)"
 
 
 # --- Iteration 16: History boundary and phase-scoped history ---
@@ -4089,7 +4093,7 @@ def test_ask_pm_pauses_conversation(tmp_path, capsys):
         "status": "in-progress", "max_turns": 4,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "We need PM input on the scope.",
             "tool_calls": [{"name": "ask_pm", "input": {"question": "Should we include auth?"}}],
@@ -4118,7 +4122,7 @@ def test_ask_pm_empty_text_gets_fallback(tmp_path):
         "status": "in-progress", "max_turns": 4,
     }
 
-    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None):
+    def mock_coach(base_url, model, messages, api_key=None, provider="ollama", tools=None, tool_choice=None):
         return {
             "content": "",
             "tool_calls": [{"name": "ask_pm", "input": {"question": "What's the priority?"}}],
@@ -4198,3 +4202,104 @@ def test_main_converts_model_error_to_systemexit(tmp_path, capsys):
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
     assert "Error: API error (429): Rate limited" in captured.err
+
+
+# --- cmd_approvals: operation-aware display ---
+
+
+def _make_approval_team(tmp_path):
+    """Create a team dir with approvals enabled."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    return team, iter_dir
+
+
+def test_cmd_approvals_delete_display(tmp_path, monkeypatch, capsys):
+    """gotg approvals shows [DELETE] and reason for delete operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1",
+                      {"path": "src/old.py", "reason": "replaced by calc.py"},
+                      operation="delete")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "[DELETE]" in output
+    assert "src/old.py" in output
+    assert "replaced by calc.py" in output
+
+
+def test_cmd_approvals_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg approvals shows [RENAME] src -> dst and reason for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1",
+                      {"source": "src/old.py", "destination": "src/new.py", "reason": "better name"},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "[RENAME]" in output
+    assert "src/old.py -> src/new.py" in output
+    assert "better name" in output
+
+
+def test_cmd_approve_generic_wording(tmp_path, monkeypatch, capsys):
+    """gotg approve output should say 'apply and resume' not 'apply the write'."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/main.py", "content", "agent-1", {})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "a1"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "apply and resume" in output
+    assert "apply the write" not in output
+
+
+def test_cmd_approve_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg approve shows src -> dst for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1", {},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "a1"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "src/old.py -> src/new.py" in output
+
+
+def test_cmd_deny_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg deny shows src -> dst for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1", {},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "deny", "a1", "-m", "bad name"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "src/old.py -> src/new.py" in output

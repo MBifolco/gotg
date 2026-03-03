@@ -171,14 +171,15 @@ def test_extract_tasks_strips_code_fences():
 
 def test_extract_task_notes_success():
     def mock_chat(**kwargs):
-        return json.dumps([{"id": "t1", "notes": "Use src/main.py"}])
+        return json.dumps([{"id": "t1", "notes": "Use src/main.py", "files": ["src/main.py"]}])
 
     history = [{"from": "agent-1", "content": "Proposal"}]
     tasks_data = [{"id": "t1", "description": "Do thing"}]
-    notes_map, raw, error = extract_task_notes(
+    notes_map, files_map, raw, error = extract_task_notes(
         history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
     )
     assert notes_map == {"t1": "Use src/main.py"}
+    assert files_map == {"t1": ["src/main.py"]}
     assert raw is None
     assert error is None
 
@@ -189,13 +190,193 @@ def test_extract_task_notes_bad_json():
 
     history = [{"from": "agent-1", "content": "Proposal"}]
     tasks_data = [{"id": "t1", "description": "Do thing"}]
-    notes_map, raw, error = extract_task_notes(
+    notes_map, files_map, raw, error = extract_task_notes(
         history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
     )
     assert notes_map is None
+    assert files_map is None
     assert raw == "not json"
     assert "Could not parse task notes:" in error
     assert not error.startswith("Warning:")
+
+
+def test_extract_task_notes_with_files():
+    """Extraction returns notes_map and files_map."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "Use src/main.py", "files": ["src/main.py"]},
+            {"id": "t2", "notes": "Build config", "files": ["src/config.py", "tests/test_config.py"]},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1", "description": "Task 1"}, {"id": "t2", "description": "Task 2"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map == {"t1": "Use src/main.py", "t2": "Build config"}
+    assert files_map == {"t1": ["src/main.py"], "t2": ["src/config.py", "tests/test_config.py"]}
+    assert raw is None
+    assert error is None
+
+
+def test_extract_task_notes_files_validation():
+    """Non-list files dropped, non-string items filtered."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "ok", "files": "not-a-list"},
+            {"id": "t2", "notes": "ok", "files": [123, "valid.py", None]},
+            {"id": "t3", "notes": "ok", "files": []},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}, {"id": "t2"}, {"id": "t3"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map is not None
+    assert "t1" not in files_map  # string files dropped
+    assert files_map["t2"] == ["valid.py"]  # non-strings filtered
+    assert "t3" not in files_map  # empty list dropped
+
+
+def test_extract_task_notes_non_dict_entries():
+    """Non-dict items in LLM output silently skipped."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            "not a dict",
+            42,
+            {"id": "t1", "notes": "ok", "files": ["src/a.py"]},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map == {"t1": "ok"}
+    assert files_map == {"t1": ["src/a.py"]}
+
+
+def test_extract_task_notes_top_level_object():
+    """JSON object (not array) returns parse failure."""
+    def mock_chat(**kwargs):
+        return json.dumps({"id": "t1", "notes": "ok"})
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map is None
+    assert files_map is None
+    assert "expected array" in error
+
+
+def test_extract_task_notes_empty_valid_entries():
+    """All entries invalid/empty -> parse failure."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "", "files": []},
+            {"id": "t2"},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}, {"id": "t2"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map is None
+    assert files_map is None
+    assert "no valid entries found" in error
+
+
+def test_extract_task_notes_hallucinated_ids():
+    """Entries with IDs not in tasks_data are ignored."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "bogus", "notes": "hallucinated", "files": ["src/bogus.py"]},
+            {"id": "t1", "notes": "real note", "files": ["src/real.py"]},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1", "description": "Task 1"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map == {"t1": "real note"}
+    assert files_map == {"t1": ["src/real.py"]}
+    assert "bogus" not in notes_map
+    assert "bogus" not in files_map
+
+
+def test_extract_task_notes_all_hallucinated_ids():
+    """All entries have unknown IDs → parse failure."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "bogus1", "notes": "hallucinated", "files": ["src/x.py"]},
+            {"id": "bogus2", "notes": "also fake"},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1", "description": "Task 1"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map is None
+    assert files_map is None
+    assert "no valid entries found" in error
+
+
+def test_extract_task_notes_whitespace_files_stripped():
+    """Blank/whitespace file paths are filtered out."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "ok", "files": ["  src/main.py  ", "", "   ", "src/util.py"]},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1", "description": "Task 1"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert files_map == {"t1": ["src/main.py", "src/util.py"]}
+
+
+def test_extract_task_notes_non_string_notes_rejected():
+    """Non-string notes values (list, int, etc.) are ignored."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": ["not", "a", "string"], "files": ["src/a.py"]},
+            {"id": "t2", "notes": 42, "files": ["src/b.py"]},
+            {"id": "t3", "notes": "valid note", "files": []},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}, {"id": "t2"}, {"id": "t3"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert notes_map == {"t3": "valid note"}
+    assert "t1" not in notes_map
+    assert "t2" not in notes_map
+    assert files_map == {"t1": ["src/a.py"], "t2": ["src/b.py"]}
+
+
+def test_extract_task_notes_whitespace_notes_stripped():
+    """Whitespace-only notes are filtered; leading/trailing whitespace is trimmed."""
+    def mock_chat(**kwargs):
+        return json.dumps([
+            {"id": "t1", "notes": "   ", "files": ["src/a.py"]},
+            {"id": "t2", "notes": "  real note  ", "files": []},
+        ])
+
+    history = [{"from": "agent-1", "content": "Proposal"}]
+    tasks_data = [{"id": "t1"}, {"id": "t2"}]
+    notes_map, files_map, raw, error = extract_task_notes(
+        history, tasks_data, MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert "t1" not in notes_map
+    assert notes_map == {"t2": "real note"}
 
 
 # --- build_transition_messages ---
@@ -341,6 +522,44 @@ def test_extract_tasks_preserves_anti_patterns():
         MODEL_CONFIG, "coach", mock_chat,
     )
     assert tasks[0]["anti_patterns"] == ["Do not use eval()"]
+
+
+def test_extract_tasks_with_files_preserved():
+    """files field survives extract_tasks."""
+    def mock_chat(**kwargs):
+        return json.dumps([{
+            "id": "t1", "description": "Do thing",
+            "done_criteria": "Done", "depends_on": [],
+            "assigned_to": None, "status": "pending",
+            "files": ["src/main.py", "tests/test_main.py"],
+        }])
+
+    tasks, _, _ = extract_tasks(
+        [{"from": "agent-1", "content": "Build it"}],
+        MODEL_CONFIG, "coach", mock_chat,
+    )
+    assert tasks[0]["files"] == ["src/main.py", "tests/test_main.py"]
+
+
+# --- Prompt content assertions ---
+
+
+def test_task_extraction_prompt_includes_files():
+    """TOML task extraction prompt mentions 'files' field."""
+    from gotg.prompts import COACH_PLANNING_PROMPT
+    assert '"files"' in COACH_PLANNING_PROMPT
+
+
+def test_notes_extraction_prompt_includes_files():
+    """TOML notes extraction prompt mentions 'files' output field."""
+    from gotg.prompts import COACH_NOTES_EXTRACTION_PROMPT
+    assert '"files"' in COACH_NOTES_EXTRACTION_PROMPT
+
+
+def test_planning_prompt_mentions_file_paths():
+    """Planning phase prompt mentions file paths."""
+    from gotg.prompts import PHASE_PROMPTS
+    assert "file paths" in PHASE_PROMPTS["planning"].lower()
 
 
 # --- build_phase_skeleton ---

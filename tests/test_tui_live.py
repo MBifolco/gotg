@@ -22,7 +22,7 @@ from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList, MessageWidget
 
-from textual.widgets import DataTable, Input
+from textual.widgets import DataTable, TextArea
 
 
 # ── Fixtures ────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ async def test_chat_view_mode_has_input(tmp_path):
         await pilot.pause()
         assert isinstance(app.screen, ChatScreen)
 
-        inp = app.screen.query_one("#chat-input", Input)
+        inp = app.screen.query_one("#chat-input", TextArea)
         assert inp is not None
         assert not inp.disabled
 

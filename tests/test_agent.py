@@ -1,6 +1,6 @@
 import pytest
 
-from gotg.agent import build_prompt
+from gotg.agent import build_prompt, build_coach_prompt
 
 
 PREFIX = "add the following to the conversation:"
@@ -743,8 +743,9 @@ def test_build_coach_prompt_code_review_facilitation():
 
 class _FakeFileGuard:
     """Minimal stand-in for FileGuard in prompt tests."""
-    def __init__(self, writable_paths=None):
+    def __init__(self, writable_paths=None, enable_approvals=False):
         self.writable_paths = writable_paths or []
+        self.enable_approvals = enable_approvals
 
 
 def test_build_prompt_writable_paths_in_implementation():
@@ -960,3 +961,88 @@ def test_build_prompt_includes_phase_skeleton(agent_config, iteration):
     system = messages[0]["content"]
     assert "PREVIOUS PHASE CONTEXT" in system
     assert "agreed on X" in system
+
+
+def test_build_prompt_includes_iteration_plan(agent_config, iteration):
+    plan = ">> iter-1: Build a thing [in-progress]\n   iter-2: Polish the thing [pending]"
+    messages = build_prompt(agent_config, iteration, [], iteration_plan=plan)
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" in system
+    assert ">> iter-1" in system
+    assert "iter-2: Polish the thing" in system
+    assert "scope creep" in system
+
+
+def test_build_prompt_no_iteration_plan_when_none(agent_config, iteration):
+    messages = build_prompt(agent_config, iteration, [])
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" not in system
+
+
+def test_build_coach_prompt_includes_iteration_plan():
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing", "phase": "refinement"}
+    plan = ">> iter-1: Build a thing [in-progress]\n   iter-2: Polish [pending]"
+    messages = build_coach_prompt(coach, iteration, [], iteration_plan=plan)
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" in system
+    assert ">> iter-1" in system
+    assert "scope creep" in system
+
+
+def test_build_coach_prompt_no_iteration_plan_when_none():
+    coach = {"name": "coach", "role": "Agile Coach"}
+    iteration = {"id": "iter-1", "description": "Build a thing", "phase": "refinement"}
+    messages = build_coach_prompt(coach, iteration, [])
+    system = messages[0]["content"]
+    assert "ITERATION PLAN" not in system
+
+
+# --- file access prompt: destructive tools awareness ---
+
+
+def test_build_prompt_destructive_tools_note_with_writable():
+    """With writable_paths + enable_approvals, prompt mentions file_delete/file_rename."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=["src/"], enable_approvals=True)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "write to: src/" in system
+    assert "require PM approval" in system
+    assert "file_delete and file_rename" in system
+    assert "will be denied" not in system
+
+
+def test_build_prompt_writable_no_approvals_says_denied():
+    """With writable_paths but no approvals, prompt says 'will be denied' and no destructive tools."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=["src/"], enable_approvals=False)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "will be denied" in system
+    assert "file_delete and file_rename" not in system
+
+
+def test_build_prompt_approval_mediated_access():
+    """No writable_paths + enable_approvals = all writes via approval, not read-only."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=[], enable_approvals=True)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "All writes require PM approval" in system
+    assert "file_delete and file_rename" in system
+    assert "read-only" not in system
+
+
+def test_build_prompt_read_only_no_approvals():
+    """No writable_paths + no approvals = read-only."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=[], enable_approvals=False)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "read-only" in system
+    assert "file_delete and file_rename" not in system

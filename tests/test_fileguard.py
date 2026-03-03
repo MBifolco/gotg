@@ -524,3 +524,83 @@ def test_with_root_resolves_to_new_root(project, tmp_path):
     new_guard = guard.with_root(new_root)
     result = new_guard.validate_write("src/main.py")
     assert result == (new_root / "src" / "main.py").resolve()
+
+
+# --- check_delete ---
+
+
+def test_check_delete_hard_denied(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, _, reason = guard.check_delete(".team/foo.json")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_delete_protected(project):
+    guard = _guard(project, enable_approvals=True, protected_paths=["*.lock"])
+    (project / "pkg.lock").write_text("locked")
+    decision, _, reason = guard.check_delete("pkg.lock")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_delete_writable_still_requires_approval(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, resolved, _ = guard.check_delete("src/main.py")
+    assert decision == WRITE_APPROVAL_REQUIRED
+    assert resolved is not None
+
+
+def test_check_delete_no_approvals_denied(project):
+    guard = _guard(project, enable_approvals=False)
+    decision, _, reason = guard.check_delete("src/main.py")
+    assert decision == WRITE_DENIED
+    assert "approval system" in reason
+
+
+# --- check_rename ---
+
+
+def test_check_rename_hard_denied_source(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, _, _, reason = guard.check_rename(".team/foo.json", "src/foo.json")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_rename_hard_denied_dest(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, _, _, reason = guard.check_rename("src/foo.py", ".git/foo.py")
+    assert decision == WRITE_DENIED
+    assert "Protected path" in reason
+
+
+def test_check_rename_writable_still_requires_approval(project):
+    guard = _guard(project, enable_approvals=True)
+    decision, src, dst, _ = guard.check_rename("src/old.py", "src/new.py")
+    assert decision == WRITE_APPROVAL_REQUIRED
+    assert src is not None
+    assert dst is not None
+
+
+def test_check_rename_no_approvals_denied(project):
+    guard = _guard(project, enable_approvals=False)
+    decision, _, _, reason = guard.check_rename("src/old.py", "src/new.py")
+    assert decision == WRITE_DENIED
+    assert "approval system" in reason
+
+
+def test_check_rename_returns_4_tuple(project):
+    guard = _guard(project, enable_approvals=True)
+    result = guard.check_rename("src/a.py", "src/b.py")
+    assert len(result) == 4
+
+
+def test_validate_delete_approved(project):
+    guard = _guard(project, enable_approvals=True)
+    # Should pass for normal paths
+    resolved = guard.validate_delete_approved("src/main.py")
+    assert resolved == (project / "src" / "main.py").resolve()
+    # Should reject hard-denied paths
+    with pytest.raises(Exception):
+        guard.validate_delete_approved(".team/secret.json")

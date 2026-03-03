@@ -32,11 +32,14 @@ class PhaseCapabilities:
 
 PHASE_CAPS: dict[str, PhaseCapabilities] = {
     "refinement": PhaseCapabilities(),
-    "planning": PhaseCapabilities(),
+    "planning": PhaseCapabilities(
+        inject_writable_paths_kickoff=True,
+    ),
     "pre-code-review": PhaseCapabilities(
         requires_tasks=True,
         requires_task_assignment=True,
         include_task_assignments_kickoff=True,
+        inject_writable_paths_kickoff=True,
         show_task_status_bar=True,
         auto_open_task_assign_on_advance=True,
     ),
@@ -51,16 +54,11 @@ PHASE_CAPS: dict[str, PhaseCapabilities] = {
         enable_worktrees=True,
         filter_worktree_agents_by_tasks=True,
         use_implementation_executor=True,
-        supports_next_layer=True,
-        can_open_review_screen=True,
         show_task_status_bar=True,
     ),
     "code-review": PhaseCapabilities(
-        inject_file_access_prompt=True,
-        inject_writable_paths_kickoff=True,
         include_task_assignments_kickoff=True,
         scope_kickoff_to_layer=True,
-        enable_worktrees=True,
         supports_next_layer=True,
         phase_complete_shows_review_hint=True,
         can_open_review_screen=True,

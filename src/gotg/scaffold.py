@@ -110,12 +110,15 @@ def format_phase_kickoff(
             "Writes to other paths will be denied."
         )
 
+    task_description = iteration.get("description", "")
+
     return template.format(
         first_agent=first_agent,
         second_agent=second_agent,
         current_layer=current_layer,
         agent_task_assignments=agent_task_assignments,
         writable_paths_info=writable_paths_info,
+        task_description=task_description,
     )
 
 
@@ -203,32 +206,19 @@ def init_project(path: Path) -> None:
         "streaming": False,
     }, indent=2) + "\n")
 
-    # iteration.json: list format with current pointer
-    iter_id = "iter-1"
+    # iteration.json: empty list, no current pointer
     (team_dir / "iteration.json").write_text(json.dumps({
         "schema_version": 1,
-        "iterations": [
-            {
-                "id": iter_id,
-                "title": "",
-                "description": "",
-                "status": "pending",
-                "phase": "refinement",
-                "max_turns": 10,
-            }
-        ],
-        "current": iter_id,
+        "iterations": [],
+        "current": None,
     }, indent=2) + "\n")
 
-    # Iteration directory with empty conversation log
-    iter_dir = team_dir / "iterations" / iter_id
-    iter_dir.mkdir(parents=True)
-    (iter_dir / "conversation.jsonl").touch()
+    # iterations directory (empty)
+    (team_dir / "iterations").mkdir(parents=True)
 
     print(f"Initialized .team/ in {path.resolve()}")
     print("  .gitignore (added .team/, .env)")
     print("  .team/team.json")
     print("  .team/iteration.json")
-    print(f"  .team/iterations/{iter_id}/conversation.jsonl")
     print()
-    print("Next: edit .team/iteration.json to set your task description and status to 'in-progress'.")
+    print("Next: run 'gotg groom start \"topic\"' to explore, or 'gotg new \"description\"' to create an iteration.")

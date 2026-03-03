@@ -27,13 +27,18 @@ class ApprovalStore:
         content: str,
         requested_by: str,
         tool_input: dict,
+        *,
+        operation: str = "write",
+        destination: str = "",
     ) -> str:
         """Add a pending approval request. Returns the request ID."""
         request_id = self._next_id()
         request = {
             "id": request_id,
             "status": "pending",
+            "operation": operation,
             "path": path,
+            "destination": destination,
             "content": content,
             "content_size": len(content.encode()),
             "requested_by": requested_by,
@@ -126,51 +131,156 @@ class ApprovalStore:
         return f"a{existing + 1}"
 
 
+def _apply_write(req: dict, fg: FileGuard, store: ApprovalStore) -> dict:
+    """Apply an approved write request."""
+    path_str = req["path"]
+    content = req.get("content", "")
+    resolved = fg.validate_write_approved(path_str)
+    size = len(content.encode())
+    if size > fg.max_file_size:
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "write",
+            "success": False,
+            "message": f"Error: content too large ({size} bytes)",
+        }
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(content)
+    store.mark_applied(req["id"])
+    return {
+        "id": req["id"],
+        "path": path_str,
+        "operation": "write",
+        "success": True,
+        "message": f"Written: {path_str} ({size} bytes) [approved]",
+    }
+
+
+def _apply_delete(req: dict, fg: FileGuard, store: ApprovalStore) -> dict:
+    """Apply an approved delete request."""
+    path_str = req["path"]
+    resolved = fg.validate_delete_approved(path_str)
+
+    if not resolved.exists():
+        # Idempotent — file may have been deleted between approval and apply
+        store.mark_applied(req["id"])
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "delete",
+            "success": True,
+            "message": f"Deleted: {path_str} (already absent) [approved]",
+        }
+
+    if not resolved.is_file():
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "delete",
+            "success": False,
+            "message": f"Error: not a file: {path_str}",
+        }
+
+    resolved.unlink()
+    store.mark_applied(req["id"])
+    return {
+        "id": req["id"],
+        "path": path_str,
+        "operation": "delete",
+        "success": True,
+        "message": f"Deleted: {path_str} [approved]",
+    }
+
+
+def _apply_rename(req: dict, fg: FileGuard, store: ApprovalStore) -> dict:
+    """Apply an approved rename request."""
+    path_str = req["path"]
+    dest_str = req.get("destination", "")
+    if not dest_str:
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "rename",
+            "success": False,
+            "message": "Error: no destination in approval request",
+        }
+
+    resolved_src = fg.validate_write_approved(path_str)
+    resolved_dst = fg.validate_write_approved(dest_str)
+
+    if not resolved_src.exists():
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "rename",
+            "success": False,
+            "message": f"Error: source not found: {path_str}",
+        }
+
+    if not resolved_src.is_file():
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "rename",
+            "success": False,
+            "message": f"Error: source is not a file: {path_str}",
+        }
+
+    if resolved_dst.exists():
+        return {
+            "id": req["id"],
+            "path": path_str,
+            "operation": "rename",
+            "success": False,
+            "message": f"Error: destination already exists: {dest_str}",
+        }
+
+    resolved_dst.parent.mkdir(parents=True, exist_ok=True)
+    resolved_src.rename(resolved_dst)
+    store.mark_applied(req["id"])
+    return {
+        "id": req["id"],
+        "path": path_str,
+        "operation": "rename",
+        "success": True,
+        "message": f"Renamed: {path_str} -> {dest_str} [approved]",
+    }
+
+
 def apply_approved_writes(
     store: ApprovalStore,
     fileguard: FileGuard,
     fileguard_for_agent=None,
 ) -> list:
-    """Execute approved writes. Returns list of result dicts.
+    """Execute approved operations. Returns list of result dicts.
 
-    Each result: {"id": str, "path": str, "success": bool, "message": str}
-    Approved writes still go through containment + hard-deny checks.
+    Each result: {"id": str, "path": str, "operation": str, "success": bool, "message": str}
+    Approved operations still go through containment + hard-deny checks.
 
-    fileguard_for_agent: optional callable(agent_name) → FileGuard.
-    When provided, uses the returned FileGuard for that agent's writes
+    fileguard_for_agent: optional callable(agent_name) -> FileGuard.
+    When provided, uses the returned FileGuard for that agent's operations
     (e.g., to resolve to agent's worktree instead of project root).
     """
     results = []
     for req in store.get_approved_unapplied():
-        path_str = req["path"]
-        content = req["content"]
         fg = fileguard
         if fileguard_for_agent:
             fg = fileguard_for_agent(req["requested_by"])
+
+        operation = req.get("operation", "write")
         try:
-            resolved = fg.validate_write_approved(path_str)
-            size = len(content.encode())
-            if size > fg.max_file_size:
-                results.append({
-                    "id": req["id"],
-                    "path": path_str,
-                    "success": False,
-                    "message": f"Error: content too large ({size} bytes)",
-                })
-                continue
-            resolved.parent.mkdir(parents=True, exist_ok=True)
-            resolved.write_text(content)
-            store.mark_applied(req["id"])
-            results.append({
-                "id": req["id"],
-                "path": path_str,
-                "success": True,
-                "message": f"Written: {path_str} ({size} bytes) [approved]",
-            })
+            if operation == "delete":
+                results.append(_apply_delete(req, fg, store))
+            elif operation == "rename":
+                results.append(_apply_rename(req, fg, store))
+            else:
+                results.append(_apply_write(req, fg, store))
         except SecurityError as e:
             results.append({
                 "id": req["id"],
-                "path": path_str,
+                "path": req["path"],
+                "operation": operation,
                 "success": False,
                 "message": f"Error: {e}",
             })

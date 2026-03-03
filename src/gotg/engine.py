@@ -127,6 +127,7 @@ def run_session(
             system_supplement=policy.system_supplement,
             phase_skeleton=policy.phase_skeleton,
             project_context=policy.project_context,
+            iteration_plan=policy.iteration_plan,
         )
         yield AppendDebug({
             "turn": turn,
@@ -202,7 +203,7 @@ def build_tool_executor(
             nonlocal write_count
             if name == "pass_turn":
                 return "Turn passed."
-            if name == "file_write":
+            if name in ("file_write", "file_delete", "file_rename"):
                 write_count += 1
                 if write_count > agent_fg.max_files_per_turn:
                     return f"Error: write limit reached ({agent_fg.max_files_per_turn} per turn)"
@@ -395,6 +396,7 @@ def _do_coach_turn(
         diffs_summary=policy.diffs_summary,
         coach_system_prompt=policy.coach_system_prompt,
         project_context=policy.project_context,
+        iteration_plan=policy.iteration_plan,
     )
     yield AppendDebug({
         "turn": f"coach-after-{turn}",
@@ -403,7 +405,8 @@ def _do_coach_turn(
         "tools": list(policy.coach_tools) if policy.coach_tools else None,
     })
 
-    # Call LLM
+    # Call LLM — tool_choice "any" forces coach to call a tool every turn
+    _coach_tool_choice = {"type": "any"} if policy.coach_tools else None
     streamed = False
     if policy.streaming and deps.stream_completion:
         turn_id = f"coach-after-{turn}-{coach['name']}"
@@ -415,6 +418,7 @@ def _do_coach_turn(
             provider=model_config.get("provider", "ollama"),
             tools=policy.coach_tools,
             max_tokens=4096,
+            tool_choice=_coach_tool_choice,
         )
         for chunk in stream:
             streamed = True
@@ -430,6 +434,7 @@ def _do_coach_turn(
             api_key=model_config.get("api_key"),
             provider=model_config.get("provider", "ollama"),
             tools=policy.coach_tools,
+            tool_choice=_coach_tool_choice,
         )
         coach_text = coach_response["content"]
         coach_tool_calls = coach_response.get("tool_calls", [])
@@ -441,15 +446,33 @@ def _do_coach_turn(
         "tool_calls": coach_tool_calls,
     })
 
+    # Extract signal_phase_complete tool calls
+    signal_calls = [tc for tc in coach_tool_calls if tc["name"] == "signal_phase_complete"]
+    signal_input = signal_calls[0]["input"] if signal_calls else None
+
     # Extract propose_iterations and end_grooming tool calls
     propose_calls = [tc for tc in coach_tool_calls if tc["name"] == "propose_iterations"]
     propose_input = propose_calls[0]["input"] if propose_calls else None
     end_grooming_calls = [tc for tc in coach_tool_calls if tc["name"] == "end_grooming"]
     end_grooming_input = end_grooming_calls[0]["input"] if end_grooming_calls else None
 
+    # Coach pass_turn — minimal output, mark on message for filtering
+    coach_passed = any(tc["name"] == "coach_pass_turn" for tc in coach_tool_calls)
+    if coach_passed and not coach_text.strip():
+        coach_text = "(Coach observing — no intervention needed.)"
+
+    # guide_discussion — extract message from tool input if content is empty
+    guide_calls = [tc for tc in coach_tool_calls if tc["name"] == "guide_discussion"]
+    if not coach_text.strip() and guide_calls:
+        guide_msg = guide_calls[0].get("input", {}).get("message", "")
+        if guide_msg:
+            coach_text = guide_msg
+
     # Fallback for empty coach messages with signal_phase_complete
-    if not coach_text.strip() and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-        coach_text = "(Phase complete signal sent.)"
+    if not coach_text.strip() and signal_input:
+        summary = signal_input.get("summary", "")
+        outcome = signal_input.get("outcome", "approved")
+        coach_text = f"(Phase complete: {outcome}. {summary})" if summary else f"(Phase complete: {outcome}.)"
 
     # Fallback for empty coach messages with propose_iterations
     if not coach_text.strip() and propose_input:
@@ -482,6 +505,8 @@ def _do_coach_turn(
         "iteration": iteration["id"],
         "content": coach_text,
     }
+    if coach_passed:
+        coach_msg["coach_pass_turn"] = True
     # Suppress ask_pm when propose_input or end_grooming is present (they take priority)
     if ask_pm_input and not propose_input and not end_grooming_input:
         coach_msg["ask_pm"] = {
@@ -502,12 +527,20 @@ def _do_coach_turn(
             "rationale": propose_input.get("rationale", ""),
         }
 
+    # Attach signal_phase_complete data to coach message (structured marker)
+    if signal_input:
+        coach_msg["signal_phase_complete"] = {
+            "summary": signal_input.get("summary", ""),
+            "outcome": signal_input.get("outcome", "approved"),
+        }
+
     yield AppendMessage(coach_msg)
     history.append(coach_msg)
 
     # Coach signals phase complete via tool call
-    if policy.stop_on_phase_complete and any(tc["name"] == "signal_phase_complete" for tc in coach_tool_calls):
-        yield PhaseCompleteSignaled(iteration.get("phase"))
+    if policy.stop_on_phase_complete and signal_input:
+        outcome = signal_input.get("outcome", "approved")
+        yield PhaseCompleteSignaled(iteration.get("phase"), outcome=outcome)
         return True
 
     # Coach proposes iterations (grooming only — tool not in COACH_TOOLS)

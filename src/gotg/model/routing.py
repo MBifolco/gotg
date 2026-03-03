@@ -26,9 +26,10 @@ def chat_completion(
     api_key: str | None = None,
     provider: str = "ollama",
     tools: list[dict] | None = None,
+    tool_choice: dict | None = None,
 ) -> str | dict:
     if provider == "anthropic":
-        return _anthropic_completion(base_url, model, messages, api_key, tools)
+        return _anthropic_completion(base_url, model, messages, api_key, tools, tool_choice=tool_choice)
     return _openai_completion(base_url, model, messages, api_key, tools)
 
 
@@ -87,6 +88,7 @@ def raw_completion_stream(
     provider: str = "ollama",
     tools: list[dict] | None = None,
     max_tokens: int = 16384,
+    tool_choice: dict | None = None,
 ) -> StreamingResult:
     """Single-round streaming completion returning StreamingResult.
 
@@ -95,7 +97,7 @@ def raw_completion_stream(
     """
     def _provider_stream() -> Iterator[str]:
         if provider == "anthropic":
-            return _anthropic_raw_stream(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
+            return _anthropic_raw_stream(base_url, model, messages, api_key, tools, max_tokens=max_tokens, tool_choice=tool_choice)
         return _openai_raw_stream(base_url, model, messages, api_key, tools, max_tokens=max_tokens)
 
     result = StreamingResult(_gen=iter(()))

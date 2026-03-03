@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Callable
 
@@ -93,6 +94,8 @@ def merge_branches(
     branches: list[str] | None = None,
     force: bool = False,
     on_progress: Callable[[str], None] | None = None,
+    phase: str | None = None,
+    review_outcome: str | None = None,
 ) -> list[MergeResult]:
     """Merge branches into main. Stops on first conflict.
 
@@ -102,9 +105,17 @@ def merge_branches(
         branches: Specific branches to merge, or None to discover all unmerged.
         force: Skip dirty worktree checks.
         on_progress: Callback per branch.
+        phase: Current iteration phase (gate: must be code-review).
+        review_outcome: Review outcome (gate: must be "approved").
 
     Returns list of MergeResult. Raises ReviewError for precondition failures.
     """
+    if phase != "code-review" or review_outcome != "approved":
+        raise ReviewError(
+            "Merge requires an approved code review. "
+            "Run code-review phase first, then merge after coach approval."
+        )
+
     from gotg.worktree import (
         WorktreeError, commit_worktree, is_branch_merged, is_merge_in_progress,
         is_worktree_dirty, list_active_worktrees, list_layer_branches,
@@ -129,8 +140,17 @@ def merge_branches(
             "gotg requires the default branch to be named 'main'."
         )
 
+    _stashed = False
     if is_worktree_dirty(project_root, include_untracked=False):
-        raise ReviewError("uncommitted changes on main. Commit or stash before merging.")
+        if on_progress:
+            on_progress("Stashing uncommitted changes on main...")
+        _stash = subprocess.run(
+            ["git", "stash", "push", "-m", "gotg: auto-stash before merge"],
+            cwd=project_root, capture_output=True, text=True,
+        )
+        if _stash.returncode != 0:
+            raise ReviewError("uncommitted changes on main. Stash failed — commit or stash manually.")
+        _stashed = True
 
     # Auto-commit dirty worktrees before checking merge status
     active_wts = list_active_worktrees(project_root)
@@ -184,6 +204,25 @@ def merge_branches(
                 branch=br, success=False, conflicts=result.get("conflicts", []),
             ))
             break  # Stop on conflict
+
+    # Restore stashed changes (best-effort — merged branches are authoritative)
+    if _stashed:
+        _pop = subprocess.run(
+            ["git", "stash", "pop"],
+            cwd=project_root, capture_output=True, text=True,
+        )
+        if _pop.returncode != 0:
+            # Conflicts with merged content — drop stash (merged branches win)
+            subprocess.run(
+                ["git", "checkout", "--", "."],
+                cwd=project_root, capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "stash", "drop"],
+                cwd=project_root, capture_output=True, text=True,
+            )
+            if on_progress:
+                on_progress("Dropped stashed changes (superseded by merged branches).")
 
     return results
 
