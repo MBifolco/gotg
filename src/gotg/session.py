@@ -26,7 +26,7 @@ from gotg.session_types import (  # noqa: F401
 from gotg.session_setup import (  # noqa: F401
     build_session_infra,
     prepare_session,
-    prepare_grooming_session,
+    prepare_exploration_session,
     prepare_continue,
     run_and_persist,
     persist_event,
@@ -81,7 +81,7 @@ __all__ = [
     # Setup
     "build_session_infra",
     "prepare_session",
-    "prepare_grooming_session",
+    "prepare_exploration_session",
     "prepare_continue",
     "run_and_persist",
     "persist_event",

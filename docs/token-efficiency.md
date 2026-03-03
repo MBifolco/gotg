@@ -29,7 +29,7 @@ The raw transcripts are carried forward verbatim even though structured artifact
 
 **Fix:** Stop injecting prior-phase transcripts into later phases. The artifacts are the source of truth. Agents in code-review don't need to re-read the raw refinement debate — they need the summary + tasks + diffs.
 
-**Where:** `agent.py:build_prompt()` assembles the system prompt. The `groomed_summary` and `tasks_summary` parameters are already the artifact content. The transcript injection comes from `history` which includes all prior-phase messages (phase-scoped history only helps with turn counting, the full history is still in the system prompt via `build_prompt`). Need to verify: is the transcript injection happening through history or through explicit parameters?
+**Where:** `agent.py:build_prompt()` assembles the system prompt. The `refinement_summary` and `tasks_summary` parameters are already the artifact content. The transcript injection comes from `history` which includes all prior-phase messages (phase-scoped history only helps with turn counting, the full history is still in the system prompt via `build_prompt`). Need to verify: is the transcript injection happening through history or through explicit parameters?
 
 **Impact:** ~27% total cost reduction. Code-review prompts drop from ~80K to ~46K chars.
 

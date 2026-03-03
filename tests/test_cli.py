@@ -646,7 +646,7 @@ def _add_coach_to_team_json(team_dir):
     team_path.write_text(json.dumps(team_config, indent=2))
 
 
-def test_advance_with_coach_produces_groomed_md(tmp_path):
+def test_advance_with_coach_produces_refinement_summary_md(tmp_path):
     """Advancing refinement→planning with coach should produce refinement_summary.md."""
     team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
@@ -662,9 +662,9 @@ def test_advance_with_coach_produces_groomed_md(tmp_path):
                 main()
 
     # refinement_summary.md should exist with coach response
-    groomed = iter_dir / "refinement_summary.md"
-    assert groomed.exists()
-    assert "Auth system design" in groomed.read_text()
+    summary = iter_dir / "refinement_summary.md"
+    assert summary.exists()
+    assert "Auth system design" in summary.read_text()
 
     # Phase should still advance
     data = json.loads((team / "iteration.json").read_text())
@@ -1009,7 +1009,7 @@ def test_continue_excludes_coach_from_turn_count(tmp_path):
 
 # --- refinement_summary.md artifact injection ---
 
-def test_run_conversation_reads_groomed_md(tmp_path):
+def test_run_conversation_reads_refinement_summary_md(tmp_path):
     """run_conversation should read refinement_summary.md and pass it to build_prompt."""
     iter_dir = _make_iter_dir(tmp_path)
     (iter_dir / "refinement_summary.md").write_text("## Summary\nBuild auth.\n")
@@ -1029,10 +1029,10 @@ def test_run_conversation_reads_groomed_md(tmp_path):
 
     system_msg = captured_prompts[0][0]["content"]
     assert "Build auth." in system_msg
-    assert "GROOMED SCOPE SUMMARY" in system_msg
+    assert "REFINEMENT SUMMARY" in system_msg
 
 
-def test_run_conversation_no_groomed_md_no_injection(tmp_path):
+def test_run_conversation_no_refinement_summary_md_no_injection(tmp_path):
     """Without refinement_summary.md, no summary should appear in prompts."""
     iter_dir = _make_iter_dir(tmp_path)
 
@@ -1050,11 +1050,11 @@ def test_run_conversation_no_groomed_md_no_injection(tmp_path):
         run_conversation(iter_dir, _default_agents(), iteration, _default_model_config())
 
     system_msg = captured_prompts[0][0]["content"]
-    assert "GROOMED SCOPE SUMMARY" not in system_msg
+    assert "REFINEMENT SUMMARY" not in system_msg
 
 
-def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
-    """Coach prompt should also receive the groomed summary."""
+def test_run_conversation_refinement_summary_md_passed_to_coach(tmp_path):
+    """Coach prompt should also receive the refinement summary."""
     iter_dir = _make_iter_dir(tmp_path)
     (iter_dir / "refinement_summary.md").write_text("## Summary\nBuild auth.\n")
 
@@ -1079,7 +1079,7 @@ def test_run_conversation_groomed_md_passed_to_coach(tmp_path):
     # 3rd call is the coach (after agent-1, agent-2)
     coach_system_msg = captured_prompts[2][0]["content"]
     assert "Build auth." in coach_system_msg
-    assert "GROOMED SCOPE SUMMARY" in coach_system_msg
+    assert "REFINEMENT SUMMARY" in coach_system_msg
 
 
 # --- tasks.json advance + injection ---
@@ -3631,8 +3631,8 @@ def test_continue_uses_phase_history(tmp_path):
     log_path = iter_dir / "conversation.jsonl"
 
     # Write messages from prior phase + boundary + new phase messages
-    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "grooming msg 1"})
-    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "grooming msg 2"})
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "refinement msg 1"})
+    append_message(log_path, {"from": "agent-2", "iteration": "iter-1", "content": "refinement msg 2"})
     append_message(log_path, {
         "from": "system", "iteration": "iter-1",
         "content": "--- HISTORY BOUNDARY ---", "phase_boundary": True,
@@ -3690,7 +3690,7 @@ def test_advance_then_continue_with_message_ordering(tmp_path):
 
 
 def test_refinement_extraction_excludes_system_and_coach_messages(tmp_path):
-    """Grooming extraction should filter out system and coach messages."""
+    """Refinement extraction should filter out system and coach messages."""
     team, iter_dir = _make_advance_team_dir(tmp_path, phase="refinement")
     _add_coach_to_team_json(team)
 
@@ -3780,8 +3780,8 @@ def test_planning_extraction_uses_phase_history(tmp_path):
     _add_coach_to_team_json(team)
 
     log_path = iter_dir / "conversation.jsonl"
-    # Grooming phase messages
-    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "grooming msg"})
+    # Refinement phase messages
+    append_message(log_path, {"from": "agent-1", "iteration": "iter-1", "content": "refinement msg"})
     # Boundary from refinement → planning
     append_message(log_path, {
         "from": "system", "iteration": "iter-1",
@@ -3809,7 +3809,7 @@ def test_planning_extraction_uses_phase_history(tmp_path):
     user_msg = captured[0][1]["content"]
     assert "Task: build CLI." in user_msg
     assert "Agreed." in user_msg
-    assert "grooming msg" not in user_msg
+    assert "refinement msg" not in user_msg
 
 
 def test_notes_extraction_excludes_system_and_coach_messages(tmp_path):

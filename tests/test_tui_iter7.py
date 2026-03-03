@@ -12,7 +12,7 @@ from gotg.config import ITERATION_STATUSES, switch_current_iteration
 # ── Shared fixture ────────────────────────────────────────────
 
 
-def _make_team_dir(tmp_path, iterations=None, grooming=None, phase="code-review",
+def _make_team_dir(tmp_path, iterations=None, exploration=None, phase="code-review",
                    current_layer=0):
     """Create a minimal .team/ directory for testing."""
     team_dir = tmp_path / ".team"
@@ -45,13 +45,13 @@ def _make_team_dir(tmp_path, iterations=None, grooming=None, phase="code-review"
         "current": current,
     }))
 
-    for g in (grooming or []):
+    for g in (exploration or []):
         g = dict(g)
-        groom_dir = team_dir / "grooming" / g["slug"]
-        groom_dir.mkdir(parents=True)
+        explore_dir = team_dir / "exploration" / g["slug"]
+        explore_dir.mkdir(parents=True)
         msgs = g.pop("_messages", [])
-        (groom_dir / "grooming.json").write_text(json.dumps(g))
-        log = groom_dir / "conversation.jsonl"
+        (explore_dir / "exploration.json").write_text(json.dumps(g))
+        log = explore_dir / "conversation.jsonl"
         lines = [json.dumps(m) for m in msgs]
         log.write_text("\n".join(lines) + "\n" if lines else "")
 

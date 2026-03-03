@@ -103,11 +103,11 @@ def __getattr__(name):
         "cmd_merge": ("gotg.commands.review", "cmd_merge"),
         "cmd_worktrees": ("gotg.commands.review", "cmd_worktrees"),
         "cmd_commit_worktrees": ("gotg.commands.review", "cmd_commit_worktrees"),
-        "cmd_groom_start": ("gotg.commands.groom", "cmd_groom_start"),
-        "cmd_groom_continue": ("gotg.commands.groom", "cmd_groom_continue"),
-        "cmd_groom_list": ("gotg.commands.groom", "cmd_groom_list"),
-        "cmd_groom_show": ("gotg.commands.groom", "cmd_groom_show"),
-        "cmd_groom_summarize": ("gotg.commands.groom", "cmd_groom_summarize"),
+        "cmd_explore_start": ("gotg.commands.explore", "cmd_explore_start"),
+        "cmd_explore_continue": ("gotg.commands.explore", "cmd_explore_continue"),
+        "cmd_explore_list": ("gotg.commands.explore", "cmd_explore_list"),
+        "cmd_explore_show": ("gotg.commands.explore", "cmd_explore_show"),
+        "cmd_explore_summarize": ("gotg.commands.explore", "cmd_explore_summarize"),
     }
     if name in _reexports:
         module_path, attr = _reexports[name]
@@ -183,34 +183,33 @@ def main():
     commit_wt_parser = subparsers.add_parser("commit-worktrees", help="Commit all dirty worktrees")
     commit_wt_parser.add_argument("-m", "--message", help="Commit message (default: 'Agent implementation work')")
 
-    # Groom subcommand family
-    groom_parser = subparsers.add_parser("groom", help="Freeform grooming conversations")
-    groom_sub = groom_parser.add_subparsers(dest="groom_command")
+    explore_parser = subparsers.add_parser("explore", help="Freeform exploration conversations")
+    explore_sub = explore_parser.add_subparsers(dest="explore_command")
 
-    groom_start = groom_sub.add_parser("start", help="Start a new grooming conversation")
-    groom_start.add_argument("topic", help="Topic to explore")
-    groom_start.add_argument("--slug", help="Override auto-generated slug")
-    groom_start.add_argument("--coach", action="store_true", help="Enable coach facilitation")
-    groom_start.add_argument("--max-turns", type=int, help="Max turns (default: 30)")
-    groom_context_group = groom_start.add_mutually_exclusive_group()
-    groom_context_group.add_argument("--context-from", help="Iteration ID to load context from")
-    groom_context_group.add_argument("--no-context", action="store_true", help="Skip iteration context injection")
+    explore_start = explore_sub.add_parser("start", help="Start a new exploration conversation")
+    explore_start.add_argument("topic", help="Topic to explore")
+    explore_start.add_argument("--slug", help="Override auto-generated slug")
+    explore_start.add_argument("--coach", action="store_true", help="Enable coach facilitation")
+    explore_start.add_argument("--max-turns", type=int, help="Max turns (default: 30)")
+    explore_context_group = explore_start.add_mutually_exclusive_group()
+    explore_context_group.add_argument("--context-from", help="Iteration ID to load context from")
+    explore_context_group.add_argument("--no-context", action="store_true", help="Skip iteration context injection")
 
-    groom_continue = groom_sub.add_parser("continue", help="Continue a grooming conversation")
-    groom_continue.add_argument("slug", help="Session slug")
-    groom_continue_action = groom_continue.add_mutually_exclusive_group()
-    groom_continue_action.add_argument("--approve-iterations", action="store_true",
-        help="Approve pending iteration proposals")
-    groom_continue_action.add_argument("-m", "--message", help="Human message to inject")
-    groom_continue.add_argument("--max-turns", type=int, help="Additional turns to run")
+    explore_continue = explore_sub.add_parser("continue", help="Continue an exploration conversation")
+    explore_continue.add_argument("slug", help="Session slug")
+    explore_continue_action = explore_continue.add_mutually_exclusive_group()
+    explore_continue_action.add_argument("--approve-iterations", action="store_true",
+                                         help="Apply pending iteration proposals")
+    explore_continue_action.add_argument("-m", "--message", help="Human message to inject")
+    explore_continue.add_argument("--max-turns", type=int, help="Additional turns to run")
 
-    groom_sub.add_parser("list", help="List grooming sessions")
+    explore_sub.add_parser("list", help="List exploration sessions")
 
-    groom_show = groom_sub.add_parser("show", help="Show grooming conversation")
-    groom_show.add_argument("slug", help="Session slug")
+    explore_show = explore_sub.add_parser("show", help="Show exploration conversation")
+    explore_show.add_argument("slug", help="Session slug")
 
-    groom_summarize = groom_sub.add_parser("summarize", help="Generate a summary of a grooming conversation")
-    groom_summarize.add_argument("slug", help="Session slug")
+    explore_summarize = explore_sub.add_parser("summarize", help="Generate a summary of an exploration conversation")
+    explore_summarize.add_argument("slug", help="Session slug")
 
     subparsers.add_parser("ui", help="Launch interactive TUI")
 
@@ -276,24 +275,24 @@ def main():
         elif args.command == "commit-worktrees":
             from gotg.commands.review import cmd_commit_worktrees
             cmd_commit_worktrees(args)
-        elif args.command == "groom":
-            if args.groom_command == "start":
-                from gotg.commands.groom import cmd_groom_start
-                cmd_groom_start(args)
-            elif args.groom_command == "continue":
-                from gotg.commands.groom import cmd_groom_continue
-                cmd_groom_continue(args)
-            elif args.groom_command == "list":
-                from gotg.commands.groom import cmd_groom_list
-                cmd_groom_list(args)
-            elif args.groom_command == "show":
-                from gotg.commands.groom import cmd_groom_show
-                cmd_groom_show(args)
-            elif args.groom_command == "summarize":
-                from gotg.commands.groom import cmd_groom_summarize
-                cmd_groom_summarize(args)
+        elif args.command == "explore":
+            if args.explore_command == "start":
+                from gotg.commands.explore import cmd_explore_start
+                cmd_explore_start(args)
+            elif args.explore_command == "continue":
+                from gotg.commands.explore import cmd_explore_continue
+                cmd_explore_continue(args)
+            elif args.explore_command == "list":
+                from gotg.commands.explore import cmd_explore_list
+                cmd_explore_list(args)
+            elif args.explore_command == "show":
+                from gotg.commands.explore import cmd_explore_show
+                cmd_explore_show(args)
+            elif args.explore_command == "summarize":
+                from gotg.commands.explore import cmd_explore_summarize
+                cmd_explore_summarize(args)
             else:
-                groom_parser.print_help()
+                explore_parser.print_help()
         elif args.command == "ui":
             from gotg.commands.admin import cmd_ui
             cmd_ui(args)

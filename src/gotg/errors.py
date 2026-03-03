@@ -13,5 +13,5 @@ class ModelError(GotgError):
     """Model/provider communication failure."""
 
 
-class GroomingError(GotgError):
-    """Grooming session lifecycle error."""
+class ExplorationError(GotgError):
+    """Exploration session lifecycle error."""

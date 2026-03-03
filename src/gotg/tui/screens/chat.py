@@ -380,22 +380,22 @@ class ChatScreen(Screen):
                     streaming=streaming_enabled,
                 )
             else:
-                # Grooming session — uses prepare_grooming_session
-                from gotg.groom import load_grooming_metadata
-                from gotg.session import prepare_grooming_session, load_iteration_context
+                # Exploration session — uses prepare_exploration_session
+                from gotg.explore import load_exploration_metadata
+                from gotg.session import prepare_exploration_session, load_iteration_context
 
-                groom_meta, groom_dir = load_grooming_metadata(
+                explore_meta, explore_dir = load_exploration_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
                 )
                 iteration = {
-                    "id": groom_meta["slug"],
-                    "description": groom_meta.get("topic", ""),
+                    "id": explore_meta["slug"],
+                    "description": explore_meta.get("topic", ""),
                     "phase": None,
                 }
-                coach = ctx.coach if groom_meta.get("coach") else None
+                coach = ctx.coach if explore_meta.get("coach") else None
 
                 # Load iteration context from persisted context_from
-                context_from = groom_meta.get("context_from")
+                context_from = explore_meta.get("context_from")
                 project_context = None
                 if isinstance(context_from, str):
                     project_context = load_iteration_context(
@@ -413,11 +413,11 @@ class ChatScreen(Screen):
                     model_resolver=ctx.model_resolver,
                 )
 
-                setup = prepare_grooming_session(
-                    groom_dir, ctx.agents, iteration, ctx.model_config, deps,
-                    topic=groom_meta.get("topic", ""),
+                setup = prepare_exploration_session(
+                    explore_dir, ctx.agents, iteration, ctx.model_config, deps,
+                    topic=explore_meta.get("topic", ""),
                     coach=coach,
-                    max_turns=groom_meta.get("max_turns", 30),
+                    max_turns=explore_meta.get("max_turns", 30),
                     streaming=streaming_enabled,
                     project_context=project_context,
                     project_root=ctx.project_root,
@@ -711,7 +711,7 @@ class ChatScreen(Screen):
                 results = apply_iteration_proposals(
                     self.app.team_dir, proposals_msg["proposals"],
                     batch_id=proposals_msg["batch_id"],
-                    groom_slug=self.metadata.get("slug", ""),
+                    explore_slug=self.metadata.get("slug", ""),
                     store=self._conv_store,
                 )
                 msg_list = self.query_one("#message-list", MessageList)

@@ -153,7 +153,7 @@ def load_iteration(team_dir: Path) -> dict:
     if not current_id:
         raise ConfigError(
             "No current iteration. Create one with 'gotg new \"description\"' "
-            "or use 'gotg groom start \"topic\"' to explore first."
+            "or use 'gotg explore start \"topic\"' to explore first."
         )
     for iteration in data["iterations"]:
         if iteration["id"] == current_id:

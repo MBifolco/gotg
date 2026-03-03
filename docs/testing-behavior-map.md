@@ -272,78 +272,78 @@ Tests:
 - `tests/test_session.py::test_advance_planning_to_pre_code_review`
 - `tests/test_session.py::test_advance_pre_code_review_to_implementation`
 
-## Grooming Outcomes
+## Exploration Outcomes
 
 Behavior: Coach `propose_iterations` tool yields `IterationsProposed` event, pauses session, and takes priority over `ask_pm`.
 Tests:
-- `tests/test_grooming_outcomes.py::test_coach_propose_iterations_yields_event`
-- `tests/test_grooming_outcomes.py::test_coach_propose_iterations_stored_in_message`
-- `tests/test_grooming_outcomes.py::test_coach_propose_iterations_fallback_text`
-- `tests/test_grooming_outcomes.py::test_coach_propose_iterations_priority_over_ask_pm`
-- `tests/test_grooming_outcomes.py::test_coach_propose_iterations_batch_id_increments`
+- `tests/test_exploration_outcomes.py::test_coach_propose_iterations_yields_event`
+- `tests/test_exploration_outcomes.py::test_coach_propose_iterations_stored_in_message`
+- `tests/test_exploration_outcomes.py::test_coach_propose_iterations_fallback_text`
+- `tests/test_exploration_outcomes.py::test_coach_propose_iterations_priority_over_ask_pm`
+- `tests/test_exploration_outcomes.py::test_coach_propose_iterations_batch_id_increments`
 
 Behavior: `apply_iteration_proposals` validates, creates/updates iterations with batch-safe IDs, and persists idempotent approval markers.
 Tests:
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_create`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_create_batch_ids`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_update`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_update_not_found`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_mixed`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_injects_messages`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_idempotent`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_validation_bad_action`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_validation_missing_fields`
-- `tests/test_grooming_outcomes.py::test_apply_iteration_proposals_validation_update_no_id`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_create`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_create_batch_ids`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_update`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_update_not_found`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_mixed`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_injects_messages`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_idempotent`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_validation_bad_action`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_validation_missing_fields`
+- `tests/test_exploration_outcomes.py::test_apply_iteration_proposals_validation_update_no_id`
 
-Behavior: Coach `end_grooming` tool yields `SessionComplete`, suppresses `ask_pm`, and is lower priority than `propose_iterations`.
+Behavior: Coach `end_exploration` tool yields `SessionComplete`, suppresses `ask_pm`, and is lower priority than `propose_iterations`.
 Tests:
-- `tests/test_grooming_outcomes.py::test_coach_end_grooming_yields_session_complete`
-- `tests/test_grooming_outcomes.py::test_coach_end_grooming_fallback_text`
-- `tests/test_grooming_outcomes.py::test_coach_end_grooming_priority_over_ask_pm`
-- `tests/test_grooming_outcomes.py::test_propose_iterations_priority_over_end_grooming`
-- `tests/test_grooming_outcomes.py::test_end_grooming_tool_in_grooming_coach_tools`
-- `tests/test_grooming_outcomes.py::test_end_grooming_tool_not_in_iteration_coach_tools`
+- `tests/test_exploration_outcomes.py::test_coach_end_exploration_yields_session_complete`
+- `tests/test_exploration_outcomes.py::test_coach_end_exploration_fallback_text`
+- `tests/test_exploration_outcomes.py::test_coach_end_exploration_priority_over_ask_pm`
+- `tests/test_exploration_outcomes.py::test_propose_iterations_priority_over_end_exploration`
+- `tests/test_exploration_outcomes.py::test_end_exploration_tool_in_exploration_coach_tools`
+- `tests/test_exploration_outcomes.py::test_end_exploration_tool_not_in_iteration_coach_tools`
 
-Behavior: Grooming session resume detects pending iteration proposals and distinguishes from already-approved batches.
+Behavior: Exploration session resume detects pending iteration proposals and distinguishes from already-approved batches.
 Tests:
-- `tests/test_grooming_outcomes.py::test_reconstruct_resume_state_iterations_proposed`
-- `tests/test_grooming_outcomes.py::test_reconstruct_resume_state_proposals_already_approved`
-- `tests/test_grooming_outcomes.py::test_pause_reason_iterations_proposed`
+- `tests/test_exploration_outcomes.py::test_reconstruct_resume_state_iterations_proposed`
+- `tests/test_exploration_outcomes.py::test_reconstruct_resume_state_proposals_already_approved`
+- `tests/test_exploration_outcomes.py::test_pause_reason_iterations_proposed`
 
-Behavior: `gotg groom summarize` extracts a summary document from the grooming conversation via one-shot LLM call.
+Behavior: `gotg explore summarize` extracts a summary document from the exploration conversation via one-shot LLM call.
 Tests:
-- `tests/test_grooming_outcomes.py::test_extract_grooming_summary_doc`
-- `tests/test_grooming_outcomes.py::test_extract_grooming_summary_doc_strips_fences`
-- `tests/test_grooming_outcomes.py::test_extract_grooming_summary_doc_includes_coach`
-- `tests/test_grooming_outcomes.py::test_grooming_summary_extraction_prompt_loaded`
-- `tests/test_grooming_outcomes.py::test_cmd_groom_summarize`
-- `tests/test_grooming_outcomes.py::test_cmd_groom_summarize_empty`
+- `tests/test_exploration_outcomes.py::test_extract_exploration_summary_doc`
+- `tests/test_exploration_outcomes.py::test_extract_exploration_summary_doc_strips_fences`
+- `tests/test_exploration_outcomes.py::test_extract_exploration_summary_doc_includes_coach`
+- `tests/test_exploration_outcomes.py::test_exploration_summary_extraction_prompt_loaded`
+- `tests/test_exploration_outcomes.py::test_cmd_explore_summarize`
+- `tests/test_exploration_outcomes.py::test_cmd_explore_summarize_empty`
 
-## Grooming Context Injection
+## Exploration Context Injection
 
-Behavior: Grooming sessions auto-detect or explicitly load iteration context (refinement_summary.md, tasks.json) into agent prompts.
+Behavior: Exploration sessions auto-detect or explicitly load iteration context (refinement_summary.md, tasks.json) into agent prompts.
 Tests:
-- `tests/test_grooming_context.py::test_load_iteration_context_explicit`
-- `tests/test_grooming_context.py::test_load_iteration_context_auto_detect`
-- `tests/test_grooming_context.py::test_load_iteration_context_skips_pending`
-- `tests/test_grooming_context.py::test_load_iteration_context_no_iterations`
-- `tests/test_grooming_context.py::test_load_iteration_context_no_artifacts`
-- `tests/test_grooming_context.py::test_load_iteration_context_tasks_only`
-- `tests/test_grooming_context.py::test_load_iteration_context_explicit_not_found`
-- `tests/test_grooming_context.py::test_load_iteration_context_explicit_no_artifacts`
-- `tests/test_grooming_context.py::test_no_context_flag_suppresses_injection`
+- `tests/test_exploration_context.py::test_load_iteration_context_explicit`
+- `tests/test_exploration_context.py::test_load_iteration_context_auto_detect`
+- `tests/test_exploration_context.py::test_load_iteration_context_skips_pending`
+- `tests/test_exploration_context.py::test_load_iteration_context_no_iterations`
+- `tests/test_exploration_context.py::test_load_iteration_context_no_artifacts`
+- `tests/test_exploration_context.py::test_load_iteration_context_tasks_only`
+- `tests/test_exploration_context.py::test_load_iteration_context_explicit_not_found`
+- `tests/test_exploration_context.py::test_load_iteration_context_explicit_no_artifacts`
+- `tests/test_exploration_context.py::test_no_context_flag_suppresses_injection`
 
 Behavior: Project context flows through SessionPolicy into agent and coach prompts.
 Tests:
-- `tests/test_grooming_context.py::test_grooming_policy_with_project_context`
-- `tests/test_grooming_context.py::test_grooming_policy_without_project_context`
-- `tests/test_grooming_context.py::test_build_prompt_project_context`
-- `tests/test_grooming_context.py::test_build_prompt_no_project_context`
-- `tests/test_grooming_context.py::test_build_coach_prompt_project_context`
+- `tests/test_exploration_context.py::test_exploration_policy_with_project_context`
+- `tests/test_exploration_context.py::test_exploration_policy_without_project_context`
+- `tests/test_exploration_context.py::test_build_prompt_project_context`
+- `tests/test_exploration_context.py::test_build_prompt_no_project_context`
+- `tests/test_exploration_context.py::test_build_coach_prompt_project_context`
 
-Behavior: Grooming sessions get read-only file tools (file_read + file_list, no file_write).
+Behavior: Exploration sessions get read-only file tools (file_read + file_list, no file_write).
 Tests:
-- `tests/test_grooming_context.py::test_read_only_file_tools_excludes_write`
+- `tests/test_exploration_context.py::test_read_only_file_tools_excludes_write`
 
 ## CLI Iteration Switching
 

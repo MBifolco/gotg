@@ -8,7 +8,7 @@ from __future__ import annotations
 CURRENT_ITERATION_VERSION = 1
 CURRENT_TEAM_VERSION = 1
 CURRENT_TASKS_VERSION = 1
-CURRENT_GROOMING_VERSION = 2
+CURRENT_EXPLORATION_VERSION = 2
 
 # ── Helpers ───────────────────────────────────────────────────
 
@@ -142,28 +142,28 @@ def stamp_tasks_for_write(
     return wrapper
 
 
-# ── grooming.json ─────────────────────────────────────────────
+# ── exploration.json ─────────────────────────────────────────────
 
-def _migrate_grooming_v0_to_v1(data: dict) -> dict:
+def _migrate_exploration_v0_to_v1(data: dict) -> dict:
     data = dict(data)
     data.setdefault("status", "active")
     data["schema_version"] = 1
     return data
 
 
-def _migrate_grooming_v1_to_v2(data: dict) -> dict:
+def _migrate_exploration_v1_to_v2(data: dict) -> dict:
     data = dict(data)
     data.setdefault("context_from", None)
     data["schema_version"] = 2
     return data
 
 
-_GROOMING_PIPELINE = [_migrate_grooming_v0_to_v1, _migrate_grooming_v1_to_v2]
+_EXPLORATION_PIPELINE = [_migrate_exploration_v0_to_v1, _migrate_exploration_v1_to_v2]
 
 
-def migrate_grooming_metadata(data: dict, warnings: list[str] | None = None) -> dict:
-    """Migrate grooming.json data to the current version."""
+def migrate_exploration_metadata(data: dict, warnings: list[str] | None = None) -> dict:
+    """Migrate exploration.json data to the current version."""
     return _run_pipeline(
-        data, _GROOMING_PIPELINE, CURRENT_GROOMING_VERSION,
-        "grooming.json", warnings,
+        data, _EXPLORATION_PIPELINE, CURRENT_EXPLORATION_VERSION,
+        "exploration.json", warnings,
     )

@@ -100,7 +100,7 @@ def _make_policy(**overrides):
         stop_on_phase_complete=False, stop_on_ask_pm=False,
         agent_tools=tuple(list(AGENT_TOOLS) + list(FILE_TOOLS)),
         coach_tools=None,
-        groomed_summary=None, tasks_summary=None, diffs_summary=None,
+        refinement_summary=None, tasks_summary=None, diffs_summary=None,
         kickoff_text=None, fileguard=None, approval_store=None,
         worktree_map=None, system_supplement=None, coach_system_prompt=None,
         phase_skeleton=None,

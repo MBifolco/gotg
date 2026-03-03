@@ -21,7 +21,7 @@ from gotg.session_types import (
 __all__ = [
     "build_session_infra",
     "prepare_session",
-    "prepare_grooming_session",
+    "prepare_exploration_session",
     "prepare_continue",
     "run_and_persist",
     "persist_event",
@@ -151,8 +151,8 @@ def build_session_infra(
     )
 
 
-def prepare_grooming_session(
-    groom_dir: Path,
+def prepare_exploration_session(
+    explore_dir: Path,
     agents: list[dict],
     iteration: dict,
     model_config: dict,
@@ -166,19 +166,19 @@ def prepare_grooming_session(
     project_root: Path | None = None,
     file_access: dict | None = None,
 ) -> SessionSetup:
-    """Build everything needed to run a grooming session.
+    """Build everything needed to run an exploration session.
 
-    Parallel to prepare_session() but uses grooming_policy.
+    Parallel to prepare_session() but uses exploration_policy.
     Caller provides deps (preserves mock targets — bridge pattern).
     """
-    from gotg.policy import grooming_policy
+    from gotg.policy import exploration_policy
 
-    log_path = groom_dir / "conversation.jsonl"
-    debug_path = groom_dir / "debug.jsonl"
+    log_path = explore_dir / "conversation.jsonl"
+    debug_path = explore_dir / "debug.jsonl"
     store = ConversationStore(log_path, debug_path)
     history = store.read_full()
 
-    policy = grooming_policy(
+    policy = exploration_policy(
         agents=agents, topic=topic, history=history,
         coach=coach, max_turns=max_turns, streaming=streaming,
         project_context=project_context,
@@ -187,7 +187,7 @@ def prepare_grooming_session(
     )
 
     return SessionSetup(
-        agents=agents, iteration=iteration, iter_dir=groom_dir,
+        agents=agents, iteration=iteration, iter_dir=explore_dir,
         model_config=model_config, history=history, policy=policy,
         deps=deps, log_path=log_path, debug_path=debug_path,
         use_implementation=False, tasks_data=None, current_layer=0,
@@ -628,7 +628,7 @@ def apply_iteration_proposals(
     team_dir: Path,
     proposals: list[dict],
     batch_id: str,
-    groom_slug: str,
+    explore_slug: str,
     store: ConversationStore,
 ) -> list[dict]:
     """Create/update iterations from coach proposals. Returns system messages (already persisted).
@@ -650,15 +650,15 @@ def apply_iteration_proposals(
         description = (p.get("description") or "").strip()
 
         if action not in ("create", "update"):
-            messages.append(_sys_msg(groom_slug,
+            messages.append(_sys_msg(explore_slug,
                 f"[iterations] Error: proposal {i+1} has unknown action '{action}', skipped."))
             continue
         if not title or not description:
-            messages.append(_sys_msg(groom_slug,
+            messages.append(_sys_msg(explore_slug,
                 f"[iterations] Error: proposal {i+1} missing title or description, skipped."))
             continue
         if action == "update" and not p.get("iteration_id"):
-            messages.append(_sys_msg(groom_slug,
+            messages.append(_sys_msg(explore_slug,
                 f"[iterations] Error: proposal {i+1} is an update but missing iteration_id, skipped."))
             continue
 
@@ -686,7 +686,7 @@ def apply_iteration_proposals(
             new_id = id_map[i]
             iter_store.create(new_id, description=description, set_current=False)
             iter_store.save_fields(new_id, title=title)
-            messages.append(_sys_msg(groom_slug,
+            messages.append(_sys_msg(explore_slug,
                 f"[iterations] Created {new_id}: {title}"))
             applied_count += 1
 
@@ -694,15 +694,15 @@ def apply_iteration_proposals(
             target_id = p["iteration_id"]
             try:
                 iter_store.save_fields(target_id, title=title, description=description)
-                messages.append(_sys_msg(groom_slug,
+                messages.append(_sys_msg(explore_slug,
                     f"[iterations] Updated {target_id}: {title}"))
                 applied_count += 1
             except ConfigError:
-                messages.append(_sys_msg(groom_slug,
+                messages.append(_sys_msg(explore_slug,
                     f"[iterations] Error: iteration '{target_id}' not found, skipped update."))
 
     # --- Phase 4: Mark batch as approved (structured marker) ---
-    approval_msg = _sys_msg(groom_slug,
+    approval_msg = _sys_msg(explore_slug,
         f"[iterations] Batch {batch_id} approved: {applied_count} applied. "
         f"PM has accepted these iterations — do NOT re-propose them.")
     approval_msg["iterations_batch_approved"] = batch_id
@@ -715,5 +715,5 @@ def apply_iteration_proposals(
     return messages
 
 
-def _sys_msg(groom_slug: str, content: str) -> dict:
-    return {"from": "system", "iteration": groom_slug, "content": content}
+def _sys_msg(explore_slug: str, content: str) -> dict:
+    return {"from": "system", "iteration": explore_slug, "content": content}

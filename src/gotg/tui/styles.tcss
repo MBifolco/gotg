@@ -211,7 +211,7 @@
 
 /* ── Home screen ────────────────────────────────────────────── */
 
-#iter-table, #groom-table {
+#iter-table, #explore-table {
     height: 1fr;
 }
 

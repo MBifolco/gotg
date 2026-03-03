@@ -6,7 +6,7 @@ def build_prompt(
     iteration: dict,
     history: list[dict],
     all_participants: list[dict] | None = None,
-    groomed_summary: str | None = None,
+    refinement_summary: str | None = None,
     tasks_summary: str | None = None,
     diffs_summary: str | None = None,
     fileguard=None,
@@ -23,7 +23,7 @@ def build_prompt(
     system_prompt = agent_config.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
     system_parts = [system_prompt]
 
-    # Mode supplement (e.g., grooming mode framing) — injected early to override
+    # Mode supplement (e.g., exploration mode framing) — injected early to override
     # any phase references in the base system prompt
     if system_supplement:
         system_parts.append(system_supplement)
@@ -72,7 +72,7 @@ def build_prompt(
                 phase_prompt = phase_prompt.format(current_layer=current_layer)
             system_parts.append(phase_prompt)
 
-    # File access info for phases that support it (or grooming with file tools)
+    # File access info for phases that support it (or exploration with file tools)
     from gotg.phases import get_phase_caps_safe
     if fileguard and (get_phase_caps_safe(phase).inject_file_access_prompt or phase is None):
         has_approvals = getattr(fileguard, "enable_approvals", False)
@@ -113,8 +113,8 @@ def build_prompt(
             "worktrees."
         )
 
-    if groomed_summary:
-        system_parts.append("GROOMED SCOPE SUMMARY:\n\n" + groomed_summary)
+    if refinement_summary:
+        system_parts.append("REFINEMENT SUMMARY:\n\n" + refinement_summary)
 
     if tasks_summary:
         system_parts.append("TASK LIST:\n\n" + tasks_summary)
@@ -199,7 +199,7 @@ def build_coach_prompt(
     iteration: dict,
     history: list[dict],
     all_participants: list[dict] | None = None,
-    groomed_summary: str | None = None,
+    refinement_summary: str | None = None,
     tasks_summary: str | None = None,
     diffs_summary: str | None = None,
     coach_system_prompt: str | None = None,
@@ -228,8 +228,8 @@ def build_coach_prompt(
 
     system_parts.append(f"Current task: {task}")
 
-    if groomed_summary:
-        system_parts.append("GROOMED SCOPE SUMMARY:\n\n" + groomed_summary)
+    if refinement_summary:
+        system_parts.append("REFINEMENT SUMMARY:\n\n" + refinement_summary)
 
     if tasks_summary:
         system_parts.append("TASK LIST:\n\n" + tasks_summary)

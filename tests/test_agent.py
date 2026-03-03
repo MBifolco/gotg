@@ -462,51 +462,51 @@ def test_build_coach_prompt_consolidates_consecutive_messages():
     assert "[agent-3]" in messages[1]["content"]
 
 
-# --- groomed summary injection ---
+# --- refinement summary injection ---
 
-def test_build_prompt_injects_groomed_summary():
-    """When groomed_summary is provided, it appears in the system message."""
+def test_build_prompt_injects_refinement_summary():
+    """When refinement_summary is provided, it appears in the system message."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
         "status": "in-progress", "phase": "planning", "max_turns": 10,
     }
     summary = "## Summary\nBuild an auth system."
-    messages = build_prompt(agent, iteration, [], groomed_summary=summary)
+    messages = build_prompt(agent, iteration, [], refinement_summary=summary)
     system = messages[0]["content"]
-    assert "GROOMED SCOPE SUMMARY" in system
+    assert "REFINEMENT SUMMARY" in system
     assert "Build an auth system." in system
 
 
-def test_build_prompt_no_groomed_summary_when_none():
-    """When groomed_summary is None, no summary section appears."""
+def test_build_prompt_no_refinement_summary_when_none():
+    """When refinement_summary is None, no summary section appears."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
         "status": "in-progress", "phase": "planning", "max_turns": 10,
     }
-    messages = build_prompt(agent, iteration, [], groomed_summary=None)
+    messages = build_prompt(agent, iteration, [], refinement_summary=None)
     system = messages[0]["content"]
-    assert "GROOMED SCOPE SUMMARY" not in system
+    assert "REFINEMENT SUMMARY" not in system
 
 
-def test_build_prompt_groomed_summary_after_phase_prompt():
-    """Groomed summary should appear after the phase prompt in system message."""
+def test_build_prompt_refinement_summary_after_phase_prompt():
+    """Refinement summary should appear after the phase prompt in system message."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
         "status": "in-progress", "phase": "planning", "max_turns": 10,
     }
     summary = "## Summary\nBuild an auth system."
-    messages = build_prompt(agent, iteration, [], groomed_summary=summary)
+    messages = build_prompt(agent, iteration, [], refinement_summary=summary)
     system = messages[0]["content"]
     phase_pos = system.index("CURRENT PHASE: PLANNING")
-    summary_pos = system.index("GROOMED SCOPE SUMMARY")
+    summary_pos = system.index("REFINEMENT SUMMARY")
     assert summary_pos > phase_pos
 
 
-def test_build_coach_prompt_injects_groomed_summary():
-    """Coach prompt should include groomed summary when provided."""
+def test_build_coach_prompt_injects_refinement_summary():
+    """Coach prompt should include refinement summary when provided."""
     from gotg.agent import build_coach_prompt
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {
@@ -516,13 +516,13 @@ def test_build_coach_prompt_injects_groomed_summary():
     summary = "## Summary\nBuild an auth system."
     messages = build_coach_prompt(coach, iteration, [
         {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
-    ], groomed_summary=summary)
+    ], refinement_summary=summary)
     system = messages[0]["content"]
-    assert "GROOMED SCOPE SUMMARY" in system
+    assert "REFINEMENT SUMMARY" in system
     assert "Build an auth system." in system
 
 
-def test_build_coach_prompt_no_groomed_summary_when_none():
+def test_build_coach_prompt_no_refinement_summary_when_none():
     """Coach prompt should not include summary section when None."""
     from gotg.agent import build_coach_prompt
     coach = {"name": "coach", "role": "Agile Coach"}
@@ -532,9 +532,9 @@ def test_build_coach_prompt_no_groomed_summary_when_none():
     }
     messages = build_coach_prompt(coach, iteration, [
         {"from": "agent-1", "iteration": "iter-1", "content": "hello"},
-    ], groomed_summary=None)
+    ], refinement_summary=None)
     system = messages[0]["content"]
-    assert "GROOMED SCOPE SUMMARY" not in system
+    assert "REFINEMENT SUMMARY" not in system
 
 
 # --- tasks_summary injection ---
@@ -563,17 +563,17 @@ def test_build_prompt_no_tasks_summary_when_none():
     assert "TASK LIST" not in system
 
 
-def test_build_prompt_tasks_summary_after_groomed_summary():
+def test_build_prompt_tasks_summary_after_refinement_summary():
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {
         "id": "iter-1", "description": "Build a thing.",
         "status": "in-progress", "phase": "pre-code-review", "max_turns": 10,
     }
-    groomed = "## Summary\nBuild auth."
+    ref_summary = "## Summary\nBuild auth."
     tasks = "### Layer 0\n- **add-auth** [pending]"
-    messages = build_prompt(agent, iteration, [], groomed_summary=groomed, tasks_summary=tasks)
+    messages = build_prompt(agent, iteration, [], refinement_summary=ref_summary, tasks_summary=tasks)
     system = messages[0]["content"]
-    assert system.index("GROOMED SCOPE SUMMARY") < system.index("TASK LIST")
+    assert system.index("REFINEMENT SUMMARY") < system.index("TASK LIST")
 
 
 def test_build_coach_prompt_injects_tasks_summary():
@@ -629,7 +629,7 @@ def test_build_coach_prompt_uses_planning_facilitation():
     ])
     system = messages[0]["content"]
     assert COACH_FACILITATION_PROMPTS["planning"] in system
-    assert "requirements from the groomed scope" in system.lower()
+    assert "requirements from the refined scope" in system.lower()
 
 
 def test_build_coach_prompt_uses_pre_code_review_facilitation():
@@ -911,13 +911,13 @@ def test_build_prompt_with_system_supplement():
     """System supplement should appear early in system message (after base prompt, before name)."""
     agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
     iteration = {"id": "iter-1", "description": "Build a thing.", "phase": None}
-    messages = build_prompt(agent, iteration, [], system_supplement="MODE: GROOMING")
+    messages = build_prompt(agent, iteration, [], system_supplement="MODE: EXPLORATION")
     system = messages[0]["content"]
-    assert "MODE: GROOMING" in system
+    assert "MODE: EXPLORATION" in system
     # Supplement should appear before the name line
-    grooming_pos = system.index("MODE: GROOMING")
+    exploration_pos = system.index("MODE: EXPLORATION")
     name_pos = system.index("Your name is agent-1")
-    assert grooming_pos < name_pos
+    assert exploration_pos < name_pos
 
 
 def test_build_prompt_no_supplement_when_none():
@@ -925,7 +925,7 @@ def test_build_prompt_no_supplement_when_none():
     iteration = {"id": "iter-1", "description": "Build a thing."}
     messages = build_prompt(agent, iteration, [], system_supplement=None)
     system = messages[0]["content"]
-    assert "MODE: GROOMING" not in system
+    assert "MODE: EXPLORATION" not in system
 
 
 def test_build_coach_prompt_with_override():
@@ -933,10 +933,10 @@ def test_build_coach_prompt_with_override():
     from gotg.agent import build_coach_prompt
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "phase": "refinement"}
-    custom = "You are a grooming facilitator."
+    custom = "You are an exploration facilitator."
     messages = build_coach_prompt(coach, iteration, [], coach_system_prompt=custom)
     system = messages[0]["content"]
-    assert "You are a grooming facilitator." in system
+    assert "You are an exploration facilitator." in system
     # Should NOT contain the default refinement facilitation prompt
     from gotg.prompts import COACH_FACILITATION_PROMPT
     assert COACH_FACILITATION_PROMPT not in system
