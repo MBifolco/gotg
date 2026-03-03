@@ -1,6 +1,6 @@
 import json
 
-from gotg.engine import SessionDeps, run_session
+from gotg.engine import SessionDeps, build_tool_executor, run_session
 from gotg.tools import classify_tool_result
 from gotg.events import (
     AgentTurnComplete,
@@ -1038,3 +1038,48 @@ def test_coach_tool_choice_passed_to_completion():
         policy=_make_policy(max_turns=2, coach=COACH, coach_cadence=1),
     ))
     assert captured.get("tool_choice") == {"type": "any"}
+
+
+# --- write limit applies to delete and rename ---
+
+
+def test_write_limit_applies_to_delete_and_rename():
+    """file_delete and file_rename should count against max_files_per_turn write limit."""
+    from gotg.fileguard import FileGuard
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 2
+        max_file_size = 1048576
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+        project_root = None
+
+        def with_root(self, root):
+            return self
+
+    class FakeApprovalStore:
+        def get_pending(self):
+            return []
+
+        def add_request(self, *args, **kwargs):
+            return "a1"
+
+    fg = FakeGuard()
+    astore = FakeApprovalStore()
+
+    agent = {"name": "agent-1", "role": "Software Engineer"}
+    policy = _make_policy(
+        fileguard=fg,
+        approval_store=astore,
+    )
+
+    _, executor = build_tool_executor(agent, policy)
+
+    # First two calls succeed (file_delete + file_rename = 2 writes)
+    r1 = executor("file_delete", {"path": "src/a.py", "reason": "cleanup"})
+    r2 = executor("file_rename", {"source": "src/b.py", "destination": "src/c.py", "reason": "move"})
+    # Third call should hit write limit
+    r3 = executor("file_write", {"path": "src/d.py", "content": "x"})
+    assert "write limit reached" in r3

@@ -16,7 +16,7 @@ from gotg.prompts import (
 )
 from gotg.scaffold import should_inject_kickoff, format_phase_kickoff
 from gotg.tasks import TaskRepo, format_tasks_summary
-from gotg.tools import FILE_TOOLS, READ_ONLY_FILE_TOOLS
+from gotg.tools import APPROVAL_REQUIRED_FILE_TOOLS, FILE_TOOLS, READ_ONLY_FILE_TOOLS
 
 
 @dataclass(frozen=True)
@@ -127,7 +127,10 @@ def iteration_policy(
         from gotg.phases import get_phase_caps_safe
         caps_for_tools = get_phase_caps_safe(phase)
         if caps_for_tools.inject_file_access_prompt:
-            agent_tools = tuple(list(AGENT_TOOLS) + list(FILE_TOOLS))
+            base_file_tools = list(FILE_TOOLS)
+            if fileguard.enable_approvals and approval_store:
+                base_file_tools.extend(APPROVAL_REQUIRED_FILE_TOOLS)
+            agent_tools = tuple(list(AGENT_TOOLS) + base_file_tools)
         else:
             agent_tools = tuple(list(AGENT_TOOLS) + list(READ_ONLY_FILE_TOOLS))
     else:

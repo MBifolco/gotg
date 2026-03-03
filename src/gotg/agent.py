@@ -75,11 +75,26 @@ def build_prompt(
     # File access info for phases that support it (or grooming with file tools)
     from gotg.phases import get_phase_caps_safe
     if fileguard and (get_phase_caps_safe(phase).inject_file_access_prompt or phase is None):
+        has_approvals = getattr(fileguard, "enable_approvals", False)
         if fileguard.writable_paths:
             writable = ", ".join(fileguard.writable_paths)
+            if has_approvals:
+                system_parts.append(
+                    f"FILE ACCESS: You can read project files and write to: {writable}. "
+                    "Writes to other paths require PM approval. "
+                    "You also have file_delete and file_rename — both always require PM approval. "
+                    "System files (.team/, .git/, .env) are always blocked."
+                )
+            else:
+                system_parts.append(
+                    f"FILE ACCESS: You can read project files and write to: {writable}. "
+                    "Writes to other paths will be denied. "
+                    "System files (.team/, .git/, .env) are always blocked."
+                )
+        elif has_approvals:
             system_parts.append(
-                f"FILE ACCESS: You can read project files and write to: {writable}. "
-                "Writes to other paths will be denied. "
+                "FILE ACCESS: You can read project files. All writes require PM approval. "
+                "You also have file_delete and file_rename — both always require PM approval. "
                 "System files (.team/, .git/, .env) are always blocked."
             )
         else:

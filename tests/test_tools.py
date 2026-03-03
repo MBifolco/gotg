@@ -332,3 +332,290 @@ def test_make_tool_progress_error():
     assert p.status == "error"
     assert p.error == "Error: not in writable paths"
     assert p.bytes == 1
+
+
+# --- file_delete ---
+
+
+@pytest.fixture
+def approval_project(tmp_path):
+    """Project with approvals enabled."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / ".team").mkdir()
+    (tmp_path / ".git").mkdir()
+    return tmp_path
+
+
+@pytest.fixture
+def approval_guard(approval_project):
+    return FileGuard(approval_project, {
+        "writable_paths": ["src/**"],
+        "enable_approvals": True,
+        "max_file_size_bytes": 1_048_576,
+        "max_files_per_turn": 10,
+    })
+
+
+@pytest.fixture
+def approval_store(approval_project):
+    from gotg.approvals import ApprovalStore
+    return ApprovalStore(approval_project / "approvals.json")
+
+
+def test_delete_creates_pending_approval(approval_project, approval_guard, approval_store):
+    (approval_project / "src" / "old.py").write_text("old code")
+    result = execute_file_tool(
+        "file_delete",
+        {"path": "src/old.py", "reason": "replaced by new.py"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "Pending approval" in result
+    assert len(approval_store.get_pending()) == 1
+    assert (approval_project / "src" / "old.py").exists()  # not yet deleted
+
+
+def test_delete_hard_denied_returns_error(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_delete",
+        {"path": ".team/config.json", "reason": "cleanup"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "Protected path" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_delete_missing_path_key(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_delete",
+        {"reason": "no path"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "missing 'path'" in result
+
+
+def test_delete_missing_reason_key(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_delete",
+        {"path": "src/old.py"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "missing 'reason'" in result
+
+
+def test_delete_no_approval_store(approval_project, approval_guard):
+    result = execute_file_tool(
+        "file_delete",
+        {"path": "src/old.py", "reason": "cleanup"},
+        approval_guard,
+        approval_store=None,
+        agent_name="agent-1",
+    )
+    assert "approval system" in result
+
+
+def test_delete_nonexistent_file_rejected(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_delete",
+        {"path": "src/nonexistent.py", "reason": "cleanup"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "file not found" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_delete_directory_rejected(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_delete",
+        {"path": "src", "reason": "cleanup"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "not a file" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+# --- file_rename ---
+
+
+def test_rename_creates_pending_approval(approval_project, approval_guard, approval_store):
+    (approval_project / "src" / "old.py").write_text("code")
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "destination": "src/new.py", "reason": "better name"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "Pending approval" in result
+    assert len(approval_store.get_pending()) == 1
+    assert (approval_project / "src" / "old.py").exists()  # not yet renamed
+
+
+def test_rename_hard_denied_returns_error(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": ".team/config.json", "destination": "src/config.json", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "Protected path" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_rename_missing_source_key(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"destination": "src/new.py", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "missing 'source'" in result
+
+
+def test_rename_missing_destination_key(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "missing 'destination'" in result
+
+
+def test_rename_missing_reason_key(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "destination": "src/new.py"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert "missing 'reason'" in result
+
+
+def test_rename_no_approval_store(approval_project, approval_guard):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "destination": "src/new.py", "reason": "move"},
+        approval_guard,
+        approval_store=None,
+        agent_name="agent-1",
+    )
+    assert "approval system" in result
+
+
+def test_rename_nonexistent_source_rejected(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/nonexistent.py", "destination": "src/new.py", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "source not found" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_rename_source_is_directory_rejected(approval_project, approval_guard, approval_store):
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src", "destination": "src2", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "not a file" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_rename_destination_exists_rejected(approval_project, approval_guard, approval_store):
+    (approval_project / "src" / "old.py").write_text("old")
+    (approval_project / "src" / "new.py").write_text("new")
+    result = execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "destination": "src/new.py", "reason": "move"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    assert result.startswith("Error:")
+    assert "destination already exists" in result
+    assert len(approval_store.get_pending()) == 0
+
+
+def test_rename_request_stores_destination(approval_project, approval_guard, approval_store):
+    (approval_project / "src" / "old.py").write_text("code")
+    execute_file_tool(
+        "file_rename",
+        {"source": "src/old.py", "destination": "src/new.py", "reason": "better name"},
+        approval_guard,
+        approval_store=approval_store,
+        agent_name="agent-1",
+    )
+    pending = approval_store.get_pending()
+    assert len(pending) == 1
+    assert pending[0]["destination"] == "src/new.py"
+    assert pending[0]["operation"] == "rename"
+
+
+# --- format_tool_operation: delete and rename ---
+
+
+def test_format_tool_operation_delete():
+    op = {"name": "file_delete", "input": {"path": "src/old.py", "reason": "cleanup"}, "result": "Pending approval [a1]: ..."}
+    result = format_tool_operation(op)
+    assert "[file_delete]" in result
+    assert "src/old.py" in result
+    assert "PENDING APPROVAL" in result
+
+
+def test_format_tool_operation_rename():
+    op = {"name": "file_rename", "input": {"source": "src/old.py", "destination": "src/new.py", "reason": "rename"}, "result": "Pending approval [a1]: ..."}
+    result = format_tool_operation(op)
+    assert "[file_rename]" in result
+    assert "src/old.py -> src/new.py" in result
+    assert "PENDING APPROVAL" in result
+
+
+def test_format_tool_operation_rename_denied():
+    op = {"name": "file_rename", "input": {"source": "src/old.py", "destination": ".team/bad.py", "reason": "move"}, "result": "Error: Protected path"}
+    result = format_tool_operation(op)
+    assert "[file_rename]" in result
+    assert "src/old.py -> .team/bad.py" in result
+    assert "DENIED" in result
+
+
+def test_format_tool_operation_rename_pending():
+    op = {"name": "file_rename", "input": {"source": "a.py", "destination": "b.py", "reason": "r"}, "result": "Pending approval [a1]: rename"}
+    result = format_tool_operation(op)
+    assert "a.py -> b.py" in result
+    assert "PENDING APPROVAL" in result
+
+
+# --- make_tool_progress: file_rename ---
+
+
+def test_make_tool_progress_file_rename_shows_src_dst():
+    p = make_tool_progress("agent-1", "file_rename", {"source": "src/old.py", "destination": "src/new.py", "reason": "r"}, "Pending approval [a1]: rename")
+    assert p.path == "src/old.py -> src/new.py"
+    assert p.status == "pending_approval"

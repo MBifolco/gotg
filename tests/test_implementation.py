@@ -1178,3 +1178,175 @@ def test_run_implementation_validates_deps(tmp_path):
             AGENTS, tasks, 0, ITERATION, iter_dir, MODEL_CONFIG,
             deps, [], _make_policy(),
         ))
+
+
+# --- _build_implementation_prompt: approval tools ---
+
+
+def test_build_prompt_approval_tools_note_present():
+    """When has_approval_tools=True, prompt mentions file_delete/file_rename."""
+    from gotg.implementation import _build_implementation_prompt
+    prompt = _build_implementation_prompt(
+        "agent-1", "test project", 0, "TASK 1: do stuff",
+        has_approval_tools=True,
+    )
+    system = prompt[0]["content"]
+    assert "file_delete and file_rename" in system
+    # Step 2 should mention delete/rename
+    assert "delete, or rename" in system
+
+
+def test_build_prompt_approval_tools_note_absent():
+    """When has_approval_tools=False, prompt does NOT mention file_delete/file_rename."""
+    from gotg.implementation import _build_implementation_prompt
+    prompt = _build_implementation_prompt(
+        "agent-1", "test project", 0, "TASK 1: do stuff",
+        has_approval_tools=False,
+    )
+    system = prompt[0]["content"]
+    assert "file_delete and file_rename" not in system
+    # Step 2 should NOT mention delete or rename
+    assert "delete" not in system
+    assert "rename" not in system
+
+
+def test_build_prompt_approval_mediated_no_writable():
+    """No writable_paths + approvals = 'All writes require PM approval' (not hardcoded writable)."""
+    from gotg.implementation import _build_implementation_prompt
+    from gotg.fileguard import FileGuard
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        fg = FileGuard(pathlib.Path(d), {"writable_paths": [], "enable_approvals": True})
+        prompt = _build_implementation_prompt(
+            "agent-1", "test project", 0, "TASK 1: do stuff",
+            fileguard=fg, has_approval_tools=True,
+        )
+    system = prompt[0]["content"]
+    assert "All writes require PM approval" in system
+    assert "src/**, tests/**, docs/**" not in system
+
+
+def test_build_prompt_writable_with_approvals():
+    """writable_paths + approvals = mentions writable paths AND 'other paths require PM approval'."""
+    from gotg.implementation import _build_implementation_prompt
+    from gotg.fileguard import FileGuard
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        fg = FileGuard(pathlib.Path(d), {"writable_paths": ["src/**"], "enable_approvals": True})
+        prompt = _build_implementation_prompt(
+            "agent-1", "test project", 0, "TASK 1: do stuff",
+            fileguard=fg, has_approval_tools=True,
+        )
+    system = prompt[0]["content"]
+    assert "write to: src/**" in system
+    assert "other paths require PM approval" in system
+
+
+# --- _completion_nudge: gated on has_approval_tools ---
+
+
+def test_completion_nudge_mentions_delete_rename_when_enabled():
+    from gotg.implementation import _completion_nudge
+    nudge = _completion_nudge("agent-1", ["task-a"], has_approval_tools=True)
+    assert "file_delete" in nudge
+    assert "file_rename" in nudge
+
+
+def test_completion_nudge_no_delete_rename_when_disabled():
+    from gotg.implementation import _completion_nudge
+    nudge = _completion_nudge("agent-1", ["task-a"], has_approval_tools=False)
+    assert "file_delete" not in nudge
+    assert "file_rename" not in nudge
+    assert "file_write" in nudge
+
+
+# --- writes_since_reminder counts delete and rename ---
+
+
+def test_writes_since_reminder_counts_delete(tmp_path):
+    """file_delete should increment writes_since_reminder counter."""
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    (tmp_path / "project").mkdir(exist_ok=True)
+    (tmp_path / "project" / "src").mkdir(exist_ok=True)
+    (tmp_path / "project" / "src" / "old.py").write_text("old")
+
+    # Simulate a round with a file_delete call followed by complete_tasks
+    from gotg.fileguard import FileGuard
+    from gotg.approvals import ApprovalStore
+
+    fg = FileGuard(tmp_path / "project", {
+        "writable_paths": ["src/**"], "enable_approvals": True,
+    })
+    astore = ApprovalStore(iter_dir / "approvals.json")
+
+    rounds = [
+        _tool_round("", [
+            {"id": "tc1", "name": "file_delete", "input": {"path": "src/old.py", "reason": "replaced"}},
+        ]),
+        _tool_round("", [
+            {"id": "tc2", "name": "complete_tasks", "input": {"task_ids": ["task-a"], "summary": "done"}},
+        ]),
+    ]
+    call_count = {"n": 0}
+    def mock_single(**kw):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        return rounds[idx] if idx < len(rounds) else _text_round("")
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+    policy = _make_policy(fileguard=fg, approval_store=astore)
+    events = _collect(run_implementation(
+        AGENTS[:1], tasks[:1], 0, ITERATION, iter_dir, MODEL_CONFIG,
+        deps, [], policy, max_tool_rounds=5,
+    ))
+    # Should have created a pending approval for the delete
+    assert len(astore.get_pending()) == 1
+
+
+def test_writes_since_reminder_counts_rename(tmp_path):
+    """file_rename should increment writes_since_reminder counter."""
+    tasks = _make_tasks()
+    iter_dir = _setup_iter_dir(tmp_path, tasks)
+    (tmp_path / "project").mkdir(exist_ok=True)
+    (tmp_path / "project" / "src").mkdir(exist_ok=True)
+    (tmp_path / "project" / "src" / "old.py").write_text("code")
+
+    from gotg.fileguard import FileGuard
+    from gotg.approvals import ApprovalStore
+
+    fg = FileGuard(tmp_path / "project", {
+        "writable_paths": ["src/**"], "enable_approvals": True,
+    })
+    astore = ApprovalStore(iter_dir / "approvals.json")
+
+    rounds = [
+        _tool_round("", [
+            {"id": "tc1", "name": "file_rename", "input": {
+                "source": "src/old.py", "destination": "src/new.py", "reason": "rename",
+            }},
+        ]),
+        _tool_round("", [
+            {"id": "tc2", "name": "complete_tasks", "input": {"task_ids": ["task-a"], "summary": "done"}},
+        ]),
+    ]
+    call_count = {"n": 0}
+    def mock_single(**kw):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        return rounds[idx] if idx < len(rounds) else _text_round("")
+
+    deps = SessionDeps(
+        agent_completion=None, coach_completion=None,
+        single_completion=mock_single,
+    )
+    policy = _make_policy(fileguard=fg, approval_store=astore)
+    events = _collect(run_implementation(
+        AGENTS[:1], tasks[:1], 0, ITERATION, iter_dir, MODEL_CONFIG,
+        deps, [], policy, max_tool_rounds=5,
+    ))
+    # Should have created a pending approval for the rename
+    assert len(astore.get_pending()) == 1

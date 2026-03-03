@@ -61,6 +61,59 @@ FILE_TOOLS = [
 ]
 
 
+FILE_DELETE_TOOL = {
+    "name": "file_delete",
+    "description": (
+        "Delete a file. Always requires PM approval. "
+        "Path is relative to project root."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Relative path to file to delete (e.g., 'src/old.py')",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why this file should be deleted",
+            },
+        },
+        "required": ["path", "reason"],
+    },
+}
+
+
+FILE_RENAME_TOOL = {
+    "name": "file_rename",
+    "description": (
+        "Rename/move a file. Always requires PM approval. "
+        "Paths are relative to project root."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "description": "Current relative path (e.g., 'src/old.py')",
+            },
+            "destination": {
+                "type": "string",
+                "description": "New relative path (e.g., 'src/new.py')",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why this file should be renamed/moved",
+            },
+        },
+        "required": ["source", "destination", "reason"],
+    },
+}
+
+
+APPROVAL_REQUIRED_FILE_TOOLS = [FILE_DELETE_TOOL, FILE_RENAME_TOOL]
+
+
 READ_ONLY_FILE_TOOLS = [t for t in FILE_TOOLS if t["name"] != "file_write"]
 
 
@@ -79,6 +132,10 @@ def execute_file_tool(
             return _do_file_write(tool_input, fileguard, approval_store, agent_name)
         elif tool_name == "file_list":
             return _do_file_list(tool_input, fileguard)
+        elif tool_name == "file_delete":
+            return _do_file_delete(tool_input, fileguard, approval_store, agent_name)
+        elif tool_name == "file_rename":
+            return _do_file_rename(tool_input, fileguard, approval_store, agent_name)
         else:
             return f"Error: unknown tool: {tool_name}"
     except SecurityError as e:
@@ -139,6 +196,82 @@ def _do_file_write(tool_input: dict, fileguard: FileGuard, approval_store=None, 
         return f"Written: {tool_input['path']} ({size} bytes)"
 
 
+def _do_file_delete(tool_input: dict, fileguard: FileGuard, approval_store=None, agent_name: str = "") -> str:
+    if "path" not in tool_input:
+        return "Error: malformed tool call — missing 'path' field"
+    if "reason" not in tool_input:
+        return "Error: malformed tool call — missing 'reason' field"
+
+    if approval_store is None:
+        return "Error: file_delete requires the approval system to be enabled"
+
+    decision, resolved, reason = fileguard.check_delete(tool_input["path"])
+    if decision == WRITE_DENIED:
+        return f"Error: {reason}"
+
+    # Preflight: verify file exists and is a file before creating approval
+    if resolved is not None:
+        if not resolved.exists():
+            return f"Error: file not found: {tool_input['path']}"
+        if not resolved.is_file():
+            return f"Error: not a file: {tool_input['path']}"
+
+    req_id = approval_store.add_request(
+        path=tool_input["path"],
+        content="",
+        requested_by=agent_name,
+        tool_input=tool_input,
+        operation="delete",
+    )
+    return (
+        f"Pending approval [{req_id}]: delete {tool_input['path']} "
+        f"requires PM approval. The file will be deleted after approval."
+    )
+
+
+def _do_file_rename(tool_input: dict, fileguard: FileGuard, approval_store=None, agent_name: str = "") -> str:
+    if "source" not in tool_input:
+        return "Error: malformed tool call — missing 'source' field"
+    if "destination" not in tool_input:
+        return "Error: malformed tool call — missing 'destination' field"
+    if "reason" not in tool_input:
+        return "Error: malformed tool call — missing 'reason' field"
+
+    if approval_store is None:
+        return "Error: file_rename requires the approval system to be enabled"
+
+    decision, resolved_src, resolved_dst, reason = fileguard.check_rename(
+        tool_input["source"], tool_input["destination"],
+    )
+    if decision == WRITE_DENIED:
+        return f"Error: {reason}"
+
+    # Preflight: source must exist and be a file
+    if resolved_src is not None:
+        if not resolved_src.exists():
+            return f"Error: source not found: {tool_input['source']}"
+        if not resolved_src.is_file():
+            return f"Error: source is not a file: {tool_input['source']}"
+
+    # Preflight: destination must not already exist (no silent overwrite)
+    if resolved_dst is not None and resolved_dst.exists():
+        return f"Error: destination already exists: {tool_input['destination']}"
+
+    req_id = approval_store.add_request(
+        path=tool_input["source"],
+        content="",
+        requested_by=agent_name,
+        tool_input=tool_input,
+        operation="rename",
+        destination=tool_input["destination"],
+    )
+    return (
+        f"Pending approval [{req_id}]: rename {tool_input['source']} -> "
+        f"{tool_input['destination']} requires PM approval. "
+        f"The file will be renamed after approval."
+    )
+
+
 def _do_file_list(tool_input: dict, fileguard: FileGuard) -> str:
     if "path" not in tool_input:
         return "Error: malformed tool call — missing 'path' field"
@@ -160,22 +293,33 @@ def format_tool_operation(op: dict) -> str:
     name = op["name"]
     tool_input = op["input"]
     result = op["result"]
-    path = tool_input.get("path", "")
+    path = tool_input.get("path", "") or tool_input.get("source", "")
+
+    # Build display path — rename shows src -> dst
+    if name == "file_rename":
+        dst = tool_input.get("destination", "")
+        path_display = f"{path} -> {dst}" if dst else path
+    else:
+        path_display = path
 
     if result.startswith("Error:"):
-        return f"[{name}] DENIED: {path} — {result}"
+        return f"[{name}] DENIED: {path_display} — {result}"
 
     if result.startswith("Pending approval"):
-        return f"[{name}] PENDING APPROVAL: {path} — {result}"
+        return f"[{name}] PENDING APPROVAL: {path_display} — {result}"
 
     if name == "file_read":
-        return f"[file_read] {path}"
+        return f"[file_read] {path_display}"
     elif name == "file_write":
         size = len(tool_input.get("content", "").encode())
-        return f"[file_write] {path} ({size} bytes)"
+        return f"[file_write] {path_display} ({size} bytes)"
     elif name == "file_list":
-        return f"[file_list] {path}"
-    return f"[{name}] {path}"
+        return f"[file_list] {path_display}"
+    elif name == "file_delete":
+        return f"[file_delete] {path_display}"
+    elif name == "file_rename":
+        return f"[file_rename] {path_display}"
+    return f"[{name}] {path_display}"
 
 
 def format_agent_tool_operation(agent_name: str, op: dict) -> str:
@@ -198,10 +342,14 @@ def make_tool_progress(agent: str, tool_name: str, tool_input: dict, result: str
     content_size = None
     if tool_name == "file_write":
         content_size = len(tool_input.get("content", "").encode())
+    path = tool_input.get("path", "") or tool_input.get("source", "")
+    if tool_name == "file_rename":
+        dst = tool_input.get("destination", "")
+        path = f"{path} -> {dst}" if dst else path
     return ToolCallProgress(
         agent=agent,
         tool_name=tool_name,
-        path=tool_input.get("path", ""),
+        path=path,
         status=status,
         bytes=content_size,
         error=result if status == "error" else None,

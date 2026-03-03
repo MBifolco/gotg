@@ -49,6 +49,7 @@ class ApprovalScreen(Screen):
     def on_mount(self) -> None:
         table = self.query_one("#approval-table", DataTable)
         table.add_column("ID", key="id", width=6)
+        table.add_column("Op", key="op", width=8)
         table.add_column("Path", key="path")
         table.add_column("Agent", key="agent", width=12)
         table.add_column("Size", key="size", width=8)
@@ -81,23 +82,49 @@ class ApprovalScreen(Screen):
                 status_display = "[red]denied[/red]"
             else:
                 status_display = status
+
+            operation = req.get("operation", "write")
+
+            # Path display: rename shows src -> dst
+            dest = req.get("destination", "")
+            path_display = f"{req['path']} -> {dest}" if dest else req["path"]
+
+            # Size: only show for write operations
+            size_display = format_size(req["content_size"]) if operation == "write" else ""
+
             table.add_row(
                 req["id"],
-                req["path"],
+                operation,
+                path_display,
                 req["requested_by"],
-                format_size(req["content_size"]),
+                size_display,
                 status_display,
                 key=row_key,
             )
 
         viewer = self.query_one("#content-viewer", ContentViewer)
         if all_requests:
-            viewer.show_content(all_requests[0]["path"], all_requests[0]["content"])
+            self._show_request_content(viewer, all_requests[0])
         else:
             viewer.clear_content()
 
         pending_count = len(self._store.get_pending())
         self.sub_title = f"{pending_count} pending approval(s)"
+
+    def _show_request_content(self, viewer: ContentViewer, req: dict) -> None:
+        """Show content appropriate to the operation type."""
+        operation = req.get("operation", "write")
+        if operation == "delete":
+            viewer.show_content(req["path"], "(file will be deleted)")
+        elif operation == "rename":
+            dest = req.get("destination", "")
+            reason = req.get("tool_input", {}).get("reason", "")
+            content = f"Rename: {req['path']} -> {dest}"
+            if reason:
+                content += f"\nReason: {reason}"
+            viewer.show_content(req["path"], content)
+        else:
+            viewer.show_content(req["path"], req.get("content", ""))
 
     def _get_selected_request(self) -> dict | None:
         """Get the request dict for the currently selected table row."""
@@ -111,17 +138,21 @@ class ApprovalScreen(Screen):
         key_str = event.row_key.value
         req = self._requests.get(key_str)
         if req:
-            self.query_one("#content-viewer", ContentViewer).show_content(
-                req["path"], req["content"]
-            )
+            viewer = self.query_one("#content-viewer", ContentViewer)
+            self._show_request_content(viewer, req)
 
-    # ── Actions ──────────────────────────────────────────────
+    # -- Actions --
 
     def action_go_back(self) -> None:
         if self._deny_target_id is not None:
             self._cancel_deny()
             return
         self.app.pop_screen()
+
+    def _path_display(self, req: dict) -> str:
+        """Build a display path — rename shows src -> dst."""
+        dest = req.get("destination", "")
+        return f"{req['path']} -> {dest}" if dest else req["path"]
 
     def action_approve_selected(self) -> None:
         if self._deny_target_id is not None:
@@ -132,7 +163,7 @@ class ApprovalScreen(Screen):
             return
         try:
             self._store.approve(req["id"])
-            self.notify(f"Approved: {req['path']}")
+            self.notify(f"Approved: {self._path_display(req)}")
             self._load_data()
         except ValueError as e:
             self.notify(str(e), severity="error")
@@ -160,7 +191,7 @@ class ApprovalScreen(Screen):
         denial_input.value = ""
         denial_input.focus()
         self.query_one("#approval-action-bar", ActionBar).show(
-            f"Denying {req['id']} ({req['path']}). Enter reason and press Enter."
+            f"Denying {req['id']} ({self._path_display(req)}). Enter reason and press Enter."
         )
 
     def _cancel_deny(self) -> None:
@@ -180,8 +211,8 @@ class ApprovalScreen(Screen):
         try:
             req = self._requests.get(self._deny_target_id, {})
             self._store.deny(self._deny_target_id, reason)
-            path = req.get("path", "")
-            self.notify(f"Denied: {path}" + (f" ({reason})" if reason else ""))
+            display = self._path_display(req) if req else ""
+            self.notify(f"Denied: {display}" + (f" ({reason})" if reason else ""))
         except ValueError as e:
             self.notify(str(e), severity="error")
         self._deny_target_id = None

@@ -565,13 +565,15 @@ def apply_and_inject(
         approval_store, fileguard, fileguard_for_agent=fg_for_agent
     )
     for r in results:
+        operation = r.get("operation", "write")
+        tag = f"[file_{operation}]"
         msg = {
             "from": "system",
             "iteration": iteration["id"],
             "content": (
-                f"[file_write] APPROVED: {r['message']}"
+                f"{tag} APPROVED: {r['message']}"
                 if r["success"]
-                else f"[file_write] APPROVAL FAILED: {r['message']}"
+                else f"{tag} APPROVAL FAILED: {r['message']}"
             ),
         }
         conv.append(msg)
@@ -579,11 +581,15 @@ def apply_and_inject(
 
     for req in approval_store.get_denied_uninjected():
         reason = req.get("denial_reason") or "No reason provided"
+        operation = req.get("operation", "write")
+        tag = f"[file_{operation}]"
+        dest = req.get("destination", "")
+        path_display = f"{req['path']} -> {dest}" if dest else req["path"]
         msg = {
             "from": "system",
             "iteration": iteration["id"],
             "content": (
-                f"[file_write] DENIED by PM: {req['path']} — {reason}. "
+                f"{tag} DENIED by PM: {path_display} — {reason}. "
                 f"(Originally requested by {req['requested_by']})"
             ),
         }

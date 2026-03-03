@@ -393,3 +393,75 @@ def test_iteration_policy_implementation_gets_full_tools(tmp_path):
     assert "file_read" in tool_names
     assert "file_list" in tool_names
     assert "file_write" in tool_names
+
+
+def test_approval_tools_included_when_approvals_enabled(tmp_path):
+    """When approvals + approval_store are set, destructive tools are included."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+
+    class FakeStore:
+        pass
+
+    impl_iter = {**ITERATION, "phase": "implementation"}
+    p = iteration_policy(AGENTS, impl_iter, iter_dir, history=[],
+                         fileguard=FakeGuard(), approval_store=FakeStore())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" in tool_names
+    assert "file_rename" in tool_names
+
+
+def test_approval_tools_not_included_without_approvals(tmp_path):
+    """Without approvals, destructive tools are absent."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = False
+
+    impl_iter = {**ITERATION, "phase": "implementation"}
+    p = iteration_policy(AGENTS, impl_iter, iter_dir, history=[], fileguard=FakeGuard())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names
+
+
+def test_approval_tools_not_in_code_review(tmp_path):
+    """Code review phase uses read-only tools — no destructive tools."""
+    iter_dir = _make_iter_dir(tmp_path)
+
+    class FakeGuard:
+        writable_paths = ["src/**"]
+        protected_paths = []
+        max_files_per_turn = 10
+        max_file_size_bytes = 1048576
+        enable_approvals = True
+
+    class FakeStore:
+        pass
+
+    review_iter = {**ITERATION, "phase": "code-review"}
+    p = iteration_policy(AGENTS, review_iter, iter_dir, history=[],
+                         fileguard=FakeGuard(), approval_store=FakeStore())
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names
+    assert "file_write" not in tool_names  # code-review is read-only
+
+
+def test_grooming_never_gets_destructive_tools():
+    """Grooming policy never includes destructive file tools."""
+    from gotg.policy import grooming_policy
+    p = grooming_policy(AGENTS, "test topic", history=[])
+    tool_names = {t["name"] for t in p.agent_tools}
+    assert "file_delete" not in tool_names
+    assert "file_rename" not in tool_names

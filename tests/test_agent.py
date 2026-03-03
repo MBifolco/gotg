@@ -743,8 +743,9 @@ def test_build_coach_prompt_code_review_facilitation():
 
 class _FakeFileGuard:
     """Minimal stand-in for FileGuard in prompt tests."""
-    def __init__(self, writable_paths=None):
+    def __init__(self, writable_paths=None, enable_approvals=False):
         self.writable_paths = writable_paths or []
+        self.enable_approvals = enable_approvals
 
 
 def test_build_prompt_writable_paths_in_implementation():
@@ -995,3 +996,53 @@ def test_build_coach_prompt_no_iteration_plan_when_none():
     messages = build_coach_prompt(coach, iteration, [])
     system = messages[0]["content"]
     assert "ITERATION PLAN" not in system
+
+
+# --- file access prompt: destructive tools awareness ---
+
+
+def test_build_prompt_destructive_tools_note_with_writable():
+    """With writable_paths + enable_approvals, prompt mentions file_delete/file_rename."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=["src/"], enable_approvals=True)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "write to: src/" in system
+    assert "require PM approval" in system
+    assert "file_delete and file_rename" in system
+    assert "will be denied" not in system
+
+
+def test_build_prompt_writable_no_approvals_says_denied():
+    """With writable_paths but no approvals, prompt says 'will be denied' and no destructive tools."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=["src/"], enable_approvals=False)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "will be denied" in system
+    assert "file_delete and file_rename" not in system
+
+
+def test_build_prompt_approval_mediated_access():
+    """No writable_paths + enable_approvals = all writes via approval, not read-only."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=[], enable_approvals=True)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "All writes require PM approval" in system
+    assert "file_delete and file_rename" in system
+    assert "read-only" not in system
+
+
+def test_build_prompt_read_only_no_approvals():
+    """No writable_paths + no approvals = read-only."""
+    agent = {"name": "agent-1", "system_prompt": "You are an engineer."}
+    iteration = {"id": "iter-1", "description": "Build.", "phase": "implementation"}
+    fg = _FakeFileGuard(writable_paths=[], enable_approvals=False)
+    messages = build_prompt(agent, iteration, [], fileguard=fg)
+    system = messages[0]["content"]
+    assert "read-only" in system
+    assert "file_delete and file_rename" not in system

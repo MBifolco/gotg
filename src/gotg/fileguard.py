@@ -116,6 +116,76 @@ class FileGuard:
 
         return resolved
 
+    def check_delete(self, relative_path: str) -> tuple:
+        """Check a delete without raising. Returns (decision, resolved_path, reason).
+
+        Always requires approval — never WRITE_ALLOWED.
+        Returns WRITE_DENIED if hard-deny, protected, containment violation,
+        or approvals not enabled.
+        """
+        if not self.enable_approvals:
+            return (WRITE_DENIED, None, "file_delete requires the approval system to be enabled")
+
+        try:
+            resolved = self._resolve_and_contain(relative_path)
+        except SecurityError as e:
+            return (WRITE_DENIED, None, str(e))
+
+        rel = resolved.relative_to(self.project_root)
+
+        if self._is_hard_denied(rel):
+            return (WRITE_DENIED, resolved, f"Protected path: {rel}")
+
+        if self._is_protected(rel):
+            return (WRITE_DENIED, resolved, f"Protected path: {rel}")
+
+        return (WRITE_APPROVAL_REQUIRED, resolved, f"Delete requires approval: {rel}")
+
+    def check_rename(self, source_path: str, dest_path: str) -> tuple:
+        """Check a rename without raising. Returns (decision, resolved_src, resolved_dst, reason).
+
+        Always requires approval — never WRITE_ALLOWED.
+        Returns WRITE_DENIED if either path hits hard-deny, protected, containment,
+        or approvals not enabled.
+        """
+        if not self.enable_approvals:
+            return (WRITE_DENIED, None, None, "file_rename requires the approval system to be enabled")
+
+        try:
+            resolved_src = self._resolve_and_contain(source_path)
+        except SecurityError as e:
+            return (WRITE_DENIED, None, None, str(e))
+
+        try:
+            resolved_dst = self._resolve_and_contain(dest_path)
+        except SecurityError as e:
+            return (WRITE_DENIED, resolved_src, None, str(e))
+
+        rel_src = resolved_src.relative_to(self.project_root)
+        rel_dst = resolved_dst.relative_to(self.project_root)
+
+        if self._is_hard_denied(rel_src):
+            return (WRITE_DENIED, resolved_src, resolved_dst, f"Protected path: {rel_src}")
+
+        if self._is_hard_denied(rel_dst):
+            return (WRITE_DENIED, resolved_src, resolved_dst, f"Protected path: {rel_dst}")
+
+        if self._is_protected(rel_src):
+            return (WRITE_DENIED, resolved_src, resolved_dst, f"Protected path: {rel_src}")
+
+        if self._is_protected(rel_dst):
+            return (WRITE_DENIED, resolved_src, resolved_dst, f"Protected path: {rel_dst}")
+
+        return (WRITE_APPROVAL_REQUIRED, resolved_src, resolved_dst, f"Rename requires approval: {rel_src} -> {rel_dst}")
+
+    def validate_delete_approved(self, relative_path: str) -> Path:
+        """Validate a delete for an approved request.
+
+        Bypasses writable_paths check but enforces containment, hard-deny, and protected.
+        Delegates to validate_write_approved (same checks).
+        """
+        return self.validate_write_approved(relative_path)
+
     def with_root(self, new_root: Path) -> "FileGuard":
         """Create a new FileGuard with same config but different project root.
 

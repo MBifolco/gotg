@@ -203,7 +203,7 @@ def build_tool_executor(
             nonlocal write_count
             if name == "pass_turn":
                 return "Turn passed."
-            if name == "file_write":
+            if name in ("file_write", "file_delete", "file_rename"):
                 write_count += 1
                 if write_count > agent_fg.max_files_per_turn:
                     return f"Error: write limit reached ({agent_fg.max_files_per_turn} per turn)"

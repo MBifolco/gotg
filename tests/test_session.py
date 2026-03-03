@@ -1255,3 +1255,68 @@ def test_run_and_persist_translates_validate_error(tmp_path):
     with patch.object(setup.deps, "validate", side_effect=ValueError("test error")):
         with pytest.raises(SessionSetupError, match="test error"):
             list(run_and_persist(setup))
+
+
+# ── apply_and_inject: operation-aware messages ──────────────
+
+
+def test_apply_and_inject_delete_approved(tmp_path):
+    """Approved delete shows [file_delete] APPROVED tag."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+    (project / "src" / "old.py").write_text("old code")
+
+    store.add_request("src/old.py", "", "agent-1", {}, operation="delete")
+    store.approve("a1")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+    assert len(messages) == 1
+    assert "[file_delete] APPROVED" in messages[0]["content"]
+    assert "Deleted" in messages[0]["content"]
+    assert not (project / "src" / "old.py").exists()
+
+
+def test_apply_and_inject_rename_approved(tmp_path):
+    """Approved rename shows [file_rename] APPROVED tag."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+    (project / "src" / "old.py").write_text("code")
+
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    store.approve("a1")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+    assert len(messages) == 1
+    assert "[file_rename] APPROVED" in messages[0]["content"]
+    assert "Renamed" in messages[0]["content"]
+    assert "src/old.py -> src/new.py" in messages[0]["content"]
+
+
+def test_apply_and_inject_delete_denied(tmp_path):
+    """Denied delete shows [file_delete] DENIED tag."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    store.add_request("src/old.py", "", "agent-1", {}, operation="delete")
+    store.deny("a1", "keep it")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+    assert len(messages) == 1
+    assert "[file_delete] DENIED by PM" in messages[0]["content"]
+    assert "src/old.py" in messages[0]["content"]
+    assert "keep it" in messages[0]["content"]
+
+
+def test_apply_and_inject_rename_denied(tmp_path):
+    """Denied rename shows [file_rename] DENIED tag with src -> dst."""
+    project, iter_dir, log_path, guard, store = _make_approval_infra(tmp_path)
+
+    store.add_request("src/old.py", "", "agent-1", {}, operation="rename", destination="src/new.py")
+    store.deny("a1", "bad name")
+
+    iteration = {"id": "iter-1"}
+    messages = apply_and_inject(store, guard, iteration, log_path)
+    assert len(messages) == 1
+    assert "[file_rename] DENIED by PM" in messages[0]["content"]
+    assert "src/old.py -> src/new.py" in messages[0]["content"]
+    assert "bad name" in messages[0]["content"]

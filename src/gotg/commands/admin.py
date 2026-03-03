@@ -233,16 +233,31 @@ def cmd_approvals(args):
     print(f"Pending approvals ({len(pending)}):")
     print()
     for req in pending:
-        content_preview = req["content"][:200]
-        if len(req["content"]) > 200:
-            content_preview += "..."
-        print(f"  [{req['id']}] {req['path']} ({req['content_size']} bytes)")
-        print(f"       Requested by: {req['requested_by']}")
-        print(f"       Preview:")
-        for line in content_preview.split("\n")[:5]:
-            print(f"         {line}")
-        if req["content"].count("\n") > 5:
-            print(f"         ... ({req['content'].count(chr(10))} total lines)")
+        operation = req.get("operation", "write")
+        if operation == "delete":
+            print(f"  [{req['id']}] [DELETE] {req['path']}")
+            print(f"       Requested by: {req['requested_by']}")
+            reason = req.get("tool_input", {}).get("reason", "")
+            if reason:
+                print(f"       Reason: {reason}")
+        elif operation == "rename":
+            dst = req.get("destination", "")
+            print(f"  [{req['id']}] [RENAME] {req['path']} -> {dst}")
+            print(f"       Requested by: {req['requested_by']}")
+            reason = req.get("tool_input", {}).get("reason", "")
+            if reason:
+                print(f"       Reason: {reason}")
+        else:
+            content_preview = req.get("content", "")[:200]
+            if len(req.get("content", "")) > 200:
+                content_preview += "..."
+            print(f"  [{req['id']}] {req['path']} ({req['content_size']} bytes)")
+            print(f"       Requested by: {req['requested_by']}")
+            print(f"       Preview:")
+            for line in content_preview.split("\n")[:5]:
+                print(f"         {line}")
+            if req.get("content", "").count("\n") > 5:
+                print(f"         ... ({req.get('content', '').count(chr(10))} total lines)")
         print()
 
     print("To approve: gotg approve <id>")
@@ -269,13 +284,17 @@ def cmd_approve(args):
             print("No pending approvals to approve.")
             return
         for req in approved:
-            print(f"Approved: [{req['id']}] {req['path']}")
-        print(f"\n{len(approved)} approval(s) granted. Run 'gotg continue' to apply writes and resume.")
+            dest = req.get("destination", "")
+            path_display = f"{req['path']} -> {dest}" if dest else req["path"]
+            print(f"Approved: [{req['id']}] {path_display}")
+        print(f"\n{len(approved)} approval(s) granted. Run 'gotg continue' to apply and resume.")
     else:
         try:
             req = store.approve(args.request_id)
-            print(f"Approved: [{req['id']}] {req['path']}")
-            print("Run 'gotg continue' to apply the write and resume.")
+            dest = req.get("destination", "")
+            path_display = f"{req['path']} -> {dest}" if dest else req["path"]
+            print(f"Approved: [{req['id']}] {path_display}")
+            print("Run 'gotg continue' to apply and resume.")
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             raise SystemExit(1)
@@ -297,7 +316,9 @@ def cmd_deny(args):
     reason = args.message or ""
     try:
         req = store.deny(args.request_id, reason)
-        print(f"Denied: [{req['id']}] {req['path']}")
+        dest = req.get("destination", "")
+        path_display = f"{req['path']} -> {dest}" if dest else req["path"]
+        print(f"Denied: [{req['id']}] {path_display}")
         if reason:
             print(f"Reason: {reason}")
         print("Run 'gotg continue' to inject denial into conversation and resume.")

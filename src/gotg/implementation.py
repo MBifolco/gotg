@@ -136,15 +136,12 @@ def _build_implementation_prompt(
     tasks_text: str,
     fileguard=None,
     worktree_map: dict | None = None,
+    has_approval_tools: bool = False,
 ) -> list[dict]:
     """Build a focused implementation prompt — no discussion-phase baggage.
 
     Returns a two-element messages list (system + user) ready for the LLM.
     """
-    writable = "src/**, tests/**, docs/**"
-    if fileguard and fileguard.writable_paths:
-        writable = ", ".join(fileguard.writable_paths)
-
     parts = [
         f"You are {agent_name}, implementing assigned tasks.",
         f"These tasks are part of a larger project called: {project_description}",
@@ -155,13 +152,30 @@ def _build_implementation_prompt(
         "",
         "PROCESS TO FOLLOW:",
         "1. Read existing code with file_read before writing.",
-        "2. Write code based on the task specifics below.",
+        "2. Write files based on the task specifics below." if not has_approval_tools
+        else "2. Write, delete, or rename files based on the task specifics below.",
         "3. Call complete_tasks with task_ids and summary when done.",
         "",
         "Call report_blocked if you cannot proceed.",
         "",
-        f"Files: You can read all project files and write to: {writable}.",
     ]
+
+    # File access line — mirrors the 4-way branch in agent.py
+    has_approvals = fileguard and getattr(fileguard, "enable_approvals", False)
+    if fileguard and fileguard.writable_paths:
+        writable = ", ".join(fileguard.writable_paths)
+        if has_approvals:
+            parts.append(f"Files: You can read all project files and write to: {writable}. Writes to other paths require PM approval.")
+        else:
+            parts.append(f"Files: You can read all project files and write to: {writable}.")
+    elif has_approvals:
+        parts.append("Files: You can read all project files. All writes require PM approval.")
+    else:
+        writable = "src/**, tests/**, docs/**"
+        parts.append(f"Files: You can read all project files and write to: {writable}.")
+
+    if has_approval_tools:
+        parts.append("You also have file_delete and file_rename — both always require PM approval regardless of path.")
 
     if worktree_map and agent_name in worktree_map:
         parts.append("Worktree: You are in your own isolated git worktree. Your writes go only to your worktree.")
@@ -411,11 +425,12 @@ def _handle_report_blocked(
     return f"Blocked tasks: {', '.join(blocked)}", tuple(blocked)
 
 
-def _completion_nudge(agent_name: str, pending_task_ids: list[str]) -> str:
+def _completion_nudge(agent_name: str, pending_task_ids: list[str], has_approval_tools: bool = False) -> str:
     ids = ", ".join(pending_task_ids)
+    tools = "file_write/file_delete/file_rename" if has_approval_tools else "file_write"
     return (
         f"{agent_name}: you still have pending tasks ({ids}). "
-        "Take concrete action now: use file_write and then call complete_tasks. "
+        f"Take concrete action now: use {tools} and then call complete_tasks. "
         "If truly blocked, call report_blocked. Do not end this round without one of those tools."
     )
 
@@ -502,6 +517,12 @@ def run_implementation(
     impl_tools = list(policy.agent_tools) + [COMPLETE_TASKS_TOOL, REPORT_BLOCKED_TOOL]
     impl_tools = [t for t in impl_tools if t["name"] != "pass_turn"]
 
+    _has_approval_tools = bool(
+        policy.approval_store
+        and policy.fileguard
+        and getattr(policy.fileguard, "enable_approvals", False)
+    )
+
     resumed = _load_state(iter_dir, current_layer)
     if resumed and resumed["agent_name"] not in {a["name"] for a in active_agents}:
         _clear_state(iter_dir)
@@ -538,6 +559,7 @@ def run_implementation(
             tasks_text=agent_tasks_text,
             fileguard=policy.fileguard,
             worktree_map=policy.worktree_map,
+            has_approval_tools=_has_approval_tools,
         )
 
         yield AppendDebug({
@@ -623,7 +645,7 @@ def run_implementation(
                         no_tool_streak = 1
                         llm_messages.append({
                             "role": "system",
-                            "content": _completion_nudge(agent_name, pending_ids),
+                            "content": _completion_nudge(agent_name, pending_ids, _has_approval_tools),
                         })
                         _save_state(
                             iter_dir, current_layer, agent_name, llm_messages,
@@ -686,9 +708,10 @@ def run_implementation(
                     "result": result,
                 })
 
-                if tc_name == "file_write":
+                if tc_name in ("file_write", "file_delete", "file_rename"):
                     writes_since_reminder += 1
-                    agent_file_contents[tc_input.get("path", "")] = tc_input.get("content", "")
+                    if tc_name == "file_write":
+                        agent_file_contents[tc_input.get("path", "")] = tc_input.get("content", "")
 
                 # Drift check after successful complete_tasks
                 if tc_name == "complete_tasks" and classify_tool_result(result) != "error":

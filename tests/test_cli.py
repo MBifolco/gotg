@@ -4202,3 +4202,104 @@ def test_main_converts_model_error_to_systemexit(tmp_path, capsys):
     assert exc_info.value.code == 1
     captured = capsys.readouterr()
     assert "Error: API error (429): Rate limited" in captured.err
+
+
+# --- cmd_approvals: operation-aware display ---
+
+
+def _make_approval_team(tmp_path):
+    """Create a team dir with approvals enabled."""
+    team = tmp_path / ".team"
+    team.mkdir()
+    _write_team_json(team)
+    _write_iteration_json(team)
+    iter_dir = team / "iterations" / "iter-1"
+    iter_dir.mkdir(parents=True)
+    (iter_dir / "conversation.jsonl").touch()
+    return team, iter_dir
+
+
+def test_cmd_approvals_delete_display(tmp_path, monkeypatch, capsys):
+    """gotg approvals shows [DELETE] and reason for delete operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1",
+                      {"path": "src/old.py", "reason": "replaced by calc.py"},
+                      operation="delete")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "[DELETE]" in output
+    assert "src/old.py" in output
+    assert "replaced by calc.py" in output
+
+
+def test_cmd_approvals_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg approvals shows [RENAME] src -> dst and reason for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1",
+                      {"source": "src/old.py", "destination": "src/new.py", "reason": "better name"},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approvals"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "[RENAME]" in output
+    assert "src/old.py -> src/new.py" in output
+    assert "better name" in output
+
+
+def test_cmd_approve_generic_wording(tmp_path, monkeypatch, capsys):
+    """gotg approve output should say 'apply and resume' not 'apply the write'."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/main.py", "content", "agent-1", {})
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "a1"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "apply and resume" in output
+    assert "apply the write" not in output
+
+
+def test_cmd_approve_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg approve shows src -> dst for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1", {},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "approve", "a1"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "src/old.py -> src/new.py" in output
+
+
+def test_cmd_deny_rename_display(tmp_path, monkeypatch, capsys):
+    """gotg deny shows src -> dst for rename operations."""
+    team, iter_dir = _make_approval_team(tmp_path)
+    from gotg.approvals import ApprovalStore
+    store = ApprovalStore(iter_dir / "approvals.json")
+    store.add_request("src/old.py", "", "agent-1", {},
+                      operation="rename", destination="src/new.py")
+
+    monkeypatch.chdir(tmp_path)
+    with patch("sys.argv", ["gotg", "deny", "a1", "-m", "bad name"]):
+        main()
+
+    output = capsys.readouterr().out
+    assert "src/old.py -> src/new.py" in output
