@@ -352,6 +352,12 @@ Behavior: Merge dirty-main check ignores untracked files (only tracked modificat
 Tests:
 - `tests/test_cli.py::test_cmd_merge_dirty_main_blocks`
 
+## CLI Help Text
+
+Behavior: `gotg model --help` dynamically lists all registered providers from the providers registry.
+Tests:
+- `tests/test_cli.py::test_model_help_lists_all_providers`
+
 ## Known Gaps (Next Additions)
 
 1. Replay tests from additional historical `gotg-tests/test*` incidents (escape-based regression lane).

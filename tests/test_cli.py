@@ -3978,6 +3978,18 @@ def test_main_converts_model_error_to_systemexit(tmp_path, capsys):
     assert "Error: API error (429): Rate limited" in captured.err
 
 
+def test_model_help_lists_all_providers(capsys):
+    """The 'model' subcommand help text lists all registered providers."""
+    from gotg.providers import PROVIDERS
+    with patch("sys.argv", ["gotg", "model", "--help"]):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    for provider_name in PROVIDERS:
+        assert provider_name in captured.out
+
+
 # --- cmd_approvals: operation-aware display ---
 
 
