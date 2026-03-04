@@ -7,3 +7,4 @@ build/
 *.pyc
 .env
 *.code-workspace
+CLAUDE.md

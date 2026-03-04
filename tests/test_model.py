@@ -1267,3 +1267,98 @@ def test_agentic_openai_rescues_text_tool_call(mock_post):
     assert len(result["operations"]) == 1
     assert result["operations"][0]["name"] == "my_tool"
     assert calls == [("my_tool", {"arg": "val"})]
+
+
+# --- _build_url tests ---
+
+from gotg.model.openai import _build_url
+
+
+def test_build_url_bare_host():
+    """Bare host appends /v1/chat/completions."""
+    assert _build_url("https://api.openai.com") == "https://api.openai.com/v1/chat/completions"
+
+
+def test_build_url_with_versioned_path():
+    """Gemini base URL (ends with /v1beta/openai) appends only /chat/completions."""
+    url = _build_url("https://generativelanguage.googleapis.com/v1beta/openai")
+    assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def test_build_url_trailing_slash():
+    """Trailing slash is stripped before suffix check."""
+    assert _build_url("https://api.openai.com/") == "https://api.openai.com/v1/chat/completions"
+    assert _build_url("https://generativelanguage.googleapis.com/v1beta/openai/") == \
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def test_build_url_explicit_v1():
+    """Base URL ending with /v1 appends only /chat/completions."""
+    assert _build_url("https://api.openai.com/v1") == "https://api.openai.com/v1/chat/completions"
+
+
+def test_build_url_custom_proxy():
+    """Custom proxy path doesn't false-match versioned suffixes."""
+    assert _build_url("https://proxy.example.com/openai") == \
+        "https://proxy.example.com/openai/v1/chat/completions"
+
+
+# --- Gemini URL integration tests (all 4 call sites use _build_url) ---
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
+GEMINI_EXPECTED_URL = GEMINI_BASE + "/chat/completions"
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_gemini_chat_completion_url(mock_post):
+    """chat_completion with Gemini base URL hits the correct endpoint."""
+    mock_post.return_value = _mock_response("ok")
+    chat_completion(base_url=GEMINI_BASE, model="gemini-2.5-flash",
+                    messages=[{"role": "user", "content": "hi"}],
+                    api_key="test-key")
+    assert mock_post.call_args[0][0] == GEMINI_EXPECTED_URL
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_gemini_raw_completion_url(mock_post):
+    """raw_completion with Gemini base URL hits the correct endpoint."""
+    mock_post.return_value = _mock_response("ok")
+    raw_completion(base_url=GEMINI_BASE, model="gemini-2.5-flash",
+                   messages=[{"role": "user", "content": "hi"}],
+                   api_key="test-key", provider="openai")
+    assert mock_post.call_args[0][0] == GEMINI_EXPECTED_URL
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_gemini_agentic_completion_url(mock_post):
+    """agentic_completion with Gemini base URL hits the correct endpoint."""
+    mock_post.return_value = _mock_openai_text_response("done")
+    agentic_completion(base_url=GEMINI_BASE, model="gemini-2.5-flash",
+                       messages=[{"role": "user", "content": "hi"}],
+                       api_key="test-key", provider="openai",
+                       tools=SAMPLE_TOOLS, tool_executor=lambda n, i: "ok")
+    assert mock_post.call_args[0][0] == GEMINI_EXPECTED_URL
+
+
+def test_gemini_raw_stream_url():
+    """raw_completion_stream with Gemini base URL hits the correct endpoint."""
+    lines = [
+        "data: " + json.dumps({"choices": [{"delta": {"content": "hi"}}]}),
+        "data: [DONE]",
+    ]
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.iter_lines.return_value = iter(lines)
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+
+    with patch("gotg.model.openai.httpx.stream", return_value=mock_resp) as mock_stream:
+        result = raw_completion_stream(
+            base_url=GEMINI_BASE, model="gemini-2.5-flash",
+            messages=[{"role": "user", "content": "hi"}],
+            api_key="test-key", provider="openai",
+        )
+        list(result)
+
+    call_args = mock_stream.call_args
+    assert call_args[0][1] == GEMINI_EXPECTED_URL

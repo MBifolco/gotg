@@ -19,6 +19,11 @@ classifiers = [
     "Topic :: Software Development",
 ]
 
+[project.urls]
+Homepage = "https://github.com/MBifolco/gotg"
+Repository = "https://github.com/MBifolco/gotg"
+"Bug Tracker" = "https://github.com/MBifolco/gotg/issues"
+
 [project.optional-dependencies]
 tui = [
     "textual>=7.5,<7.6",

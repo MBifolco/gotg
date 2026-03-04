@@ -247,9 +247,6 @@ END_EXPLORATION_TOOL: dict = {
     },
 }
 
-# Add propose_iterations to iteration coach tools (update sibling iterations during any phase)
-COACH_TOOLS.append(PROPOSE_ITERATIONS_TOOL)
-
 EXPLORATION_COACH_TOOLS: list[dict] = [
     COACH_PASS_TURN_TOOL,
     GUIDE_DISCUSSION_TOOL,

@@ -65,9 +65,9 @@ def test_agent_tools_structure():
 
 
 def test_coach_tools_structure():
-    assert len(COACH_TOOLS) == 5
+    assert len(COACH_TOOLS) == 4
     names = {t["name"] for t in COACH_TOOLS}
-    assert names == {"coach_pass_turn", "guide_discussion", "signal_phase_complete", "ask_pm", "propose_iterations"}
+    assert names == {"coach_pass_turn", "guide_discussion", "signal_phase_complete", "ask_pm"}
 
 
 def test_tool_descriptions_from_toml():

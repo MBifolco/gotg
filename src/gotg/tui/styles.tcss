@@ -147,6 +147,10 @@
     color: $text-muted;
 }
 
+.pt-model {
+    color: $text-muted;
+}
+
 .pt-status {
     text-style: bold;
 }

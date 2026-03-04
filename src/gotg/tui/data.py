@@ -41,14 +41,15 @@ def list_iterations(team_dir: Path) -> list[dict]:
 def load_session_metadata(team_dir: Path, base_metadata: dict) -> dict:
     """Bundle iteration/exploration metadata with agents and coach info.
 
-    Returns a copy of base_metadata enriched with agents and coach
-    loaded from team.json.
+    Returns a copy of base_metadata enriched with agents, coach,
+    and team_model loaded from team.json.
     """
-    from gotg.config import load_agents, load_coach
+    from gotg.config import load_agents, load_coach, load_team_config
 
     agents = load_agents(team_dir)
     coach = load_coach(team_dir)
-    return {**base_metadata, "agents": agents, "coach": coach}
+    team_model = load_team_config(team_dir).get("model", {}).get("model", "")
+    return {**base_metadata, "agents": agents, "coach": coach, "team_model": team_model}
 
 
 def relative_time(timestamp: float | None) -> str:
