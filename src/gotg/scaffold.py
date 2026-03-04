@@ -181,9 +181,10 @@ def init_project(path: Path) -> None:
     (team_dir / "team.json").write_text(json.dumps({
         "schema_version": 1,
         "model": {
-            "provider": "ollama",
-            "base_url": "http://localhost:11434",
-            "model": "qwen2.5-coder:7b",
+            "provider": "anthropic",
+            "base_url": "https://api.anthropic.com",
+            "model": "claude-sonnet-4-6",
+            "api_key": "$ANTHROPIC_API_KEY",
         },
         "agents": [
             {"name": "agent-1", "role": "Software Engineer"},
@@ -198,12 +199,12 @@ def init_project(path: Path) -> None:
             "protected_paths": [],
             "max_file_size_bytes": 1048576,
             "max_files_per_turn": 10,
-            "enable_approvals": False,
+            "enable_approvals": True,
         },
         "worktrees": {
-            "enabled": False,
+            "enabled": True,
         },
-        "streaming": False,
+        "streaming": True,
     }, indent=2) + "\n")
 
     # iteration.json: empty list, no current pointer

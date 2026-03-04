@@ -1095,3 +1095,175 @@ def test_anthropic_cache_log_only_when_nonzero(mock_post, capsys):
     )
     captured = capsys.readouterr()
     assert "[cache]" not in captured.err
+
+
+# --- Text-based tool call rescue (ollama/local model fallback) ---
+
+from gotg.model.openai import _rescue_text_tool_calls
+
+COACH_TOOLS = [
+    {"name": "coach_pass_turn", "description": "Pass", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "guide_discussion", "description": "Guide", "input_schema": {"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}},
+    {"name": "signal_phase_complete", "description": "Signal", "input_schema": {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}},
+]
+
+
+def test_rescue_extracts_tool_from_code_fence():
+    """Tool call in ```json code fence should be extracted."""
+    content = '```json\n{"name": "guide_discussion", "arguments": {"message": "Focus on scope."}}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "guide_discussion"
+    assert calls[0]["input"] == {"message": "Focus on scope."}
+    assert calls[0]["id"].startswith("text-tc-")
+    assert cleaned == ""
+
+
+def test_rescue_extracts_tool_with_surrounding_text():
+    """Tool call with surrounding text should preserve the text."""
+    content = 'Some preamble.\n```json\n{"name": "signal_phase_complete", "arguments": {"summary": "Done."}}\n```\nSome epilogue.'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "signal_phase_complete"
+    assert "preamble" in cleaned
+    assert "epilogue" in cleaned
+    assert "```" not in cleaned
+
+
+def test_rescue_ignores_unknown_tool_name():
+    """Tool call with unknown name should be left as-is."""
+    content = '```json\n{"name": "unknown_tool", "arguments": {}}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 0
+    assert cleaned == content
+
+
+def test_rescue_handles_whitespace_in_name():
+    """Tool name with leading/trailing whitespace should be trimmed."""
+    content = '```json\n{"name": " guide_discussion ", "arguments": {"message": "ok"}}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "guide_discussion"
+
+
+def test_rescue_handles_input_key():
+    """Tool call using 'input' key instead of 'arguments' should work."""
+    content = '```json\n{"name": "guide_discussion", "input": {"message": "ok"}}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 1
+    assert calls[0]["input"] == {"message": "ok"}
+
+
+def test_rescue_no_tools_returns_unchanged():
+    """No tools passed → return content unchanged."""
+    content = '```json\n{"name": "guide_discussion"}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, None)
+    assert cleaned == content
+    assert calls == []
+
+
+def test_rescue_empty_content_returns_unchanged():
+    """Empty content → return unchanged."""
+    cleaned, calls = _rescue_text_tool_calls("", COACH_TOOLS)
+    assert cleaned == ""
+    assert calls == []
+
+
+def test_rescue_malformed_json_ignored():
+    """Malformed JSON in code fence should be ignored."""
+    content = '```json\n{not valid json}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert calls == []
+    assert cleaned == content
+
+
+def test_rescue_bare_code_fence():
+    """Code fence without 'json' language tag should also be matched."""
+    content = '```\n{"name": "coach_pass_turn", "arguments": {}}\n```'
+    cleaned, calls = _rescue_text_tool_calls(content, COACH_TOOLS)
+    assert len(calls) == 1
+    assert calls[0]["name"] == "coach_pass_turn"
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_chat_completion_rescues_text_tool_call(mock_post):
+    """chat_completion should rescue tool calls from text when API returns none."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": '```json\n{"name": "signal_phase_complete", "arguments": {"summary": "All agreed."}}\n```',
+            }
+        }]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+
+    result = chat_completion(
+        base_url="http://localhost:11434",
+        model="qwen2.5-coder:7b",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=COACH_TOOLS,
+    )
+    assert isinstance(result, dict)
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["name"] == "signal_phase_complete"
+    assert result["tool_calls"][0]["input"]["summary"] == "All agreed."
+    assert "```" not in result["content"]
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_raw_completion_rescues_text_tool_call(mock_post):
+    """raw_completion should rescue tool calls from text when API returns none."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "choices": [{
+            "message": {
+                "content": '```json\n{"name": "guide_discussion", "arguments": {"message": "Focus."}}\n```',
+            }
+        }]
+    }
+    resp.raise_for_status = MagicMock()
+    mock_post.return_value = resp
+
+    rnd = raw_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "hi"}],
+        provider="openai",
+        tools=COACH_TOOLS,
+    )
+    assert len(rnd.tool_calls) == 1
+    assert rnd.tool_calls[0]["name"] == "guide_discussion"
+
+
+@patch("gotg.model.openai.httpx.post")
+def test_agentic_openai_rescues_text_tool_call(mock_post):
+    """agentic_completion should rescue tool calls from text and execute them."""
+    mock_post.side_effect = [
+        # First call: model emits tool call as text
+        MagicMock(
+            status_code=200,
+            raise_for_status=MagicMock(),
+            json=MagicMock(return_value={
+                "choices": [{"message": {
+                    "content": '```json\n{"name": "my_tool", "arguments": {"arg": "val"}}\n```',
+                }}]
+            }),
+        ),
+        # Second call: model returns plain text
+        _mock_openai_text_response("Done."),
+    ]
+    calls = []
+    result = agentic_completion(
+        "http://localhost", "m",
+        [{"role": "user", "content": "do it"}],
+        provider="openai",
+        tools=SAMPLE_TOOLS,
+        tool_executor=lambda n, i: (calls.append((n, i)) or "ok"),
+    )
+    assert result["content"] == "Done."
+    assert len(result["operations"]) == 1
+    assert result["operations"][0]["name"] == "my_tool"
+    assert calls == [("my_tool", {"arg": "val"})]

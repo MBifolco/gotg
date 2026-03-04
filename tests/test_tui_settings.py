@@ -839,7 +839,7 @@ def test_provider_runtime_config_no_ui_metadata():
     assert "models" not in config
     assert "default_model" not in config
     assert config["provider"] == "anthropic"
-    assert config["model"] == "claude-sonnet-4-5-20250929"
+    assert config["model"] == "claude-sonnet-4-6"
     assert config["api_key"] == "$ANTHROPIC_API_KEY"
 
 
@@ -1268,7 +1268,7 @@ async def test_agent_provider_change_autofills():
 
         assert app.screen.query_one("#agent-base-url", Input).value == "https://api.openai.com"
         assert app.screen.query_one("#agent-api-key", Input).value == "$OPENAI_API_KEY"
-        assert str(app.screen.query_one("#agent-model-name", Select).value) == "gpt-4o"
+        assert str(app.screen.query_one("#agent-model-name", Select).value) == "gpt-4.1-mini"
 
 
 @pytest.mark.asyncio
@@ -1565,7 +1565,7 @@ async def test_coach_provider_change_autofills(tmp_path):
 
         assert app.screen.query_one("#set-coach-base-url", Input).value == "https://api.anthropic.com"
         assert app.screen.query_one("#set-coach-api-key", Input).value == "$ANTHROPIC_API_KEY"
-        assert app.screen.query_one("#set-coach-model-name", Input).value == "claude-sonnet-4-5-20250929"
+        assert app.screen.query_one("#set-coach-model-name", Input).value == "claude-sonnet-4-6"
 
 
 @pytest.mark.asyncio

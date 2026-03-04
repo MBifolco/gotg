@@ -37,9 +37,9 @@ def test_init_creates_team_json_model_section(git_project):
     init_project(git_project)
     team_json = json.loads((git_project / ".team" / "team.json").read_text())
     model = team_json["model"]
-    assert model["provider"] == "ollama"
-    assert model["base_url"] == "http://localhost:11434"
-    assert model["model"] == "qwen2.5-coder:7b"
+    assert model["provider"] == "anthropic"
+    assert model["base_url"] == "https://api.anthropic.com"
+    assert model["model"] == "claude-sonnet-4-6"
 
 
 def test_init_creates_team_json_agents_section(git_project):
@@ -316,14 +316,14 @@ def test_init_creates_file_access_in_team_json(git_project):
     assert "src/**" in fa["writable_paths"]
     assert fa["max_file_size_bytes"] == 1048576
     assert fa["max_files_per_turn"] == 10
-    assert fa["enable_approvals"] is False
+    assert fa["enable_approvals"] is True
 
 
 def test_init_creates_worktrees_config_in_team_json(git_project):
     init_project(git_project)
     team_json = json.loads((git_project / ".team" / "team.json").read_text())
     assert "worktrees" in team_json
-    assert team_json["worktrees"]["enabled"] is False
+    assert team_json["worktrees"]["enabled"] is True
 
 
 # --- code-review phase prompts ---

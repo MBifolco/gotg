@@ -1,17 +1,65 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterator
 
 import httpx
 
 from gotg.model.types import CompletionRound
-from gotg.model.helpers import _check_response
+from gotg.model.helpers import _check_response, post_with_retry, stream_with_retry
 
 
 # ---------------------------------------------------------------------------
 # Private helpers — DRY blocks shared across the 4 public functions
 # ---------------------------------------------------------------------------
+
+_TEXT_TOOL_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL)
+
+
+def _rescue_text_tool_calls(
+    content: str, tools: list[dict] | None,
+) -> tuple[str, list[dict]]:
+    """Rescue tool calls from models that emit them as text.
+
+    Some models (e.g. ollama/qwen) return tool calls as JSON in code fences
+    instead of using the structured tool calling API.  Detects this pattern
+    and converts to proper tool call dicts.
+
+    Returns (cleaned_content, extracted_tool_calls).
+    Only call this when the API returned no tool_calls.
+    """
+    if not tools or not content:
+        return content, []
+
+    tool_names = {t["name"] for t in tools}
+    extracted: list[dict] = []
+    spans_to_remove: list[tuple[int, int]] = []
+
+    for m in _TEXT_TOOL_RE.finditer(content):
+        try:
+            obj = json.loads(m.group(1).strip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        name = (obj.get("name") or "").strip()
+        if name not in tool_names:
+            continue
+        args = obj.get("arguments") or obj.get("input") or {}
+        extracted.append({
+            "name": name,
+            "input": args,
+            "id": f"text-tc-{len(extracted)}",
+        })
+        spans_to_remove.append((m.start(), m.end()))
+
+    if not extracted:
+        return content, []
+
+    # Remove matched code blocks (reverse order to preserve offsets)
+    cleaned = content
+    for start, end in reversed(spans_to_remove):
+        cleaned = cleaned[:start] + cleaned[end:]
+    return cleaned.strip(), extracted
 
 def _build_headers(api_key: str | None) -> dict:
     if api_key:
@@ -67,7 +115,7 @@ def _openai_completion(
     if tools:
         body["tools"] = _wrap_tools(tools)
 
-    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
     data = resp.json()
     message = data["choices"][0]["message"]
@@ -75,6 +123,8 @@ def _openai_completion(
     if tools:
         content = message.get("content") or ""
         tool_calls = _extract_tool_calls(message)
+        if not tool_calls:
+            content, tool_calls = _rescue_text_tool_calls(content, tools)
         return {"content": content, "tool_calls": tool_calls}
 
     return message["content"]
@@ -96,13 +146,30 @@ def _openai_agentic(
         if openai_tools:
             body["tools"] = openai_tools
 
-        resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+        resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
         _check_response(resp)
         data = resp.json()
         message = data["choices"][0]["message"]
 
         content = message.get("content") or ""
         raw_tool_calls = message.get("tool_calls") or []
+
+        if not raw_tool_calls and openai_tools:
+            content, rescued = _rescue_text_tool_calls(content, tools)
+            if rescued:
+                raw_tool_calls = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["input"]),
+                        },
+                    }
+                    for tc in rescued
+                ]
+                message["content"] = content or None
+                message["tool_calls"] = raw_tool_calls
 
         if not raw_tool_calls:
             return {"content": content, "operations": operations}
@@ -145,13 +212,15 @@ def _openai_raw(
     if tools:
         body["tools"] = _wrap_tools(tools)
 
-    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
     data = resp.json()
     message = data["choices"][0]["message"]
 
     content = message.get("content") or ""
     tool_calls = _extract_tool_calls(message)
+    if tools and not tool_calls:
+        content, tool_calls = _rescue_text_tool_calls(content, tools)
 
     return CompletionRound(
         content=content,
@@ -181,7 +250,7 @@ def _openai_raw_stream(
     # Accumulate tool calls: {index: {"id", "name", "args_parts"}}
     _pending_tools: dict[int, dict] = {}
 
-    with httpx.stream("POST", url, json=body, headers=headers, timeout=600.0) as resp:
+    with stream_with_retry(url, json=body, headers=headers, timeout=600.0) as resp:
         if resp.status_code >= 400:
             resp.read()
             try:
@@ -251,8 +320,13 @@ def _openai_raw_stream(
             "id": pt["id"],
         })
 
+    # Rescue tool calls from text if the API returned none
+    full_text = "".join(text_parts)
+    if tools and not tool_calls:
+        full_text, tool_calls = _rescue_text_tool_calls(full_text, tools)
+
     # Build a synthetic message for continuation
-    message: dict = {"role": "assistant", "content": "".join(text_parts) or None}
+    message: dict = {"role": "assistant", "content": full_text or None}
     if tool_calls:
         message["tool_calls"] = [
             {
@@ -267,7 +341,7 @@ def _openai_raw_stream(
         ]
 
     rnd = CompletionRound(
-        content="".join(text_parts),
+        content=full_text,
         tool_calls=tool_calls,
         _provider="openai",
         _raw={"message": message},
