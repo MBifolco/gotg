@@ -27,16 +27,18 @@ class ParticipantTile(Vertical):
 
     _ACTIVE_COLORS = ("$warning", "$success", "$primary")
 
-    def __init__(self, name: str, role: str = "", max_items: int = 8) -> None:
+    def __init__(self, name: str, role: str = "", model: str = "", max_items: int = 8) -> None:
         super().__init__(classes="participant-tile")
         self.border_title = name
         self._role = role
+        self._model = model
         self._lines: deque[str] = deque(maxlen=max_items)
         self._pulse_timer = None
         self._pulse_index = 0
 
     def compose(self):
         yield Static("", id="pt-role", classes="pt-role")
+        yield Static("", id="pt-model", classes="pt-model")
         yield Static("Status: idle", id="pt-status", classes="pt-status")
         yield Static("No tool activity yet.", id="pt-tools", classes="pt-tools")
 
@@ -44,6 +46,8 @@ class ParticipantTile(Vertical):
         role = self._role.strip()
         role_text = role if role else "(no role set)"
         self.query_one("#pt-role", Static).update(escape(role_text))
+        if self._model:
+            self.query_one("#pt-model", Static).update(escape(self._model))
 
     def set_status(self, status: str) -> None:
         """Update participant status line."""
@@ -91,7 +95,9 @@ class ParticipantPanel(VerticalScroll):
         super().__init__(*args, **kwargs)
         self._tiles: dict[str, ParticipantTile] = {}
 
-    def load_participants(self, agents: Iterable, coach: str | dict | None) -> None:
+    def load_participants(
+        self, agents: Iterable, coach: str | dict | None, team_model: str = "",
+    ) -> None:
         """Reset and populate tiles from session metadata."""
         self.remove_children()
         self._tiles.clear()
@@ -100,24 +106,32 @@ class ParticipantPanel(VerticalScroll):
             if isinstance(agent, dict):
                 name = str(agent.get("name", "")).strip()
                 role = str(agent.get("role", "")).strip()
+                override = agent.get("model") or {}
+                model = str(override.get("model", "")) if override else ""
+                model = model or team_model
             else:
                 name = str(agent).strip()
                 role = ""
+                model = team_model
             if name:
-                self._mount_tile(name, role)
+                self._mount_tile(name, role, model)
 
         if coach:
             if isinstance(coach, dict):
                 coach_name = str(coach.get("name", "")).strip()
                 coach_role = str(coach.get("role", "")).strip()
+                override = coach.get("model") or {}
+                model = str(override.get("model", "")) if override else ""
+                model = model or team_model
             else:
                 coach_name = str(coach).strip()
                 coach_role = "Coach"
+                model = team_model
             if coach_name:
-                self._mount_tile(coach_name, coach_role or "Coach")
+                self._mount_tile(coach_name, coach_role or "Coach", model)
 
-    def _mount_tile(self, name: str, role: str) -> ParticipantTile:
-        tile = ParticipantTile(name, role)
+    def _mount_tile(self, name: str, role: str, model: str = "") -> ParticipantTile:
+        tile = ParticipantTile(name, role, model)
         self.mount(tile)
         self._tiles[name] = tile
         return tile

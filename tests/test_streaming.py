@@ -1109,6 +1109,18 @@ class TestParticipantPanel:
         )
         tile_b.add_tool_event.assert_not_called()
 
+    def test_tile_stores_model(self):
+        from gotg.tui.widgets.participant_panel import ParticipantTile
+
+        tile = ParticipantTile("agent-1", role="SE", model="gpt-4o")
+        assert tile._model == "gpt-4o"
+
+    def test_tile_model_defaults_empty(self):
+        from gotg.tui.widgets.participant_panel import ParticipantTile
+
+        tile = ParticipantTile("agent-1", role="SE")
+        assert tile._model == ""
+
 
 class TestTextDeltaMsg:
     def test_message_fields(self):

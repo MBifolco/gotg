@@ -135,6 +135,7 @@ class ChatScreen(Screen):
         participants.load_participants(
             self.metadata.get("agents", []),
             self.metadata.get("coach"),
+            team_model=self.metadata.get("team_model", ""),
         )
 
         # Count existing agent turns
@@ -514,7 +515,11 @@ class ChatScreen(Screen):
             info.update_session_status("Running", event.turn)
             self._turn_count = event.turn
             participants = self.query_one("#participant-panel", ParticipantPanel)
-            participants.load_participants(event.agents, event.coach)
+            participants.load_participants(
+                self.metadata.get("agents", event.agents),
+                self.metadata.get("coach") or event.coach,
+                team_model=self.metadata.get("team_model", ""),
+            )
 
         elif isinstance(event, AgentTurnComplete):
             # Finalize the streaming widget with the persisted content

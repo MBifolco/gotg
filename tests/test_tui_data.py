@@ -98,7 +98,7 @@ def test_load_session_metadata(tmp_path):
     team_json = {
         "agents": [{"name": "agent-1", "role": "Engineer"}],
         "coach": {"name": "coach", "role": "Agile Coach"},
-        "model": {"provider": "ollama"},
+        "model": {"provider": "ollama", "model": "qwen2.5-coder:7b"},
     }
     (tmp_path / "team.json").write_text(json.dumps(team_json))
 
@@ -108,6 +108,7 @@ def test_load_session_metadata(tmp_path):
     assert result["id"] == "iter-1"
     assert result["agents"] == [{"name": "agent-1", "role": "Engineer"}]
     assert result["coach"] == {"name": "coach", "role": "Agile Coach"}
+    assert result["team_model"] == "qwen2.5-coder:7b"
 
 
 def test_load_session_metadata_no_coach(tmp_path):
@@ -122,6 +123,7 @@ def test_load_session_metadata_no_coach(tmp_path):
 
     assert result["slug"] == "test-explore"
     assert result["coach"] is None
+    assert result["team_model"] == ""
 
 
 # ── relative_time ───────────────────────────────────────────────
