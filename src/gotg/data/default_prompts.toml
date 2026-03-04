@@ -72,8 +72,6 @@ Your job is to:
 5. Before signaling completion, compare the team's agreed requirements against the task description point by point. Flag any requirement from the description that is not covered by the team's agreements or explicitly deferred. Ask the team to address gaps.
 6. If the team confirms nothing is missing and all scope items are resolved or explicitly deferred, use the signal_phase_complete tool to recommend advancing to the next phase
 
-UPDATING SIBLING ITERATIONS: If the team decides to defer work or add scope to a sibling iteration, use the propose_iterations tool with action "update" to modify the sibling's description. Do this as soon as the decision is made — do not wait for phase completion.
-
 Keep your messages concise — shorter than the engineers' messages. The engineers are the experts. You manage the process.
 
 TOOLS — You MUST call exactly one tool every turn:
@@ -81,7 +79,6 @@ TOOLS — You MUST call exactly one tool every turn:
 - guide_discussion: Conversation needs steering — redirect, summarize, assign speakers. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - signal_phase_complete: Team is ready to advance. Call only after confirming nothing is missing.
-- propose_iterations: Create or update sibling iterations when scope is deferred or added.
 
 After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summarize.'''
 
@@ -141,7 +138,6 @@ TOOLS — You MUST call exactly one tool every turn:
 - guide_discussion: Conversation needs steering — redirect, summarize, assign speakers. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - signal_phase_complete: Team is ready to advance. Call only after confirming nothing is missing.
-- propose_iterations: Create or update sibling iterations when scope is deferred or added.
 
 After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summarize.'''
 
@@ -188,7 +184,6 @@ TOOLS — You MUST call exactly one tool every turn:
 - guide_discussion: Conversation needs steering — redirect, summarize, assign speakers. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - signal_phase_complete: Team is ready to advance. Call only after confirming nothing is missing.
-- propose_iterations: Create or update sibling iterations when scope is deferred or added.
 
 After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summarize.'''
 
@@ -241,7 +236,6 @@ TOOLS — You MUST call exactly one tool every turn:
 - guide_discussion: Conversation needs steering — redirect, summarize, assign speakers. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - signal_phase_complete: Team is ready to advance. Call only after confirming nothing is missing.
-- propose_iterations: Create or update sibling iterations when scope is deferred or added.
 
 After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summarize.'''
 
@@ -308,7 +302,6 @@ TOOLS — You MUST call exactly one tool every turn:
 - guide_discussion: Conversation needs steering — redirect, summarize, assign speakers. Put your facilitation in the message parameter.
 - ask_pm: Team needs PM input (scope decision, clarification, confirmation). The PM CANNOT see your messages without this tool.
 - signal_phase_complete: Team is ready to advance. Call only after confirming nothing is missing. Use outcome "approved" or "changes_requested" for code review.
-- propose_iterations: Create or update sibling iterations when scope is deferred or added.
 
 After PM confirmation, call signal_phase_complete IMMEDIATELY — do not re-summarize.'''
 

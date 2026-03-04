@@ -599,10 +599,10 @@ def test_propose_iterations_tool_in_exploration_coach_tools():
     assert "propose_iterations" in names
 
 
-def test_propose_iterations_tool_in_iteration_coach_tools():
-    """Tool IS in COACH_TOOLS (iteration coach can update sibling iterations)."""
+def test_propose_iterations_tool_not_in_iteration_coach_tools():
+    """Tool is NOT in COACH_TOOLS — only available in exploration."""
     names = {t["name"] for t in COACH_TOOLS}
-    assert "propose_iterations" in names
+    assert "propose_iterations" not in names
 
 
 def test_exploration_system_supplement_mentions_iterations():
