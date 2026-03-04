@@ -7,7 +7,7 @@ from typing import Iterator
 import httpx
 
 from gotg.model.types import CompletionRound
-from gotg.model.helpers import _check_response
+from gotg.model.helpers import _check_response, post_with_retry, stream_with_retry
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def _anthropic_completion(
 
     _apply_message_cache_control(chat_messages)
 
-    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
     data = resp.json()
 
@@ -155,7 +155,7 @@ def _anthropic_agentic(
         if tools:
             body["tools"] = tools
 
-        resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+        resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
         _check_response(resp)
         data = resp.json()
 
@@ -226,7 +226,7 @@ def _anthropic_raw(
 
     _apply_message_cache_control(chat_messages)
 
-    resp = httpx.post(url, json=body, headers=headers, timeout=600.0)
+    resp = post_with_retry(url, json=body, headers=headers, timeout=600.0)
     _check_response(resp)
     data = resp.json()
 
@@ -299,7 +299,7 @@ def _anthropic_raw_stream(
     _current_block_index = -1
     stop_reason = ""
 
-    with httpx.stream("POST", url, json=body, headers=headers, timeout=600.0) as resp:
+    with stream_with_retry(url, json=body, headers=headers, timeout=600.0) as resp:
         if resp.status_code >= 400:
             resp.read()
             try:

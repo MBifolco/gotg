@@ -8,28 +8,8 @@ from gotg.config import (
     read_dotenv, ensure_dotenv_key,
 )
 from gotg.conversation import ConversationStore, render_message
+from gotg.providers import provider_runtime_config, PROVIDERS
 from gotg.scaffold import init_project
-
-
-PROVIDER_PRESETS = {
-    "anthropic": {
-        "provider": "anthropic",
-        "base_url": "https://api.anthropic.com",
-        "model": "claude-sonnet-4-5-20250929",
-        "api_key": "$ANTHROPIC_API_KEY",
-    },
-    "openai": {
-        "provider": "openai",
-        "base_url": "https://api.openai.com",
-        "model": "gpt-4o",
-        "api_key": "$OPENAI_API_KEY",
-    },
-    "ollama": {
-        "provider": "ollama",
-        "base_url": "http://localhost:11434",
-        "model": "qwen2.5-coder:7b",
-    },
-}
 
 
 def cmd_init(args):
@@ -68,14 +48,11 @@ def cmd_model(args):
     import json
 
     if args.provider:
-        preset = PROVIDER_PRESETS.get(args.provider)
-        if not preset:
-            print(f"Error: unknown provider '{args.provider}'. Options: {', '.join(PROVIDER_PRESETS)}", file=sys.stderr)
+        if args.provider not in PROVIDERS:
+            print(f"Error: unknown provider '{args.provider}'. Options: {', '.join(PROVIDERS)}", file=sys.stderr)
             raise SystemExit(1)
 
-        config = dict(preset)
-        if args.model_name:
-            config["model"] = args.model_name
+        config = provider_runtime_config(args.provider, args.model_name)
 
         save_model_config(team_dir, config)
         print(f"Model config updated: {config['provider']} / {config['model']}")
