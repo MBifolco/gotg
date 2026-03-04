@@ -14,6 +14,18 @@ from gotg.model.helpers import _check_response, post_with_retry, stream_with_ret
 # Private helpers — DRY blocks shared across the 4 public functions
 # ---------------------------------------------------------------------------
 
+# Path suffixes that already include a version prefix — append only /chat/completions
+_VERSIONED_SUFFIXES = ("/v1", "/v1beta/openai")
+
+
+def _build_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    for suffix in _VERSIONED_SUFFIXES:
+        if base.endswith(suffix):
+            return base + "/chat/completions"
+    return base + "/v1/chat/completions"
+
+
 _TEXT_TOOL_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.DOTALL)
 
 
@@ -108,7 +120,7 @@ def _openai_completion(
     api_key: str | None = None,
     tools: list[dict] | None = None,
 ) -> str | dict:
-    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    url = _build_url(base_url)
     headers = _build_headers(api_key)
 
     body = {"model": model, "messages": messages}
@@ -133,7 +145,7 @@ def _openai_completion(
 def _openai_agentic(
     base_url, model, messages, api_key, tools, tool_executor, max_rounds,
 ):
-    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    url = _build_url(base_url)
     headers = _build_headers(api_key)
     openai_tools = _wrap_tools(tools or [])
 
@@ -205,7 +217,7 @@ def _openai_raw(
     tools: list[dict] | None = None,
     max_tokens: int = 16384,
 ) -> CompletionRound:
-    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    url = _build_url(base_url)
     headers = _build_headers(api_key)
 
     body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens}
@@ -239,7 +251,7 @@ def _openai_raw_stream(
     max_tokens: int = 16384,
 ) -> Iterator[str]:
     """OpenAI/Ollama streaming — yields text deltas, returns CompletionRound."""
-    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+    url = _build_url(base_url)
     headers = _build_headers(api_key)
 
     body: dict = {"model": model, "messages": messages, "max_tokens": max_tokens, "stream": True}

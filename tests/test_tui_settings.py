@@ -859,6 +859,17 @@ def test_provider_runtime_config_ollama_no_api_key():
     assert "api_key" not in config
 
 
+def test_provider_runtime_config_gemini():
+    """Gemini provider returns correct runtime config."""
+    from gotg.providers import provider_runtime_config
+
+    config = provider_runtime_config("gemini")
+    assert config["provider"] == "gemini"
+    assert config["model"] == "gemini-2.5-flash"
+    assert config["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert config["api_key"] == "$GEMINI_API_KEY"
+
+
 def test_build_model_override_cross_provider_error():
     """Cross-provider override without base_url returns error string."""
     from gotg.providers import build_model_override

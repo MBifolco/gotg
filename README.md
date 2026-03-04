@@ -9,6 +9,7 @@ GOTG is an AI product and engineering department. We've taken real-world experie
 - One of:
   - **Anthropic API key** (recommended, default — Claude Sonnet 4.6)
   - **OpenAI API key** (GPT-4.1 mini, GPT-4.1, o3, o4-mini)
+  - **Gemini API key** (Gemini 2.5 Flash, Gemini 2.5 Pro)
   - **Ollama** running locally (free, no API key needed)
 
 ## Install
@@ -133,6 +134,7 @@ GOTG defaults to **Anthropic Claude Sonnet 4.6**. You can configure different pr
 |----------|---------|------------------|
 | **Anthropic** | claude-sonnet-4-6 | claude-opus-4-6, claude-sonnet-4-5, claude-haiku-4-5, claude-opus-4-5, claude-sonnet-4, claude-opus-4, claude-3-7-sonnet, claude-3-5-haiku |
 | **OpenAI** | gpt-4.1-mini | gpt-4.1, gpt-4.1-nano, gpt-5-mini, gpt-4o, gpt-4o-mini, o4-mini, o3 |
+| **Gemini** | gemini-2.5-flash | gemini-2.5-pro, gemini-2.0-flash, gemini-2.0-flash-lite, gemini-1.5-pro, gemini-1.5-flash |
 | **Ollama** | qwen2.5-coder:7b | qwen2.5-coder:14b/32b, llama3.2:8b, deepseek-coder-v2:16b, codellama:13b |
 
 Per-agent model overrides let you mix providers — e.g. one agent on Claude, another on GPT-4.1. Configure in the TUI settings screen or directly in `.team/team.json`.

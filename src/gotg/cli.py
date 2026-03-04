@@ -130,7 +130,9 @@ def main():
     subparsers.add_parser("advance", help="Advance the current iteration to the next phase")
 
     model_parser = subparsers.add_parser("model", help="View or change model config")
-    model_parser.add_argument("provider", nargs="?", help="Provider preset: anthropic, openai, ollama")
+    from gotg.providers import PROVIDERS
+    model_parser.add_argument("provider", nargs="?",
+        help=f"Provider preset: {', '.join(PROVIDERS)}")
     model_parser.add_argument("model_name", nargs="?", help="Model name (overrides preset default)")
 
     subparsers.add_parser("approvals", help="Show pending approval requests")
