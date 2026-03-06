@@ -13,13 +13,15 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header
 
-from gotg.session import (
+from gotg.session_types import (
     AiResolutionResult,
     ConflictFileInfo,
     ConflictInfo,
     MergeResult,
     ResolutionStrategy,
     ReviewError,
+)
+from gotg.session_review import (
     ai_resolve_conflict,
     finalize_merge,
     load_conflict_info,

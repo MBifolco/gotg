@@ -13,13 +13,12 @@ from gotg.events import (
 )
 import pytest
 
-from gotg.session import (
-    SessionSetupError,
+from gotg.session_types import SessionSetupError, resolve_layer
+from gotg.session_setup import (
     apply_and_inject,
     build_file_infra,
     load_diffs_for_review,
     persist_event,
-    resolve_layer,
     setup_worktrees,
     validate_iteration_for_run,
 )
@@ -382,7 +381,8 @@ def test_apply_and_inject_mixed(tmp_path):
 
 # ── validate_advance / advance_phase ──────────────────────────────
 
-from gotg.session import PhaseAdvanceError, validate_advance, advance_phase, AdvanceResult
+from gotg.session_types import PhaseAdvanceError, AdvanceResult
+from gotg.session_advance import validate_advance, advance_phase
 
 
 def test_validate_advance_success():
@@ -548,7 +548,8 @@ def test_advance_pre_code_review_applies_files(tmp_path):
 from unittest.mock import patch, MagicMock
 from gotg.engine import SessionDeps
 from gotg.events import SessionComplete, TextDelta
-from gotg.session import SessionSetup, prepare_session, run_and_persist
+from gotg.session_types import SessionSetup
+from gotg.session_setup import prepare_session, run_and_persist
 
 
 def _make_deps(**overrides):
@@ -884,7 +885,8 @@ def test_run_and_persist_debug_events(tmp_path):
 
 # ── build_session_infra ──────────────────────────────────────────
 
-from gotg.session import SessionInfra, build_session_infra
+from gotg.session_types import SessionInfra
+from gotg.session_setup import build_session_infra
 
 
 class _FakeCtx:
@@ -1010,7 +1012,7 @@ def test_no_double_persistence_after_wrapper_deletion(tmp_path):
 
 # ── prepare_exploration_session ──────────────────────────────────────
 
-from gotg.session import prepare_exploration_session
+from gotg.session_setup import prepare_exploration_session
 
 
 def test_prepare_exploration_session_basic(tmp_path):
@@ -1074,7 +1076,8 @@ def test_prepare_exploration_session_reads_existing_history(tmp_path):
 
 # ── prepare_continue ──────────────────────────────────────────────
 
-from gotg.session import ContinueContext, prepare_continue, SessionInfra
+from gotg.session_types import ContinueContext, SessionInfra
+from gotg.session_setup import prepare_continue
 
 
 def _make_infra(**overrides):

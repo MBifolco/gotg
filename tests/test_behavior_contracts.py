@@ -8,7 +8,8 @@ from gotg.events import AppendMessage, SessionComplete
 from gotg.model import CompletionRound, StreamingResult
 from gotg.policy import SessionPolicy
 from gotg.prompts import AGENT_TOOLS
-from gotg.session import SessionSetup, run_and_persist
+from gotg.session_types import SessionSetup
+from gotg.session_setup import run_and_persist
 
 
 AGENTS = [
@@ -450,7 +451,8 @@ def test_tui_continue_max_turns_additive():
     # This behavior is verified by reading tui/screens/chat.py:
     # max_turns = cont.current_agent_turns + iteration.get("max_turns", 30)
     # which is always additive. We test it via the prepare_continue return value.
-    from gotg.session import prepare_continue, SessionInfra
+    from gotg.session_setup import prepare_continue
+    from gotg.session_types import SessionInfra
     from gotg.conversation import append_message as _am
 
     import tempfile

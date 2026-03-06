@@ -408,7 +408,7 @@ async def test_home_r_on_non_current_pending_switches_and_prompts(tmp_path):
 @pytest.mark.asyncio
 async def test_review_f_noop_when_not_all_done(tmp_path):
     """F key does nothing when _all_layers_done is False."""
-    from gotg.session import BranchReview, ReviewResult
+    from gotg.session_types import BranchReview, ReviewResult
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.review import ReviewScreen
 
@@ -442,7 +442,7 @@ async def test_review_f_noop_when_not_all_done(tmp_path):
 @pytest.mark.asyncio
 async def test_review_f_marks_done_when_all_layers_complete(tmp_path):
     """F key marks iteration as done and pops screen when all_done."""
-    from gotg.session import BranchReview, NextLayerResult, ReviewResult
+    from gotg.session_types import BranchReview, NextLayerResult, ReviewResult
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.review import ReviewScreen
 
@@ -497,7 +497,7 @@ async def test_review_f_marks_done_when_all_layers_complete(tmp_path):
 @pytest.mark.asyncio
 async def test_review_all_done_action_bar_shows_f_hint(tmp_path):
     """Action bar includes F key hint when all layers are complete."""
-    from gotg.session import BranchReview, NextLayerResult, ReviewResult
+    from gotg.session_types import BranchReview, NextLayerResult, ReviewResult
     from gotg.tui.app import GotgApp
     from gotg.tui.screens.review import ReviewScreen
     from gotg.tui.widgets.action_bar import ActionBar

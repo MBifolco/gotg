@@ -71,7 +71,7 @@ def test_build_prompt_system_includes_task_description(agent_config, iteration):
 
 def test_build_prompt_uses_default_prompt_when_no_system_prompt(iteration):
     """Agent config without system_prompt should use DEFAULT_SYSTEM_PROMPT."""
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     agent = {"name": "agent-1"}
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
@@ -84,7 +84,7 @@ def test_build_prompt_custom_prompt_overrides_default(iteration):
     messages = build_prompt(agent, iteration, [])
     system = messages[0]["content"]
     assert "You are a designer." in system
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     assert DEFAULT_SYSTEM_PROMPT not in system
 
 
@@ -386,7 +386,7 @@ def test_build_prompt_no_coach_awareness_without_coach():
 
 def test_build_coach_prompt_uses_facilitation_prompt():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    from gotg.prompts import COACH_FACILITATION_PROMPT
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress", "max_turns": 10}
     history = [
@@ -607,7 +607,7 @@ def test_build_prompt_includes_pre_code_review_phase_prompt():
 
 def test_build_coach_prompt_uses_refinement_facilitation():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "phase": "refinement", "max_turns": 10}
@@ -620,7 +620,7 @@ def test_build_coach_prompt_uses_refinement_facilitation():
 
 def test_build_coach_prompt_uses_planning_facilitation():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "phase": "planning", "max_turns": 10}
@@ -634,7 +634,7 @@ def test_build_coach_prompt_uses_planning_facilitation():
 
 def test_build_coach_prompt_uses_pre_code_review_facilitation():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "phase": "pre-code-review", "max_turns": 10}
@@ -648,7 +648,7 @@ def test_build_coach_prompt_uses_pre_code_review_facilitation():
 
 def test_build_coach_prompt_falls_back_to_default_for_unknown_phase():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    from gotg.prompts import COACH_FACILITATION_PROMPT
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "phase": "some-future-phase", "max_turns": 10}
@@ -661,7 +661,7 @@ def test_build_coach_prompt_falls_back_to_default_for_unknown_phase():
 
 def test_build_coach_prompt_falls_back_to_default_when_no_phase():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    from gotg.prompts import COACH_FACILITATION_PROMPT
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "max_turns": 10}
@@ -727,7 +727,7 @@ def test_build_coach_prompt_injects_diffs_summary():
 
 def test_build_coach_prompt_code_review_facilitation():
     from gotg.agent import build_coach_prompt
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     coach = {"name": "coach", "role": "Agile Coach"}
     iteration = {"id": "iter-1", "description": "Build a thing.", "status": "in-progress",
                  "phase": "code-review", "max_turns": 10}

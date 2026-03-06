@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from gotg.session import (
+from gotg.session_types import (
     BranchReview,
     MergeResult,
     NextLayerResult,
@@ -275,7 +275,7 @@ async def test_merge_conflict_pushes_conflict_screen(tmp_path):
         await pilot.pause()
 
         from gotg.tui.screens.conflict import ConflictScreen
-        from gotg.session import ConflictInfo, ConflictFileInfo
+        from gotg.session_types import ConflictInfo, ConflictFileInfo
 
         mock_info = ConflictInfo(
             branch="agent-1/layer-0",

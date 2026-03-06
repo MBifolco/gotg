@@ -6,7 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from gotg.cli import main, find_team_dir, run_conversation
-from gotg.session import validate_iteration_for_run, resolve_layer, setup_worktrees, SessionSetupError
+from gotg.session_setup import validate_iteration_for_run, setup_worktrees
+from gotg.session_types import resolve_layer, SessionSetupError
 from gotg.conversation import read_log, read_phase_history, append_message
 
 

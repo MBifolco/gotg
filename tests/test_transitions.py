@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from gotg.scaffold import COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT
+from gotg.prompts import COACH_REFINEMENT_PROMPT, COACH_PLANNING_PROMPT
 from gotg.transitions import (
     strip_code_fences,
     extract_conversation_for_coach,

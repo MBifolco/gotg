@@ -12,15 +12,14 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header
 
-from gotg.session import (
+from gotg.session_types import (
     MergeResult,
     NextLayerResult,
     ReviewError,
     ReviewResult,
-    advance_next_layer,
-    load_review_branches,
-    merge_branches,
 )
+from gotg.session_advance import advance_next_layer
+from gotg.session_review import load_review_branches, merge_branches
 from gotg.tui.helpers import get_selected_row_key
 from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.content_viewer import ContentViewer

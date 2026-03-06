@@ -184,7 +184,7 @@ async def test_d_opens_review_screen_in_code_review(tmp_path):
 
         assert app.screen.session_state == SessionState.PAUSED
 
-        from gotg.session import ReviewResult, BranchReview
+        from gotg.session_types import ReviewResult, BranchReview
         review_result = ReviewResult(
             layer=0,
             branches=[BranchReview(

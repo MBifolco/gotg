@@ -12,10 +12,8 @@ from pathlib import Path
 import gotg.cli as _cli
 from gotg.context import TeamContext
 from gotg.conversation import ConversationStore, render_message
-from gotg.session import (
-    SessionSetupError, resolve_layer, validate_iteration_for_run,
-    build_session_infra,
-)
+from gotg.session_types import SessionSetupError, resolve_layer
+from gotg.session_setup import validate_iteration_for_run, build_session_infra
 
 
 def _make_pause_controller():
@@ -140,7 +138,7 @@ def cmd_continue(args):
     log_path = iter_dir / "conversation.jsonl"
 
     # Apply approved writes, inject denials, count turns
-    from gotg.session import prepare_continue
+    from gotg.session_setup import prepare_continue
     cont = prepare_continue(
         infra, iteration, log_path,
         coach_name=ctx.coach["name"] if ctx.coach else None,

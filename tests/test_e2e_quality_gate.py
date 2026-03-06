@@ -15,8 +15,8 @@ from gotg.iteration_store import get_current_iteration, save_iteration_fields
 from gotg.conversation import read_log
 from gotg.fileguard import FileGuard
 from gotg.model import CompletionRound, StreamingResult
-from gotg.session import apply_and_inject
-from gotg.session import advance_next_layer, advance_phase
+from gotg.session_setup import apply_and_inject
+from gotg.session_advance import advance_next_layer, advance_phase
 
 
 def _make_team(tmp_path, *, phase="refinement", current_layer=None, max_turns=1, streaming=False):

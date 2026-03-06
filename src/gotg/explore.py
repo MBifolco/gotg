@@ -162,7 +162,7 @@ def run_exploration_conversation(
     from gotg.console_events import handle_console_events
     from gotg.engine import SessionDeps
     from gotg.model import agentic_completion, chat_completion, raw_completion_stream
-    from gotg.session import prepare_exploration_session, run_and_persist
+    from gotg.session_setup import prepare_exploration_session, run_and_persist
 
     deps = SessionDeps(
         agent_completion=agentic_completion,

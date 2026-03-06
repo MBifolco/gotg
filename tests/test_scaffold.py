@@ -141,14 +141,14 @@ def test_init_tolerates_missing_git_identity(tmp_path):
 
 def test_default_system_prompt_mentions_pushback():
     """The default system prompt should tell agents not to just agree."""
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     prompt = DEFAULT_SYSTEM_PROMPT.lower()
     assert "agree" in prompt
 
 
 def test_default_system_prompt_mentions_phases():
     """The base prompt should explain the phase system."""
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     prompt = DEFAULT_SYSTEM_PROMPT.lower()
     assert "phases" in prompt
     assert "refinement" in prompt
@@ -156,19 +156,19 @@ def test_default_system_prompt_mentions_phases():
 
 
 def test_phase_prompts_has_refinement_key():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     assert "refinement" in PHASE_PROMPTS
 
 
 def test_refinement_prompt_mentions_scope():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["refinement"].lower()
     assert "scope" in prompt
     assert "requirements" in prompt
 
 
 def test_refinement_prompt_mentions_redirect():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["refinement"].lower()
     assert "redirect" in prompt or "nail down the requirements" in prompt
 
@@ -182,14 +182,14 @@ def test_init_creates_team_json_coach_section(git_project):
 
 
 def test_coach_refinement_prompt_exists():
-    from gotg.scaffold import COACH_REFINEMENT_PROMPT
+    from gotg.prompts import COACH_REFINEMENT_PROMPT
     assert isinstance(COACH_REFINEMENT_PROMPT, str)
     assert len(COACH_REFINEMENT_PROMPT) > 0
     assert "scope" in COACH_REFINEMENT_PROMPT.lower() or "summary" in COACH_REFINEMENT_PROMPT.lower()
 
 
 def test_coach_facilitation_prompt_exists():
-    from gotg.scaffold import COACH_FACILITATION_PROMPT
+    from gotg.prompts import COACH_FACILITATION_PROMPT
     assert isinstance(COACH_FACILITATION_PROMPT, str)
     assert len(COACH_FACILITATION_PROMPT) > 0
     assert "signal_phase_complete" in COACH_FACILITATION_PROMPT
@@ -197,7 +197,7 @@ def test_coach_facilitation_prompt_exists():
 
 
 def test_coach_tools_exists():
-    from gotg.scaffold import COACH_TOOLS
+    from gotg.prompts import COACH_TOOLS
     assert isinstance(COACH_TOOLS, list)
     assert len(COACH_TOOLS) == 4
     tool = COACH_TOOLS[0]
@@ -209,73 +209,73 @@ def test_coach_tools_exists():
 
 
 def test_phase_prompts_has_planning_key():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     assert "planning" in PHASE_PROMPTS
 
 
 def test_planning_prompt_mentions_tasks():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["planning"].lower()
     assert "tasks" in prompt
     assert "independent" in prompt or "assignable" in prompt
 
 
 def test_planning_prompt_mentions_redirect():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["planning"].lower()
     assert "refinement" in prompt
 
 
 def test_coach_planning_prompt_exists():
-    from gotg.scaffold import COACH_PLANNING_PROMPT
+    from gotg.prompts import COACH_PLANNING_PROMPT
     assert isinstance(COACH_PLANNING_PROMPT, str)
     assert len(COACH_PLANNING_PROMPT) > 0
     assert "json" in COACH_PLANNING_PROMPT.lower()
 
 
 def test_coach_planning_prompt_mentions_required_fields():
-    from gotg.scaffold import COACH_PLANNING_PROMPT
+    from gotg.prompts import COACH_PLANNING_PROMPT
     for field in ["id", "description", "done_criteria", "depends_on", "assigned_to", "status"]:
         assert field in COACH_PLANNING_PROMPT
 
 
 def test_coach_notes_extraction_prompt_exists():
-    from gotg.scaffold import COACH_NOTES_EXTRACTION_PROMPT
+    from gotg.prompts import COACH_NOTES_EXTRACTION_PROMPT
     assert len(COACH_NOTES_EXTRACTION_PROMPT) > 0
 
 
 def test_coach_notes_extraction_prompt_has_placeholders():
-    from gotg.scaffold import COACH_NOTES_EXTRACTION_PROMPT
+    from gotg.prompts import COACH_NOTES_EXTRACTION_PROMPT
     assert "{tasks_json}" in COACH_NOTES_EXTRACTION_PROMPT
     assert "{conversation}" in COACH_NOTES_EXTRACTION_PROMPT
 
 
 def test_phase_prompts_has_pre_code_review_key():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     assert "pre-code-review" in PHASE_PROMPTS
 
 
 def test_pre_code_review_prompt_mentions_implementation():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["pre-code-review"].lower()
     assert "implement" in prompt
 
 
 def test_pre_code_review_prompt_mentions_layer_by_layer():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["pre-code-review"].lower()
     assert "layer by layer" in prompt
     assert "layer 0" in prompt
 
 
 def test_pre_code_review_prompt_discourages_full_code():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["pre-code-review"].lower()
     assert "full implementations" in prompt
 
 
 def test_coach_facilitation_prompts_dict_exists():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     assert isinstance(COACH_FACILITATION_PROMPTS, dict)
     assert "refinement" in COACH_FACILITATION_PROMPTS
     assert "planning" in COACH_FACILITATION_PROMPTS
@@ -284,25 +284,25 @@ def test_coach_facilitation_prompts_dict_exists():
 
 
 def test_coach_facilitation_prompts_refinement_is_default():
-    from gotg.scaffold import COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
     assert COACH_FACILITATION_PROMPTS["refinement"] is COACH_FACILITATION_PROMPT
 
 
 def test_coach_facilitation_planning_mentions_scope_coverage():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["planning"].lower()
     assert "requirements" in prompt
     assert "refined scope" in prompt
 
 
 def test_coach_facilitation_pre_code_review_mentions_all_layers():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["pre-code-review"].lower()
     assert "all layers" in prompt
 
 
 def test_coach_facilitation_pre_code_review_mentions_completion():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["pre-code-review"].lower()
     assert "signal completion" in prompt
 
@@ -329,137 +329,137 @@ def test_init_creates_worktrees_config_in_team_json(git_project):
 # --- code-review phase prompts ---
 
 def test_phase_prompts_has_code_review_key():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     assert "code-review" in PHASE_PROMPTS
 
 
 def test_code_review_prompt_mentions_diffs():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["code-review"].lower()
     assert "diffs" in prompt
 
 
 def test_code_review_prompt_mentions_correctness():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["code-review"].lower()
     assert "correctness" in prompt
 
 
 def test_code_review_prompt_mentions_consistency():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["code-review"].lower()
     assert "consistency" in prompt
 
 
 def test_code_review_prompt_mentions_redirect():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["code-review"].lower()
     assert "decided earlier" in prompt
 
 
 def test_code_review_prompt_discourages_replanning():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["code-review"].lower()
     assert "propose new tasks" in prompt
 
 
 def test_coach_facilitation_prompts_has_code_review():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     assert "code-review" in COACH_FACILITATION_PROMPTS
 
 
 def test_coach_facilitation_code_review_mentions_concerns():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
     assert "concerns" in prompt
 
 
 def test_coach_facilitation_code_review_mentions_resolved():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
     assert "resolved" in prompt
 
 
 def test_coach_facilitation_code_review_blocks_early_completion():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["code-review"].lower()
     assert "do not" in prompt
 
 
 def test_default_system_prompt_mentions_code_review():
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     assert "code-review" in DEFAULT_SYSTEM_PROMPT
 
 
 # --- implementation phase prompts ---
 
 def test_phase_prompts_has_implementation_key():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     assert "implementation" in PHASE_PROMPTS
 
 
 def test_implementation_prompt_mentions_file_tools():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "file_read" in prompt
 
 
 def test_implementation_prompt_mentions_approach():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "approach" in prompt
 
 
 def test_implementation_prompt_mentions_tests():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "test" in prompt
 
 
 def test_implementation_prompt_anti_redesign():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "redesign" in prompt
 
 
 def test_implementation_prompt_discourages_cross_task():
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"].lower()
     assert "tasks outside layer" in prompt
 
 
 def test_coach_facilitation_prompts_has_implementation():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     assert "implementation" in COACH_FACILITATION_PROMPTS
 
 
 def test_coach_facilitation_implementation_tracks_completion():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["implementation"].lower()
     assert "status" in prompt
     assert "complete" in prompt
 
 
 def test_coach_facilitation_implementation_blocks_early_signal():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     prompt = COACH_FACILITATION_PROMPTS["implementation"].lower()
     assert "do not signal" in prompt or "do not" in prompt
 
 
 def test_default_system_prompt_mentions_implementation():
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     assert "implementation" in DEFAULT_SYSTEM_PROMPT
 
 
 # --- conciseness norms ---
 
 def test_default_system_prompt_mentions_conciseness():
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     assert "concise" in DEFAULT_SYSTEM_PROMPT.lower()
 
 
 def test_default_system_prompt_discourages_checklists():
-    from gotg.scaffold import DEFAULT_SYSTEM_PROMPT
+    from gotg.prompts import DEFAULT_SYSTEM_PROMPT
     prompt = DEFAULT_SYSTEM_PROMPT.lower()
     assert "checkbox" in prompt or "checklists" in prompt
 
@@ -468,7 +468,7 @@ def test_default_system_prompt_discourages_checklists():
 
 def test_implementation_prompt_mentions_current_layer_template():
     """Implementation prompt should use {current_layer} placeholder."""
-    from gotg.scaffold import PHASE_PROMPTS
+    from gotg.prompts import PHASE_PROMPTS
     prompt = PHASE_PROMPTS["implementation"]
     assert "{current_layer}" in prompt
 
@@ -476,13 +476,13 @@ def test_implementation_prompt_mentions_current_layer_template():
 # --- PHASE_KICKOFF_MESSAGES ---
 
 def test_phase_kickoff_messages_has_all_phases():
-    from gotg.scaffold import PHASE_KICKOFF_MESSAGES
+    from gotg.prompts import PHASE_KICKOFF_MESSAGES
     for phase in ("refinement", "planning", "pre-code-review", "implementation", "code-review"):
         assert phase in PHASE_KICKOFF_MESSAGES
 
 
 def test_phase_kickoff_messages_end_with_coach_line():
-    from gotg.scaffold import PHASE_KICKOFF_MESSAGES
+    from gotg.prompts import PHASE_KICKOFF_MESSAGES
     # Implementation has no coach — uses complete_tasks instead
     coach_phases = {k: v for k, v in PHASE_KICKOFF_MESSAGES.items() if k != "implementation"}
     for phase, msg in coach_phases.items():
@@ -653,7 +653,7 @@ def test_format_agent_task_assignments_no_file(tmp_path):
 # --- agent tools (pass_turn) ---
 
 def test_agent_tools_pass_turn_schema():
-    from gotg.scaffold import AGENT_TOOLS
+    from gotg.prompts import AGENT_TOOLS
     assert isinstance(AGENT_TOOLS, list)
     assert len(AGENT_TOOLS) == 1
     tool = AGENT_TOOLS[0]
@@ -667,7 +667,7 @@ def test_agent_tools_pass_turn_schema():
 # --- coach ask_pm tool ---
 
 def test_coach_tools_ask_pm_schema():
-    from gotg.scaffold import COACH_TOOLS
+    from gotg.prompts import COACH_TOOLS
     ask_pm = [t for t in COACH_TOOLS if t["name"] == "ask_pm"]
     assert len(ask_pm) == 1
     tool = ask_pm[0]
@@ -677,6 +677,6 @@ def test_coach_tools_ask_pm_schema():
 
 
 def test_coach_facilitation_prompts_mention_ask_pm():
-    from gotg.scaffold import COACH_FACILITATION_PROMPTS
+    from gotg.prompts import COACH_FACILITATION_PROMPTS
     for phase, prompt in COACH_FACILITATION_PROMPTS.items():
         assert "ask_pm" in prompt, f"Phase {phase} facilitation prompt doesn't mention ask_pm"

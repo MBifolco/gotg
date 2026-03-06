@@ -38,7 +38,7 @@ def run_conversation(
     model_resolver=None,
     pause_controller=None,
 ) -> str | None:
-    from gotg.session import prepare_session, run_and_persist
+    from gotg.session_setup import prepare_session, run_and_persist
 
     # Build deps from module-level imports (bridge pattern — preserves mock targets)
     deps = SessionDeps(
@@ -85,42 +85,6 @@ def run_conversation(
     finally:
         if pause_controller:
             pause_controller.uninstall()
-
-
-# ── Re-exports for external compatibility ──────────────────────────
-# These were importable from gotg.cli before the commands/ split.
-# Lazy to avoid circular imports (command modules do `import gotg.cli as _cli`).
-
-def __getattr__(name):
-    _reexports = {
-        "cmd_init": ("gotg.commands.admin", "cmd_init"),
-        "cmd_model": ("gotg.commands.admin", "cmd_model"),
-        "cmd_show": ("gotg.commands.admin", "cmd_show"),
-        "cmd_approvals": ("gotg.commands.admin", "cmd_approvals"),
-        "cmd_approve": ("gotg.commands.admin", "cmd_approve"),
-        "cmd_deny": ("gotg.commands.admin", "cmd_deny"),
-        "cmd_ui": ("gotg.commands.admin", "cmd_ui"),
-        "PROVIDER_PRESETS": ("gotg.commands.admin", "PROVIDER_PRESETS"),
-        "cmd_run": ("gotg.commands.run", "cmd_run"),
-        "cmd_continue": ("gotg.commands.run", "cmd_continue"),
-        "cmd_advance": ("gotg.commands.advance", "cmd_advance"),
-        "cmd_next_layer": ("gotg.commands.advance", "cmd_next_layer"),
-        "cmd_review": ("gotg.commands.review", "cmd_review"),
-        "cmd_merge": ("gotg.commands.review", "cmd_merge"),
-        "cmd_worktrees": ("gotg.commands.review", "cmd_worktrees"),
-        "cmd_commit_worktrees": ("gotg.commands.review", "cmd_commit_worktrees"),
-        "cmd_explore_start": ("gotg.commands.explore", "cmd_explore_start"),
-        "cmd_explore_continue": ("gotg.commands.explore", "cmd_explore_continue"),
-        "cmd_explore_list": ("gotg.commands.explore", "cmd_explore_list"),
-        "cmd_explore_show": ("gotg.commands.explore", "cmd_explore_show"),
-        "cmd_explore_summarize": ("gotg.commands.explore", "cmd_explore_summarize"),
-    }
-    if name in _reexports:
-        module_path, attr = _reexports[name]
-        import importlib
-        mod = importlib.import_module(module_path)
-        return getattr(mod, attr)
-    raise AttributeError(f"module 'gotg.cli' has no attribute {name!r}")
 
 
 def main():

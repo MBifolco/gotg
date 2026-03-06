@@ -390,8 +390,8 @@ class ChatScreen(Screen):
                 raw_completion,
                 raw_completion_stream,
             )
-            from gotg.session import (
-                SessionSetupError,
+            from gotg.session_types import SessionSetupError
+            from gotg.session_setup import (
                 build_session_infra,
                 prepare_session, run_and_persist,
                 validate_iteration_for_run,
@@ -417,7 +417,7 @@ class ChatScreen(Screen):
                 infra = build_session_infra(ctx, iteration, iter_dir)
 
                 # Apply approved writes, inject denials, count turns
-                from gotg.session import prepare_continue
+                from gotg.session_setup import prepare_continue
                 cont = prepare_continue(
                     infra, iteration, self._log_path,
                     coach_name=ctx.coach["name"] if ctx.coach else None,
@@ -452,7 +452,7 @@ class ChatScreen(Screen):
             else:
                 # Exploration session — uses prepare_exploration_session
                 from gotg.explore import load_exploration_metadata
-                from gotg.session import prepare_exploration_session, load_iteration_context
+                from gotg.session_setup import prepare_exploration_session, load_iteration_context
 
                 explore_meta, explore_dir = load_exploration_metadata(
                     self.app.team_dir, self.metadata.get("slug", "")
@@ -956,7 +956,8 @@ class ChatScreen(Screen):
         try:
             from gotg.context import TeamContext
             from gotg.model import chat_completion
-            from gotg.session import PhaseAdvanceError, advance_phase
+            from gotg.session_types import PhaseAdvanceError
+            from gotg.session_advance import advance_phase
 
             ctx = TeamContext.from_team_dir(self.app.team_dir)
             iteration, iter_dir = ctx.iteration_store.get_current()

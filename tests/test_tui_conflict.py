@@ -11,7 +11,7 @@ textual = pytest.importorskip("textual")
 
 from textual.app import App
 
-from gotg.session import (
+from gotg.session_types import (
     AiResolutionResult,
     ConflictFileInfo,
     ConflictInfo,

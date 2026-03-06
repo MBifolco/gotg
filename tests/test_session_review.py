@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gotg.session import (
+from gotg.session_types import (
     AiResolutionResult,
     BranchReview,
     ConflictFileInfo,
@@ -17,14 +17,15 @@ from gotg.session import (
     ResolutionStrategy,
     ReviewError,
     ReviewResult,
+)
+from gotg.session_advance import validate_next_layer, advance_next_layer
+from gotg.session_review import (
     ai_resolve_conflict,
     finalize_merge,
     load_conflict_info,
     load_review_branches,
     merge_branches,
     resolve_conflict_file,
-    validate_next_layer,
-    advance_next_layer,
 )
 
 

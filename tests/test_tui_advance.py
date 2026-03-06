@@ -15,7 +15,7 @@ from gotg.events import (
     SessionComplete,
     SessionStarted,
 )
-from gotg.session import AdvanceResult
+from gotg.session_types import AdvanceResult
 from gotg.tui.app import GotgApp
 from gotg.session_types import PauseReason
 from gotg.tui.screens.chat import ChatScreen, SessionState
@@ -141,7 +141,7 @@ async def test_advance_from_phase_complete(tmp_path):
         # Now press P to advance
         with patch("gotg.context.TeamContext") as mock_ctx_cls:
             _setup_mock_ctx(mock_ctx_cls, team_dir)
-            with patch("gotg.session.advance_phase", return_value=_make_advance_result()):
+            with patch("gotg.session_advance.advance_phase", return_value=_make_advance_result()):
                 await pilot.press("p")
                 await pilot.pause()
                 await pilot.pause()
@@ -181,10 +181,10 @@ async def test_advance_error_returns_to_paused(tmp_path):
         assert app.screen.session_state == SessionState.PAUSED
 
         # Advance fails with PhaseAdvanceError
-        from gotg.session import PhaseAdvanceError
+        from gotg.session_types import PhaseAdvanceError
         with patch("gotg.context.TeamContext") as mock_ctx_cls:
             _setup_mock_ctx(mock_ctx_cls, team_dir)
-            with patch("gotg.session.advance_phase", side_effect=PhaseAdvanceError("Cannot advance past code-review.")):
+            with patch("gotg.session_advance.advance_phase", side_effect=PhaseAdvanceError("Cannot advance past code-review.")):
                 await pilot.press("p")
                 await pilot.pause()
                 await pilot.pause()
@@ -241,7 +241,7 @@ async def test_advance_updates_metadata_phase(tmp_path):
 
         with patch("gotg.context.TeamContext") as mock_ctx_cls:
             _setup_mock_ctx(mock_ctx_cls, team_dir)
-            with patch("gotg.session.advance_phase", return_value=_make_advance_result()):
+            with patch("gotg.session_advance.advance_phase", return_value=_make_advance_result()):
                 await pilot.press("p")
                 await pilot.pause()
                 await pilot.pause()

@@ -1,8 +1,8 @@
-"""Project initialization and prompt re-exports.
+"""Project initialization and prompt utility functions.
 
 init_project creates the .team/ directory structure with default configs.
-Re-exports prompt constants and utility functions (format_phase_kickoff,
-should_inject_kickoff) from prompts.py for backward compatibility.
+Utility functions: format_phase_kickoff, should_inject_kickoff,
+format_agent_task_assignments.
 """
 
 import json
@@ -11,13 +11,7 @@ from pathlib import Path
 
 from gotg.errors import ConfigError
 
-from gotg.prompts import (  # noqa: F401 — re-export for backward compatibility
-    DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS,
-    COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS,
-    COACH_REFINEMENT_PROMPT,
-    COACH_PLANNING_PROMPT, COACH_NOTES_EXTRACTION_PROMPT,
-    PHASE_KICKOFF_MESSAGES, AGENT_TOOLS, COACH_TOOLS,
-)
+from gotg.prompts import PHASE_KICKOFF_MESSAGES
 
 
 def format_agent_task_assignments(

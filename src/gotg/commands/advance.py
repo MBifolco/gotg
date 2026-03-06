@@ -13,7 +13,8 @@ from gotg.conversation import render_message
 
 
 def cmd_advance(args):
-    from gotg.session import PhaseAdvanceError, advance_phase
+    from gotg.session_types import PhaseAdvanceError
+    from gotg.session_advance import advance_phase
 
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
@@ -57,7 +58,8 @@ def cmd_next_layer(args):
         print(f"Error: iteration status is '{iteration.get('status')}', expected 'in-progress'.", file=sys.stderr)
         raise SystemExit(1)
 
-    from gotg.session import ReviewError, advance_next_layer
+    from gotg.session_types import ReviewError
+    from gotg.session_advance import advance_next_layer
 
     try:
         result = advance_next_layer(

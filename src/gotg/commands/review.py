@@ -13,7 +13,8 @@ def cmd_review(args):
         print("Error: no .team/ directory found.", file=sys.stderr)
         raise SystemExit(1)
 
-    from gotg.session import ReviewError, load_review_branches
+    from gotg.session_types import ReviewError
+    from gotg.session_review import load_review_branches
 
     iteration, _ = IterationStore(team_dir).get_current()
 
@@ -105,7 +106,8 @@ def cmd_merge(args):
             raise SystemExit(1)
         return
 
-    from gotg.session import ReviewError, merge_branches
+    from gotg.session_types import ReviewError
+    from gotg.session_review import merge_branches
     from gotg.worktree import is_branch_merged
 
     iteration, _ = IterationStore(team_dir).get_current()
