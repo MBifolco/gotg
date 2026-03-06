@@ -10,6 +10,14 @@ from gotg.session import (
 )
 
 
+def _make_pause_controller():
+    """Create a PauseController if stdin is a TTY, else None."""
+    if not sys.stdin.isatty():
+        return None
+    from gotg.pause import PauseController
+    return PauseController()
+
+
 def cmd_run(args):
     cwd = Path.cwd()
     team_dir = _cli.find_team_dir(cwd)
@@ -47,13 +55,35 @@ def cmd_run(args):
         layer = resolve_layer(layer_override, iteration)
         print(f"Code review: diffs loaded for layer {layer}")
 
-    _cli.run_conversation(
-        iter_dir, ctx.agents, iteration, ctx.model_config,
-        max_turns_override=args.max_turns, coach=ctx.coach,
-        fileguard=infra.fileguard, approval_store=infra.approval_store,
-        worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
-        streaming=infra.streaming, model_resolver=ctx.model_resolver,
-    )
+    pause_ctrl = _make_pause_controller()
+
+    while True:
+        result = _cli.run_conversation(
+            iter_dir, ctx.agents, iteration, ctx.model_config,
+            max_turns_override=args.max_turns, coach=ctx.coach,
+            fileguard=infra.fileguard, approval_store=infra.approval_store,
+            worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
+            streaming=infra.streaming, model_resolver=ctx.model_resolver,
+            pause_controller=pause_ctrl,
+        )
+        if result != "paused" or pause_ctrl is None:
+            break
+
+        from gotg.pause import RESUME, prompt_for_interjection
+        user_input = prompt_for_interjection("gotg continue")
+        if user_input is None:
+            # Stop — write pause marker
+            store = ConversationStore(iter_dir / "conversation.jsonl")
+            store.append({"from": "system", "content": "(Session paused by user.)",
+                          "user_pause": True, "iteration": iteration["id"]})
+            break
+        if user_input is not RESUME:
+            msg = {"from": "human", "iteration": iteration["id"],
+                   "content": user_input}
+            ConversationStore(iter_dir / "conversation.jsonl").append(msg)
+            print(render_message(msg))
+            print()
+        pause_ctrl.reset()
 
 
 def cmd_continue(args):
@@ -114,7 +144,8 @@ def cmd_continue(args):
         print(f"Warning: {cont.pending_count} approval(s) still pending. Resolve before continuing.")
         print("Run 'gotg approvals' to review.")
 
-    # Inject human message if provided
+    # Inject human message if provided (once, before loop)
+    _message_injected = False
     if args.message:
         msg = {
             "from": "human",
@@ -124,6 +155,7 @@ def cmd_continue(args):
         ConversationStore(log_path).append(msg)
         print(render_message(msg))
         print()
+        _message_injected = True
 
     # Calculate target total agent turns
     if args.max_turns is not None:
@@ -131,10 +163,55 @@ def cmd_continue(args):
     else:
         target_total = iteration["max_turns"]
 
-    _cli.run_conversation(
-        iter_dir, ctx.agents, iteration, ctx.model_config,
-        max_turns_override=target_total, coach=ctx.coach,
-        fileguard=infra.fileguard, approval_store=infra.approval_store,
-        worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
-        streaming=infra.streaming, model_resolver=ctx.model_resolver,
-    )
+    # Detect (but don't consume) stale user_pause marker
+    _pause_marker_pending = False
+    from gotg.conversation import read_phase_history
+    phase_msgs = read_phase_history(log_path)
+    for m in reversed(phase_msgs):
+        if m.get("user_pause_resolved"):
+            break
+        if m.get("user_pause"):
+            _pause_marker_pending = True
+            break
+        if m.get("from") == "human":
+            break
+        if m.get("from") not in ("system", "human"):
+            break
+
+    pause_ctrl = _make_pause_controller()
+
+    while True:
+        result = _cli.run_conversation(
+            iter_dir, ctx.agents, iteration, ctx.model_config,
+            max_turns_override=target_total, coach=ctx.coach,
+            fileguard=infra.fileguard, approval_store=infra.approval_store,
+            worktree_map=infra.worktree_map, diffs_summary=infra.diffs_summary,
+            streaming=infra.streaming, model_resolver=ctx.model_resolver,
+            pause_controller=pause_ctrl,
+        )
+
+        # Consume marker AFTER first successful run
+        if _pause_marker_pending:
+            ConversationStore(log_path).append({
+                "from": "system", "content": "",
+                "user_pause_resolved": True, "iteration": iteration["id"],
+            })
+            _pause_marker_pending = False
+
+        if result != "paused" or pause_ctrl is None:
+            break
+
+        from gotg.pause import RESUME, prompt_for_interjection
+        user_input = prompt_for_interjection("gotg continue")
+        if user_input is None:
+            store = ConversationStore(log_path)
+            store.append({"from": "system", "content": "(Session paused by user.)",
+                          "user_pause": True, "iteration": iteration["id"]})
+            break
+        if user_input is not RESUME:
+            msg = {"from": "human", "iteration": iteration["id"],
+                   "content": user_input}
+            ConversationStore(log_path).append(msg)
+            print(render_message(msg))
+            print()
+        pause_ctrl.reset()

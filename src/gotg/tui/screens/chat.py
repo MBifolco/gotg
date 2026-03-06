@@ -12,6 +12,8 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, TextArea
 
 from gotg.conversation import ConversationStore
+from dataclasses import dataclass
+
 from gotg.events import (
     AdvanceComplete,
     AdvanceError,
@@ -29,6 +31,7 @@ from gotg.events import (
     TaskBlocked,
     TextDelta,
     ToolCallProgress,
+    UserPauseComplete,
 )
 from gotg.session_types import PauseReason
 from gotg.tui.helpers import is_agent_turn, resolve_coach_name
@@ -37,6 +40,27 @@ from gotg.tui.widgets.action_bar import ActionBar
 from gotg.tui.widgets.info_tile import InfoTile
 from gotg.tui.widgets.message_list import MessageList
 from gotg.tui.widgets.participant_panel import ParticipantPanel
+
+
+@dataclass
+class _UserPaused:
+    """Synthetic event for discussion-mode pause (no engine event emitted)."""
+    pass
+
+
+def _is_turn_boundary(msg: dict, coach_name: str | None) -> bool:
+    """Return True if msg represents a turn boundary (agent turn or pass_turn).
+
+    Inline helper — NO import from tui.helpers (which depends on textual at module level).
+    """
+    if msg.get("pass_turn"):
+        return True
+    sender = msg.get("from", "")
+    if sender in ("system", "human"):
+        return False
+    if coach_name and sender == coach_name:
+        return False
+    return True
 
 
 class SessionState(Enum):
@@ -84,6 +108,7 @@ class ChatScreen(Screen):
         self._initial_load_done = False
         self._pause_reason: PauseReason | None = None
         self._phase_complete_outcome: str | None = None
+        self._pause_resolve_pending = False
         # Set by _prepare_session before launching worker
         self._log_path = data_dir / "conversation.jsonl"
         self._debug_path = data_dir / "debug.jsonl"
@@ -161,6 +186,11 @@ class ChatScreen(Screen):
         from gotg.session_types import reconstruct_resume_state
 
         state = reconstruct_resume_state(messages, self.metadata.get("phase"))
+
+        if state.pause_reason == PauseReason.USER_PAUSE:
+            self._pause_resolve_pending = True
+            self._start_session("continue")
+            return
 
         if state.pause_reason == PauseReason.PHASE_COMPLETE:
             self._pause_reason = PauseReason.PHASE_COMPLETE
@@ -243,7 +273,7 @@ class ChatScreen(Screen):
         paused = state == SessionState.PAUSED
 
         if action == "send_message":
-            return state in (SessionState.VIEWING, SessionState.PAUSED, SessionState.COMPLETE)
+            return state in (SessionState.VIEWING, SessionState.PAUSED, SessionState.COMPLETE, SessionState.RUNNING)
         if action == "run_session":
             return state == SessionState.VIEWING
         if action == "continue_session":
@@ -291,10 +321,12 @@ class ChatScreen(Screen):
         elif state == SessionState.RUNNING:
             ta.placeholder = "Session running..."
             ta.disabled = True
-            btn.disabled = True
+            btn.label = "Pause"
+            btn.disabled = False
             info.update_session_status("Running", self._turn_count)
         elif state == SessionState.PAUSED:
             ta.disabled = False
+            btn.label = "Send"
             btn.disabled = False
             if self._pause_reason == PauseReason.COACH_QUESTION:
                 ta.placeholder = "Type reply and Ctrl+S to send..."
@@ -304,6 +336,7 @@ class ChatScreen(Screen):
             info.update_session_status("Paused", self._turn_count)
         elif state == SessionState.COMPLETE:
             ta.disabled = False
+            btn.label = "Send"
             btn.disabled = False
             ta.placeholder = "Press C to continue with more turns..."
             info.update_session_status("Complete", self._turn_count)
@@ -336,6 +369,15 @@ class ChatScreen(Screen):
             msg_list.append_message(msg)
 
         self.run_worker(self._run_engine, thread=True)
+
+    def _resolve_pause_marker(self) -> None:
+        """Write resolution marker if pending. Called once setup succeeds."""
+        if self._pause_resolve_pending:
+            iteration_id = self.metadata.get("id") or self.metadata.get("slug", "")
+            self._conv_store.append({"from": "system", "content": "",
+                                      "user_pause_resolved": True,
+                                      "iteration": iteration_id})
+            self._pause_resolve_pending = False
 
     def _run_engine(self) -> None:
         """Runs in worker thread. Posts EngineEvent messages to main thread."""
@@ -380,6 +422,7 @@ class ChatScreen(Screen):
                     infra, iteration, self._log_path,
                     coach_name=ctx.coach["name"] if ctx.coach else None,
                 )
+                self._resolve_pause_marker()
                 for msg in cont.injected_messages:
                     self.post_message(EngineEvent(AppendMessage(msg)))
                 if cont.has_pending_approvals:
@@ -450,6 +493,13 @@ class ChatScreen(Screen):
                     project_root=ctx.project_root,
                     file_access=ctx.file_access,
                 )
+                self._resolve_pause_marker()
+
+            # Wire cancel_check for implementation-mode pause
+            setup.cancel_check = lambda: self._cancel_requested
+
+            # Track coach name for discussion-mode turn boundary detection
+            _coach_name = resolve_coach_name(self.metadata.get("coach"))
 
             # Unified event loop — run_and_persist handles persistence + phase routing
             import time
@@ -467,9 +517,29 @@ class ChatScreen(Screen):
                     _stream_buffer = []
                     _last_flush = time.monotonic()
 
+            _terminal_handled = False
+            _pause_pending = False
+
             for event in run_and_persist(setup):
-                if self._cancel_requested:
+                # Deferred pause: if pause was pending, check what came next
+                if _pause_pending:
+                    if isinstance(event, (PauseForApprovals, PhaseCompleteSignaled,
+                                          CoachAskedPM, IterationsProposed,
+                                          SessionComplete, LayerComplete,
+                                          UserPauseComplete)):
+                        _pause_pending = False
+                        # Fall through — terminal event wins
+                    else:
+                        break  # Non-terminal → pause wins
+
+                # Terminal events ALWAYS processed (even if cancel requested)
+                if isinstance(event, (PauseForApprovals, PhaseCompleteSignaled,
+                                      CoachAskedPM, IterationsProposed,
+                                      SessionComplete, LayerComplete,
+                                      UserPauseComplete)):
                     _flush_stream_buffer()
+                    self.post_message(EngineEvent(event))
+                    _terminal_handled = True
                     break
 
                 if isinstance(event, TextDelta):
@@ -494,10 +564,17 @@ class ChatScreen(Screen):
                     self.post_message(ToolProgress(event))
                 else:
                     self.post_message(EngineEvent(event))
-                if isinstance(event, (PauseForApprovals, PhaseCompleteSignaled,
-                                      CoachAskedPM, IterationsProposed,
-                                      SessionComplete, LayerComplete)):
-                    break
+                    # Discussion pause: defer to next event (don't break immediately)
+                    if (not setup.use_implementation
+                            and isinstance(event, AppendMessage)
+                            and _is_turn_boundary(event.msg, _coach_name)
+                            and self._cancel_requested):
+                        _pause_pending = True
+                        continue
+
+            # After loop — discussion break needs synthetic pause event
+            if (self._cancel_requested or _pause_pending) and not _terminal_handled and self.is_mounted:
+                self.post_message(EngineEvent(_UserPaused()))
 
         except SessionSetupError as e:
             self.post_message(SessionError(str(e)))
@@ -619,6 +696,13 @@ class ChatScreen(Screen):
             self.query_one("#action-bar", ActionBar).show(
                 f"Blocked: {event.agent} -> {blocked}"
             )
+            self._pin_after_action_bar()
+
+        elif isinstance(event, (_UserPaused, UserPauseComplete)):
+            self._pause_reason = PauseReason.USER_PAUSE
+            self.session_state = SessionState.PAUSED
+            bar = self.query_one("#action-bar", ActionBar)
+            bar.show("Paused. Type a message and Send, or press C to resume.")
             self._pin_after_action_bar()
 
         elif isinstance(event, SessionComplete):
@@ -757,6 +841,13 @@ class ChatScreen(Screen):
 
     def _send_input(self) -> None:
         """Extract text from the input, clear it, and continue the session."""
+        if self.session_state == SessionState.RUNNING:
+            # Pause button during RUNNING
+            self._cancel_requested = True
+            info = self.query_one("#info-tile", InfoTile)
+            info.update_session_status("Cancelling...")
+            return
+
         ta = self.query_one("#chat-input", TextArea)
         text = ta.text.strip()
         if not text:
@@ -771,7 +862,7 @@ class ChatScreen(Screen):
         self._send_input()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle Send button click."""
+        """Handle Send/Pause button click."""
         if event.button.id == "send-btn":
             self._send_input()
 
@@ -782,6 +873,13 @@ class ChatScreen(Screen):
             self._cancel_requested = True
             info = self.query_one("#info-tile", InfoTile)
             info.update_session_status("Cancelling...")
+            return  # Don't pop — wait for PAUSED transition, then Esc again to exit
+        elif (self.session_state == SessionState.PAUSED
+              and self._pause_reason == PauseReason.USER_PAUSE):
+            iteration_id = self.metadata.get("id") or self.metadata.get("slug", "")
+            self._conv_store.append({"from": "system",
+                                      "content": "(Session paused by user.)",
+                                      "user_pause": True, "iteration": iteration_id})
         self.app.pop_screen()
 
     def action_scroll_top(self) -> None:

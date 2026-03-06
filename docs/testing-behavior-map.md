@@ -358,6 +358,43 @@ Behavior: `gotg model --help` dynamically lists all registered providers from th
 Tests:
 - `tests/test_cli.py::test_model_help_lists_all_providers`
 
+## Interactive Pause & Interject
+
+Behavior: Discussion pause triggers at agent turn boundaries when pause is requested, with deferred check so terminal events (PauseForApprovals, SessionComplete) win over pause.
+Tests:
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_discussion_pause_after_agent_turn`
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_discussion_pause_after_pass_turn`
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_discussion_deferred_pause_terminal_wins`
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_coach_message_not_turn_boundary`
+
+Behavior: Implementation pause fires between agent dispatches via cancel_check, yielding UserPauseComplete. Ignored before first dispatch; single/last agent completes normally.
+Tests:
+- `tests/test_pause.py::TestImplementationCancelCheck::test_cancel_at_dispatch_boundary`
+- `tests/test_pause.py::TestImplementationCancelCheck::test_cancel_ignored_before_first_dispatch`
+
+Behavior: Pause markers (user_pause, user_pause_resolved) are filtered from both agent and coach prompts.
+Tests:
+- `tests/test_pause.py::TestBuildPromptFiltering::test_user_pause_filtered_from_prompt`
+- `tests/test_pause.py::TestBuildPromptFiltering::test_user_pause_filtered_from_coach_prompt`
+
+Behavior: `reconstruct_resume_state` detects unresolved user_pause markers and reports PauseReason.USER_PAUSE.
+Tests:
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_user_pause_marker`
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_user_pause_resolved`
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_human_message_resolves_user_pause`
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_agent_content_after_pause_makes_it_stale`
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_multiple_pause_resolve_cycles`
+- `tests/test_pause.py::TestReconstructResumeStateUserPause::test_pause_before_boundary_ignored`
+
+Behavior: Exploration continue consumes stale user_pause markers by writing user_pause_resolved after first successful run.
+Tests:
+- `tests/test_pause.py::TestExplorePauseMarkerConsumption::test_explore_continue_consumes_pause_marker`
+
+Behavior: KeyboardInterrupt with PauseController returns "paused"; without controller re-raises.
+Tests:
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_keyboard_interrupt_with_controller`
+- `tests/test_pause.py::TestHandleConsoleEventsPause::test_keyboard_interrupt_without_controller`
+
 ## Known Gaps (Next Additions)
 
 1. Replay tests from additional historical `gotg-tests/test*` incidents (escape-based regression lane).

@@ -166,8 +166,8 @@ def build_prompt(
         # Consolidate consecutive non-self messages into a single user message
         pending_parts = []
         for msg in history:
-            if msg.get("pass_turn"):
-                continue  # Don't include pass notes in agent prompt context
+            if msg.get("pass_turn") or msg.get("user_pause") or msg.get("user_pause_resolved"):
+                continue  # Don't include pause/pass notes in agent prompt context
             if msg["from"] == agent_name:
                 # Flush any pending user parts first
                 if pending_parts:
@@ -258,6 +258,8 @@ def build_coach_prompt(
     else:
         pending_parts = []
         for msg in history:
+            if msg.get("user_pause") or msg.get("user_pause_resolved"):
+                continue
             if msg["from"] == coach_name:
                 if pending_parts:
                     messages.append({
