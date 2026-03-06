@@ -5,10 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from gotg.migration import (
-    CURRENT_EXPLORATION_VERSION,
-    migrate_exploration_metadata,
-)
 from gotg.explore import write_exploration_metadata, load_exploration_metadata
 from gotg.policy import exploration_policy
 from gotg.prompts import (
@@ -66,20 +62,12 @@ def _add_tasks_json(team_dir, iter_id, tasks=None):
     if tasks is None:
         tasks = [{"id": "t1", "description": "Task 1", "done_criteria": "Task is done", "depends_on": [], "status": "pending", "assigned_to": None}]
     path = team_dir / "iterations" / iter_id / "tasks.json"
-    path.write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    path.write_text(json.dumps(tasks))
 
 
 # ══════════════════════════════════════════════════════════════
 # Mechanism 0: exploration.json Linkage
 # ══════════════════════════════════════════════════════════════
-
-
-def test_migrate_exploration_v1_to_v2():
-    """v1→v2 migration adds context_from: null."""
-    data = {"schema_version": 1, "slug": "test", "status": "active"}
-    result = migrate_exploration_metadata(data)
-    assert result["schema_version"] == 2
-    assert result["context_from"] is None
 
 
 def test_write_exploration_metadata_with_context_from(tmp_path):
@@ -94,7 +82,6 @@ def test_write_exploration_metadata_with_context_from(tmp_path):
     )
     meta = json.loads((explore_dir / "exploration.json").read_text())
     assert meta["context_from"] == "iter-1"
-    assert meta["schema_version"] == CURRENT_EXPLORATION_VERSION
 
 
 def test_write_exploration_metadata_no_context(tmp_path):

@@ -320,7 +320,7 @@ def test_advance_rework_applies_feedback(tmp_path):
          "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done",
          "completed_by": "agent-1", "completion_summary": "done"},
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
 
     # Write a coach message so phase history is non-empty
     from gotg.conversation import append_message
@@ -335,7 +335,7 @@ def test_advance_rework_applies_feedback(tmp_path):
     assert result.layer == 0
     assert result.tasks_with_feedback == ["T1"]
 
-    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved = json.loads((iter_dir / "tasks.json").read_text())
     t1 = saved[0]
     assert t1["status"] == "changes_requested"
     assert t1["review_feedback"] == "Fix validation"
@@ -350,7 +350,7 @@ def test_advance_rework_preserves_done_tasks(tmp_path):
         {"id": "T2", "description": "y", "layer": 0, "status": "done",
          "assigned_to": "agent-2", "depends_on": [], "done_criteria": "done"},
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl",
                    {"from": "coach", "content": "Only T1 needs work"})
@@ -361,7 +361,7 @@ def test_advance_rework_preserves_done_tasks(tmp_path):
     result = advance_rework(team, iteration, iter_dir, chat_call=mock_chat)
     assert result.tasks_with_feedback == ["T1"]
 
-    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved = json.loads((iter_dir / "tasks.json").read_text())
     t2 = [t for t in saved if t["id"] == "T2"][0]
     assert t2["status"] == "done"
 
@@ -371,7 +371,7 @@ def test_advance_rework_saves_phase(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path)
     tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 
@@ -389,7 +389,7 @@ def test_advance_rework_keeps_layer(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path, current_layer=2)
     tasks = [{"id": "T1", "description": "x", "layer": 2, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 
@@ -408,7 +408,7 @@ def test_advance_rework_empty_feedback_raises(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path)
     tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "all good"})
 
@@ -425,7 +425,7 @@ def test_advance_rework_clears_completion_metadata(tmp_path):
     tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done",
               "completed_by": "agent-1", "completion_summary": "done it"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 
@@ -434,7 +434,7 @@ def test_advance_rework_clears_completion_metadata(tmp_path):
 
     advance_rework(team, iteration, iter_dir, chat_call=mock_chat)
 
-    saved = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved = json.loads((iter_dir / "tasks.json").read_text())
     assert "completed_by" not in saved[0]
     assert "completion_summary" not in saved[0]
 
@@ -444,7 +444,7 @@ def test_advance_rework_clears_review_outcome(tmp_path):
     team, iter_dir, iteration = _make_team_dir(tmp_path, review_outcome="changes_requested")
     tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 
@@ -466,7 +466,7 @@ def test_advance_rework_scoped_to_layer(tmp_path):
         {"id": "T2", "description": "y", "layer": 1, "status": "todo",
          "assigned_to": "agent-1", "depends_on": ["T1"], "done_criteria": "done"},
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 
@@ -598,7 +598,7 @@ def test_handle_complete_tasks_clears_review_feedback(tmp_path):
          "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done",
          "review_feedback": "Fix the bug"},
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
 
     result = _handle_complete_tasks(
         {"task_ids": ["T1"], "summary": "fixed"},
@@ -616,7 +616,7 @@ def test_cmd_rework_success(tmp_path, capsys):
     team, iter_dir, iteration = _make_team_dir(tmp_path, review_outcome="changes_requested")
     tasks = [{"id": "T1", "description": "x", "layer": 0, "status": "done",
               "assigned_to": "agent-1", "depends_on": [], "done_criteria": "done"}]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}))
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks))
     from gotg.conversation import append_message
     append_message(iter_dir / "conversation.jsonl", {"from": "coach", "content": "fix T1"})
 

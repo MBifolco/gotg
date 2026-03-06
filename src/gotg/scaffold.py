@@ -179,7 +179,6 @@ def init_project(path: Path) -> None:
 
     # team.json: model config + agents
     (team_dir / "team.json").write_text(json.dumps({
-        "schema_version": 1,
         "model": {
             "provider": "anthropic",
             "base_url": "https://api.anthropic.com",
@@ -209,7 +208,6 @@ def init_project(path: Path) -> None:
 
     # iteration.json: empty list, no current pointer
     (team_dir / "iteration.json").write_text(json.dumps({
-        "schema_version": 1,
         "iterations": [],
         "current": None,
     }, indent=2) + "\n")

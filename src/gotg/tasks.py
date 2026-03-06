@@ -1,38 +1,17 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-
-from gotg.migration import migrate_tasks_data, stamp_tasks_for_write
 
 
 def load_tasks_file(path: Path) -> list[dict]:
-    """Read and migrate tasks.json. Returns task list."""
-    raw = json.loads(path.read_text())
-    warnings: list[str] = []
-    tasks = migrate_tasks_data(raw, warnings=warnings)
-    for w in warnings:
-        print(f"Warning: {w}", file=sys.stderr)
-    return tasks
+    """Read tasks.json. Returns task list (bare JSON array)."""
+    return json.loads(path.read_text())
 
 
 def save_tasks_file(path: Path, tasks: list[dict]) -> None:
-    """Write tasks.json as wrapped format with schema_version.
-
-    Preserves unknown root keys if the file already exists as a wrapped dict.
-    Never down-stamps schema_version.
-    """
-    existing_wrapper = None
-    if path.exists():
-        try:
-            raw = json.loads(path.read_text())
-            if isinstance(raw, dict):
-                existing_wrapper = raw
-        except (json.JSONDecodeError, OSError):
-            pass
-    data = stamp_tasks_for_write(tasks, existing_wrapper=existing_wrapper)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    """Write tasks.json as a bare JSON array."""
+    path.write_text(json.dumps(tasks, indent=2) + "\n")
 
 
 def compute_layers(tasks: list[dict]) -> dict[str, int]:

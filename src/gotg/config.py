@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Callable
 
 from gotg.errors import ConfigError
-from gotg.migration import migrate_team_config
 
 
 def read_dotenv(dotenv_path: Path) -> dict[str, str]:
@@ -160,18 +158,12 @@ def load_worktree_config(team_dir: Path) -> dict | None:
 
 
 def load_team_config(team_dir: Path) -> dict:
-    """Load the full team.json as a dict, with migration applied."""
-    raw = json.loads((team_dir / "team.json").read_text())
-    warnings: list[str] = []
-    data = migrate_team_config(raw, warnings=warnings)
-    for w in warnings:
-        print(f"Warning: {w}", file=sys.stderr)
-    return data
+    """Load the full team.json as a dict."""
+    return json.loads((team_dir / "team.json").read_text())
 
 
 def save_team_config(team_dir: Path, config: dict) -> None:
-    """Write the full team.json with schema_version stamped."""
-    config = migrate_team_config(config)
+    """Write the full team.json."""
     team_path = team_dir / "team.json"
     team_path.write_text(json.dumps(config, indent=2) + "\n")
 

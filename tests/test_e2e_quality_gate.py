@@ -230,7 +230,7 @@ def test_e2e_iteration_lifecycle_refinement_to_code_review(tmp_path, monkeypatch
     # Assertions on lifecycle artifacts and final state
     iteration, _ = get_current_iteration(team_dir)
     messages = read_log(iter_dir / "conversation.jsonl")
-    tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    tasks = json.loads((iter_dir / "tasks.json").read_text())
 
     assert iteration["phase"] == "code-review"
     assert (iter_dir / "refinement_summary.md").exists()
@@ -272,7 +272,7 @@ def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
             "layer": 1,
         },
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr(
         "gotg.cli.agentic_completion",
@@ -333,7 +333,7 @@ def test_e2e_layer_progression_next_layer_contract(tmp_path, monkeypatch):
     assert result.all_done is True
     assert result.to_layer is None
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert all(t.get("status") == "done" for t in saved_tasks)
     assert any(m.get("phase_boundary") and m.get("layer") == 1 for m in read_log(iter_dir / "conversation.jsonl"))
 
@@ -370,7 +370,7 @@ def test_e2e_worktree_isolation_contract(tmp_path, monkeypatch):
             "layer": 0,
         },
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     # Main/project file used to verify read fallback from worktree roots.
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)
@@ -434,7 +434,7 @@ def test_e2e_worktree_isolation_contract(tmp_path, monkeypatch):
         streaming=False,
     )
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert all(t.get("status") == "done" for t in saved_tasks)
 
     # Root should not be directly written when worktree_map is active.
@@ -479,7 +479,7 @@ def test_e2e_artifact_consistency_tool_ops_and_task_state(tmp_path, monkeypatch)
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)
     (tmp_path / "src" / "input.txt").write_text("input data\n")
 
@@ -549,7 +549,7 @@ def test_e2e_artifact_consistency_tool_ops_and_task_state(tmp_path, monkeypatch)
             conv_ops.append(match.group(1))
     assert conv_ops == ["file_read", "file_write", "complete_tasks"]
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert next(t for t in saved_tasks if t["id"] == "consistency-task")["status"] == "done"
     assert (tmp_path / "src" / "output.txt").read_text() == "output data\n"
 
@@ -577,7 +577,7 @@ def test_replay_test8_implementation_tool_activity_persisted_to_conversation_and
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     fileguard = FileGuard(
         tmp_path,
@@ -659,7 +659,7 @@ def test_e2e_complete_tasks_atomic_rejection_on_invalid_id(tmp_path, monkeypatch
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -688,7 +688,7 @@ def test_e2e_complete_tasks_atomic_rejection_on_invalid_id(tmp_path, monkeypatch
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     task = next(t for t in saved_tasks if t["id"] == "valid-task")
     assert task["status"] == "pending"
     assert "completed_by" not in task
@@ -750,7 +750,7 @@ def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatc
     save_iteration_fields(team_dir, "iter-1", phase="implementation", current_layer=0)
     (iter_dir / "tasks.json").write_text(
         json.dumps(
-            {"schema_version": 1, "tasks": [
+            [
                 {
                     "id": "stream-task",
                     "description": "Streaming impl",
@@ -760,7 +760,7 @@ def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatc
                     "status": "pending",
                     "layer": 0,
                 }
-            ]},
+            ],
             indent=2,
         )
         + "\n"
@@ -901,7 +901,7 @@ def test_e2e_approval_pause_resume_implementation(tmp_path, monkeypatch):
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     # Writable only under src/** so writing main.py requires approval.
     fileguard = FileGuard(
@@ -992,7 +992,7 @@ def test_e2e_approval_pause_resume_implementation(tmp_path, monkeypatch):
         streaming=False,
     )
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert next(t for t in saved_tasks if t["id"] == "approval-task")["status"] == "done"
     messages = read_log(iter_dir / "conversation.jsonl")
     assert any("[file_write] PENDING APPROVAL: main.py" in m.get("content", "") for m in messages)
@@ -1023,7 +1023,7 @@ def test_e2e_implementation_state_resume_contract(tmp_path, monkeypatch):
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     # Writable only under src/** so writing main.py requires approval.
     fileguard = FileGuard(
@@ -1126,7 +1126,7 @@ def test_e2e_implementation_state_resume_contract(tmp_path, monkeypatch):
 
     assert state["saw_resume_continuation"] is True
     assert not state_path.exists()
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert next(t for t in saved_tasks if t["id"] == "resume-task")["status"] == "done"
 
 
@@ -1153,7 +1153,7 @@ def test_e2e_mixed_approval_resume_contract(tmp_path, monkeypatch):
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     # Writable only under src/** so writing main.py and README.md requires approval.
     fileguard = FileGuard(
@@ -1254,7 +1254,7 @@ def test_e2e_mixed_approval_resume_contract(tmp_path, monkeypatch):
         streaming=False,
     )
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     task = next(t for t in saved_tasks if t["id"] == "mixed-approval-task")
     messages = read_log(iter_dir / "conversation.jsonl")
 
@@ -1292,7 +1292,7 @@ def test_e2e_drift_check_reverts_completion_on_must_not_violation(tmp_path, monk
             "anti_patterns": ["Do not use eval()"],
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1340,7 +1340,7 @@ def test_e2e_drift_check_reverts_completion_on_must_not_violation(tmp_path, monk
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     messages = read_log(iter_dir / "conversation.jsonl")
     debug_rows = [
         json.loads(line)
@@ -1388,7 +1388,7 @@ def test_e2e_drift_check_recovery_allows_subsequent_completion(tmp_path, monkeyp
             "anti_patterns": ["Do not use eval()"],
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1467,7 +1467,7 @@ def test_e2e_drift_check_recovery_allows_subsequent_completion(tmp_path, monkeyp
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     task = next(t for t in saved_tasks if t["id"] == "recover-task")
     messages = read_log(iter_dir / "conversation.jsonl")
     debug_rows = [
@@ -1527,7 +1527,7 @@ def test_replay_test11_must_not_reverts_but_warning_only_allows_completion(tmp_p
             "anti_patterns": ["Do not implement startup/welcome message"],
         },
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1649,7 +1649,7 @@ def test_replay_test11_must_not_reverts_but_warning_only_allows_completion(tmp_p
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     messages = read_log(iter_dir / "conversation.jsonl")
     debug_rows = [
         json.loads(line)
@@ -1715,7 +1715,7 @@ def test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completi
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1750,7 +1750,7 @@ def test_replay_test14_invalid_report_blocked_payload_does_not_deadlock_completi
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     task = next(t for t in saved_tasks if t["id"] == "blocked-recovery-task")
     messages = read_log(iter_dir / "conversation.jsonl")
 
@@ -1786,7 +1786,7 @@ def test_replay_streamed_text_only_round_is_persisted_for_traceability(tmp_path,
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1846,7 +1846,7 @@ def test_replay_test9_attestation_payload_mismatch_does_not_block_completion(tmp
             "approach": "Build a loop that reads input and handles exit commands.",
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1888,7 +1888,7 @@ def test_replay_test9_attestation_payload_mismatch_does_not_block_completion(tmp
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     messages = read_log(iter_dir / "conversation.jsonl")
 
     task = next(t for t in saved_tasks if t["id"] == "project-setup-repl")
@@ -1922,7 +1922,7 @@ def test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks(tmp
             "layer": 0,
         }
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     monkeypatch.setattr("gotg.cli.agentic_completion", lambda **_kw: {"content": "unused", "operations": []})
     monkeypatch.setattr("gotg.cli.chat_completion", lambda **_kw: {"content": "unused", "tool_calls": []})
@@ -1963,7 +1963,7 @@ def test_replay_test10_file_writes_do_not_complete_task_until_complete_tasks(tmp
     iteration, _ = get_current_iteration(team_dir)
     run_conversation(iter_dir, agents, iteration, model_config, streaming=False)
 
-    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())["tasks"]
+    saved_tasks = json.loads((iter_dir / "tasks.json").read_text())
     messages = read_log(iter_dir / "conversation.jsonl")
     debug_rows = [
         json.loads(line)
@@ -2021,7 +2021,7 @@ def test_replay_test16_next_layer_boundary_uses_code_review_phase(tmp_path):
             "layer": 1,
         },
     ]
-    (iter_dir / "tasks.json").write_text(json.dumps({"schema_version": 1, "tasks": tasks}, indent=2) + "\n")
+    (iter_dir / "tasks.json").write_text(json.dumps(tasks, indent=2) + "\n")
 
     iteration, _ = get_current_iteration(team_dir)
     result = advance_next_layer(team_dir, iteration, iter_dir)

@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from gotg.errors import ConfigError
-from gotg.migration import migrate_iteration_data
 
 
 PHASE_ORDER = ["refinement", "planning", "pre-code-review", "implementation", "code-review"]
@@ -15,10 +13,6 @@ ITERATION_STATUSES = ["pending", "in-progress", "done"]
 
 def load_iteration(team_dir: Path) -> dict:
     data = json.loads((team_dir / "iteration.json").read_text())
-    warnings: list[str] = []
-    data = migrate_iteration_data(data, warnings=warnings)
-    for w in warnings:
-        print(f"Warning: {w}", file=sys.stderr)
     current_id = data.get("current")
     if not current_id:
         raise ConfigError(
@@ -56,7 +50,6 @@ def create_iteration(
     """
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
-    data = migrate_iteration_data(data)
     existing_ids = {it["id"] for it in data.get("iterations", [])}
     if iteration_id in existing_ids:
         raise ValueError(f"Iteration '{iteration_id}' already exists.")
@@ -89,7 +82,6 @@ def save_iteration_fields(team_dir: Path, iteration_id: str, **fields) -> None:
     """Update arbitrary fields on an iteration in iteration.json."""
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
-    data = migrate_iteration_data(data)
     for iteration in data["iterations"]:
         if iteration["id"] == iteration_id:
             iteration.update(fields)
@@ -108,7 +100,6 @@ def switch_current_iteration(team_dir: Path, iteration_id: str) -> None:
     """Switch the current iteration pointer to the given ID."""
     iter_path = team_dir / "iteration.json"
     data = json.loads(iter_path.read_text())
-    data = migrate_iteration_data(data)
     existing_ids = {it["id"] for it in data.get("iterations", [])}
     if iteration_id not in existing_ids:
         raise ValueError(f"Iteration '{iteration_id}' not found.")
@@ -148,13 +139,6 @@ class IterationStore:
         switch_current_iteration(self.team_dir, iteration_id)
 
     def list_all(self) -> list[dict]:
-        """Return all iterations in natural order (append-order from iteration.json).
-
-        Uses migration path — same as load_iteration().
-        """
+        """Return all iterations in natural order (append-order from iteration.json)."""
         data = json.loads((self.team_dir / "iteration.json").read_text())
-        warnings: list[str] = []
-        data = migrate_iteration_data(data, warnings=warnings)
-        for w in warnings:
-            print(f"Warning: {w}", file=sys.stderr)
         return data.get("iterations", [])

@@ -730,12 +730,11 @@ def test_advance_planning_with_coach_produces_tasks_json(tmp_path):
             with patch("gotg.cli.chat_completion", return_value=tasks_response):
                 main()
 
-    # tasks.json should exist with valid JSON (wrapped format)
+    # tasks.json should exist with valid JSON (bare array)
     tasks_path = iter_dir / "tasks.json"
     assert tasks_path.exists()
-    raw_data = json.loads(tasks_path.read_text())
-    assert raw_data["schema_version"] == 1
-    tasks_data = raw_data["tasks"]
+    tasks_data = json.loads(tasks_path.read_text())
+    assert isinstance(tasks_data, list)
     assert len(tasks_data) == 2
     assert tasks_data[0]["id"] == "build-auth"
     assert tasks_data[1]["depends_on"] == ["build-auth"]
@@ -1140,8 +1139,7 @@ def test_advance_planning_strips_code_fences(tmp_path):
 
     tasks_path = iter_dir / "tasks.json"
     assert tasks_path.exists()
-    raw_data = json.loads(tasks_path.read_text())
-    tasks_data = raw_data["tasks"]
+    tasks_data = json.loads(tasks_path.read_text())
     assert len(tasks_data) == 1
     assert tasks_data[0]["id"] == "t1"
     assert tasks_data[0]["layer"] == 0
@@ -3309,8 +3307,7 @@ def test_task_notes_extracted_on_pre_code_review_advance(tmp_path):
             with patch("gotg.cli.chat_completion", return_value=notes_response):
                 main()
 
-    raw_updated = json.loads((iter_dir / "tasks.json").read_text())
-    updated_tasks = raw_updated["tasks"]
+    updated_tasks = json.loads((iter_dir / "tasks.json").read_text())
     assert updated_tasks[0].get("notes") == "File: src/main.py. def run() -> None."
 
 

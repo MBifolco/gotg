@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
 from gotg.errors import ExplorationError
 from gotg.events import SessionStarted
-from gotg.migration import CURRENT_EXPLORATION_VERSION, migrate_exploration_metadata
 
 
 # ── Slug generation ──────────────────────────────────────────────
@@ -87,7 +85,6 @@ def write_exploration_metadata(
     (explore_dir / "conversation.jsonl").touch()
 
     metadata = {
-        "schema_version": CURRENT_EXPLORATION_VERSION,
         "slug": slug,
         "topic": topic,
         "coach": coach,
@@ -105,11 +102,7 @@ def load_exploration_metadata(team_dir: Path, slug: str) -> tuple[dict, Path]:
     meta_path = explore_dir / "exploration.json"
     if not meta_path.exists():
         raise ExplorationError(f"exploration session '{slug}' not found.")
-    warnings: list[str] = []
-    data = migrate_exploration_metadata(json.loads(meta_path.read_text()), warnings=warnings)
-    for w in warnings:
-        print(f"Warning: {w}", file=sys.stderr)
-    return data, explore_dir
+    return json.loads(meta_path.read_text()), explore_dir
 
 
 def list_exploration_sessions(team_dir: Path) -> list[dict]:
@@ -121,11 +114,7 @@ def list_exploration_sessions(team_dir: Path) -> list[dict]:
     for d in sorted(exploration_root.iterdir()):
         meta_path = d / "exploration.json"
         if meta_path.exists():
-            warnings: list[str] = []
-            data = migrate_exploration_metadata(json.loads(meta_path.read_text()), warnings=warnings)
-            for w in warnings:
-                print(f"Warning: {w}", file=sys.stderr)
-            sessions.append(data)
+            sessions.append(json.loads(meta_path.read_text()))
     return sessions
 
 
