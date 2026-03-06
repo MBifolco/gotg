@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from gotg.config import ITERATION_STATUSES, switch_current_iteration
+from gotg.iteration_store import ITERATION_STATUSES, switch_current_iteration
 
 
 # ── Shared fixture ────────────────────────────────────────────

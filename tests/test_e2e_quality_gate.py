@@ -11,7 +11,7 @@ import re
 
 from gotg.approvals import ApprovalStore
 from gotg.cli import run_conversation
-from gotg.config import get_current_iteration, save_iteration_fields
+from gotg.iteration_store import get_current_iteration, save_iteration_fields
 from gotg.conversation import read_log
 from gotg.fileguard import FileGuard
 from gotg.model import CompletionRound, StreamingResult
@@ -745,7 +745,7 @@ def test_e2e_streaming_parity_discussion_and_implementation(tmp_path, monkeypatc
     run_conversation(iter_dir, agents, iteration, model_config, streaming=True)
 
     # Move to implementation directly for parity check.
-    from gotg.config import save_iteration_fields
+    from gotg.iteration_store import save_iteration_fields
 
     save_iteration_fields(team_dir, "iter-1", phase="implementation", current_layer=0)
     (iter_dir / "tasks.json").write_text(

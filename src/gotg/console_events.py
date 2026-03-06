@@ -50,7 +50,7 @@ def print_session_header(event: SessionStarted) -> None:
 
 def print_phase_complete(phase: str | None) -> None:
     """Print phase-specific completion message."""
-    from gotg.config import PHASE_ORDER
+    from gotg.iteration_store import PHASE_ORDER
 
     from gotg.phases import get_phase_caps_safe
     caps = get_phase_caps_safe(phase)

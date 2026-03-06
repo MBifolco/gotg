@@ -271,7 +271,7 @@ def test_apply_iteration_proposals_create(tmp_path):
     assert any(r.get("iterations_batch_approved") == "p1" for r in results)
 
     # Verify iteration was actually created on disk
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     iters = IterationStore(team_dir).list_all()
     new = [it for it in iters if it["id"] == "iter-1"]
     assert len(new) == 1
@@ -295,7 +295,7 @@ def test_apply_iteration_proposals_create_batch_ids(tmp_path):
         team_dir, proposals, batch_id="p1", explore_slug="test-slug", store=store,
     )
 
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     iters = IterationStore(team_dir).list_all()
     ids = {it["id"] for it in iters}
     assert "iter-1" in ids
@@ -322,7 +322,7 @@ def test_apply_iteration_proposals_update(tmp_path):
 
     assert any("[iterations] Updated iter-1: New Title" in r["content"] for r in results)
 
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     iters = IterationStore(team_dir).list_all()
     updated = [it for it in iters if it["id"] == "iter-1"][0]
     assert updated["title"] == "New Title"

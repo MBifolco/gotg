@@ -63,7 +63,7 @@ def run_conversation(
                 from gotg.phases import get_phase_caps_safe
                 caps = get_phase_caps_safe(event.phase)
                 if caps.phase_complete_shows_review_hint:
-                    from gotg.config import save_iteration_fields
+                    from gotg.iteration_store import save_iteration_fields
                     save_iteration_fields(team_dir, iteration["id"], review_outcome=event.outcome)
             yield event
 

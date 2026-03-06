@@ -89,7 +89,7 @@ class ReviewScreen(Screen):
 
     def _reload_iteration(self) -> None:
         """Refresh iteration state from disk to avoid acting on stale data."""
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         store = IterationStore(self._team_dir)
         iteration, _ = store.get_current()
         self._iteration = iteration
@@ -417,7 +417,7 @@ class ReviewScreen(Screen):
     def action_finish_iteration(self) -> None:
         if not self._all_layers_done:
             return
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         IterationStore(self._team_dir).save_fields(self._iteration["id"], status="done")
         self.notify(f"Iteration {self._iteration['id']} marked as done.")
         self.app.pop_screen()

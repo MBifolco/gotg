@@ -47,7 +47,7 @@ def load_iteration_context(
     if iteration not found or has no artifacts. When auto-detecting
     (context_from=None), returns None silently if nothing found.
     """
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
 
     if context_from:
         # Explicit: validate iteration exists
@@ -506,7 +506,7 @@ def setup_worktrees(
     if caps.filter_worktree_agents_by_tasks:
         tasks_path = team_dir.parent / ".team" / "iterations"
         # Find iter_dir from the team_dir layout
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         from gotg.errors import ConfigError
         try:
             _, iter_dir = IterationStore(team_dir).get_current()
@@ -637,7 +637,7 @@ def apply_iteration_proposals(
     Validates each proposal before any state mutations. Invalid proposals become
     soft error messages. New iteration IDs are computed upfront to handle batches correctly.
     """
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     from gotg.errors import ConfigError
 
     iter_store = IterationStore(team_dir)

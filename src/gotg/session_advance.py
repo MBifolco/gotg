@@ -31,7 +31,7 @@ def validate_advance(iteration: dict) -> tuple[str, str]:
 
     Raises PhaseAdvanceError if advance cannot proceed.
     """
-    from gotg.config import PHASE_ORDER
+    from gotg.iteration_store import PHASE_ORDER
 
     if iteration.get("status") != "in-progress":
         raise PhaseAdvanceError(
@@ -69,9 +69,8 @@ def advance_phase(
 
     Returns AdvanceResult. Raises PhaseAdvanceError on validation failure.
     """
-    from gotg.config import (
-        IterationStore, load_coach, load_model_config, load_worktree_config,
-    )
+    from gotg.config import load_coach, load_model_config, load_worktree_config
+    from gotg.iteration_store import IterationStore
     from gotg.transitions import (
         auto_commit_layer_worktrees, build_phase_skeleton, build_transition_messages,
         extract_refinement_summary, extract_task_notes, extract_tasks,
@@ -302,7 +301,8 @@ def advance_next_layer(
     on_progress: Callable[[str], None] | None = None,
 ) -> NextLayerResult:
     """Advance to next layer after implementation/code-review. Raises ReviewError on failure."""
-    from gotg.config import IterationStore, load_worktree_config
+    from gotg.config import load_worktree_config
+    from gotg.iteration_store import IterationStore
 
     def _progress(msg: str) -> None:
         if on_progress:
@@ -426,7 +426,8 @@ def advance_rework(
 
     Raises ReworkError on validation failure or empty feedback.
     """
-    from gotg.config import IterationStore, load_coach, load_model_config
+    from gotg.config import load_coach, load_model_config
+    from gotg.iteration_store import IterationStore
     from gotg.tasks import TaskRepo
     from gotg.transitions import build_rework_messages, extract_review_feedback
 

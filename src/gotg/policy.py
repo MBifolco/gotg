@@ -106,7 +106,7 @@ def iteration_policy(
         tasks_summary = format_tasks_summary(tasks_data, layer=impl_layer)
 
     # Build iteration plan (sibling iterations for scope awareness)
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     team_dir = iter_dir.parent.parent  # .team/iterations/iter-N → .team
     try:
         all_iterations = IterationStore(team_dir).list_all()

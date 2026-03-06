@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from gotg.config import IterationStore
+from gotg.iteration_store import IterationStore
 from gotg.context import TeamContext
 from gotg.conversation import ConversationStore
 from gotg.errors import ConfigError

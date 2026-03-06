@@ -68,7 +68,7 @@ def test_init_creates_iterations_directory(git_project):
 def test_load_iteration_empty_init_gives_clear_error(git_project):
     """load_iteration on a fresh init (no iterations) gives a helpful error."""
     init_project(git_project)
-    from gotg.config import load_iteration
+    from gotg.iteration_store import load_iteration
     with pytest.raises(ConfigError, match="No current iteration"):
         load_iteration(git_project / ".team")
 

@@ -64,7 +64,7 @@ def cmd_explore_start(args):
         context_from_value = None
         # If auto-detect found something, record which iteration it came from
         if project_context:
-            from gotg.config import IterationStore
+            from gotg.iteration_store import IterationStore
             try:
                 all_iters = IterationStore(team_dir).list_all()
                 for it in all_iters:

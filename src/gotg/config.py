@@ -143,20 +143,6 @@ def load_coach(team_dir: Path) -> dict | None:
     return load_team_config(team_dir).get("coach")
 
 
-# Re-exports from iteration_store (moved for module cohesion)
-from gotg.iteration_store import (  # noqa: F401, E402
-    ITERATION_STATUSES,
-    PHASE_ORDER,
-    IterationStore,
-    create_iteration,
-    get_current_iteration,
-    get_iteration_dir,
-    load_iteration,
-    save_iteration_fields,
-    save_iteration_phase,
-    switch_current_iteration,
-)
-
 
 def load_streaming_config(team_dir: Path) -> bool:
     """Read streaming flag from team.json. Returns False if not configured."""

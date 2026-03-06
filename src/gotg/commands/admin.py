@@ -4,9 +4,10 @@ from pathlib import Path
 
 import gotg.cli as _cli
 from gotg.config import (
-    IterationStore, save_model_config,
+    save_model_config,
     read_dotenv, ensure_dotenv_key,
 )
+from gotg.iteration_store import IterationStore
 from gotg.conversation import ConversationStore, render_message
 from gotg.providers import provider_runtime_config, PROVIDERS
 from gotg.scaffold import init_project

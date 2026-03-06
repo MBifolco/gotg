@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Callable
 
 from gotg.config import (
-    IterationStore,
     build_model_resolver,
     load_agents,
     load_coach,
@@ -14,6 +13,7 @@ from gotg.config import (
     load_model_config,
     load_worktree_config,
 )
+from gotg.iteration_store import IterationStore
 from gotg.errors import ConfigError
 from gotg.types import (
     AgentDict,

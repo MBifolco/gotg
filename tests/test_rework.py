@@ -686,7 +686,7 @@ def test_cli_continue_clears_review_outcome(tmp_path):
     append_message(iter_dir / "conversation.jsonl",
                    {"from": "agent-1", "content": "hello", "iteration": "iter-1"})
 
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
 
     with patch("gotg.commands.run._cli.run_conversation"):
         from gotg.commands.run import cmd_continue

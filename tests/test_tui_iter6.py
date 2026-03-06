@@ -147,7 +147,7 @@ async def test_get_selected_row_key_empty_table():
 
 
 def test_create_iteration(tmp_path):
-    from gotg.config import create_iteration
+    from gotg.iteration_store import create_iteration
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
     (team_dir / "iteration.json").write_text(json.dumps({
@@ -170,7 +170,7 @@ def test_create_iteration(tmp_path):
 
 
 def test_create_iteration_duplicate_raises(tmp_path):
-    from gotg.config import create_iteration
+    from gotg.iteration_store import create_iteration
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
     (team_dir / "iteration.json").write_text(json.dumps({
@@ -182,7 +182,7 @@ def test_create_iteration_duplicate_raises(tmp_path):
 
 
 def test_create_iteration_no_set_current(tmp_path):
-    from gotg.config import create_iteration
+    from gotg.iteration_store import create_iteration
     team_dir = tmp_path / ".team"
     team_dir.mkdir()
     (team_dir / "iteration.json").write_text(json.dumps({

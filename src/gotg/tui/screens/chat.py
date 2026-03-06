@@ -410,7 +410,7 @@ class ChatScreen(Screen):
 
                 # Clear stale review_outcome when resuming code-review discussion.
                 if iteration.get("phase") == "code-review" and iteration.get("review_outcome"):
-                    from gotg.config import save_iteration_fields
+                    from gotg.iteration_store import save_iteration_fields
                     save_iteration_fields(self.app.team_dir, iteration["id"], review_outcome=None)
                     iteration["review_outcome"] = None
 
@@ -672,7 +672,7 @@ class ChatScreen(Screen):
             bar = self.query_one("#action-bar", ActionBar)
             if caps.phase_complete_shows_review_hint:
                 # Persist review outcome to iteration.json
-                from gotg.config import save_iteration_fields
+                from gotg.iteration_store import save_iteration_fields
                 save_iteration_fields(self.app.team_dir, self.metadata["id"], review_outcome=event.outcome)
                 if event.outcome == "changes_requested":
                     bar.show("Rework needed. Press W to rework, D to view diffs.")

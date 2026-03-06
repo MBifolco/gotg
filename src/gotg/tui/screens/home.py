@@ -243,7 +243,7 @@ class HomeScreen(Screen):
 
         # Switch current if running a non-current iteration
         if kind == "iteration" and not meta.get("is_current"):
-            from gotg.config import IterationStore
+            from gotg.iteration_store import IterationStore
             IterationStore(team_dir).set_current(meta["id"])
             self.notify(f"Switched to {meta['id']}")
 
@@ -257,7 +257,7 @@ class HomeScreen(Screen):
 
     def _start_pending_iteration(self, meta: dict, data_dir: Path) -> None:
         """Handle starting a pending iteration — prompt for description if missing."""
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
 
         desc = meta.get("description", "") or meta.get("title", "")
         if not desc.strip():
@@ -281,7 +281,7 @@ class HomeScreen(Screen):
         """Callback after TextInputModal for pending iteration description."""
         if result is None:
             return
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         team_dir = self.app.team_dir
         IterationStore(team_dir).save_fields(meta["id"], description=result, status="in-progress")
         meta["description"] = result
@@ -323,7 +323,7 @@ class HomeScreen(Screen):
     def _on_new_iteration(self, result: str | None) -> None:
         if result is None:
             return
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         team_dir = self.app.team_dir
 
         # Auto-generate next ID
@@ -356,7 +356,7 @@ class HomeScreen(Screen):
             return
         from gotg.explore import existing_slugs, generate_slug, load_exploration_metadata, write_exploration_metadata
         from gotg.session_setup import load_iteration_context
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         team_dir = self.app.team_dir
         slug = generate_slug(result, existing_slugs(team_dir))
 
@@ -415,7 +415,7 @@ class HomeScreen(Screen):
     def _on_edit_iteration(self, result: dict | None, iteration_id: str) -> None:
         if result is None:
             return
-        from gotg.config import IterationStore
+        from gotg.iteration_store import IterationStore
         IterationStore(self.app.team_dir).save_fields(iteration_id, **result)
         self.notify(f"Updated {iteration_id}")
         self._load_data()

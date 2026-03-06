@@ -4,11 +4,14 @@ from pathlib import Path
 import pytest
 
 from gotg.config import (
-    load_model_config, load_agents, load_coach, load_iteration,
+    load_model_config, load_agents, load_coach,
     load_file_access, read_dotenv, ensure_dotenv_key,
-    get_iteration_dir, get_current_iteration, save_model_config,
-    save_iteration_phase, save_iteration_fields, PHASE_ORDER,
+    save_model_config,
     build_model_resolver, resolve_model_config,
+)
+from gotg.iteration_store import (
+    load_iteration, get_iteration_dir, get_current_iteration,
+    save_iteration_phase, save_iteration_fields, PHASE_ORDER,
 )
 from gotg.errors import ConfigError
 

@@ -21,7 +21,7 @@ from gotg.prompts import (
 )
 from gotg.tools import READ_ONLY_FILE_TOOLS, FILE_TOOLS
 from gotg.agent import build_prompt, build_coach_prompt
-from gotg.config import IterationStore
+from gotg.iteration_store import IterationStore
 from gotg.session_setup import load_iteration_context
 from gotg.session_types import SessionSetupError
 
@@ -750,7 +750,7 @@ def test_tui_new_exploration_persists_context_from(tmp_path):
     # by calling write_exploration_metadata with the same auto-detect
     # pattern that _on_new_exploration now uses.
     from gotg.session_setup import load_iteration_context
-    from gotg.config import IterationStore
+    from gotg.iteration_store import IterationStore
     from gotg.explore import generate_slug, existing_slugs, write_exploration_metadata
 
     topic = "test TUI exploration"

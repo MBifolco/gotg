@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import gotg.cli as _cli
-from gotg.config import IterationStore
+from gotg.iteration_store import IterationStore
 from gotg.conversation import render_message
 
 

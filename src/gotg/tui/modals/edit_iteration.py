@@ -7,7 +7,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select
 
-from gotg.config import ITERATION_STATUSES
+from gotg.iteration_store import ITERATION_STATUSES
 
 
 _STATUS_OPTIONS = [(s, s) for s in ITERATION_STATUSES]

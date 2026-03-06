@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from gotg.config import PHASE_ORDER
+from gotg.iteration_store import PHASE_ORDER
 from gotg.phases import (
     PHASE_CAPS,
     PhaseCapabilities,
