@@ -86,14 +86,36 @@ def cmd_explore_start(args):
     from gotg.config import load_streaming_config
     streaming = load_streaming_config(team_dir)
 
-    run_exploration_conversation(
-        explore_dir, ctx.agents, iteration, ctx.model_config,
-        topic=topic, coach=coach, max_turns_override=max_turns,
-        streaming=streaming, model_resolver=ctx.model_resolver,
-        project_context=project_context,
-        project_root=ctx.project_root,
-        file_access=ctx.file_access,
-    )
+    from gotg.commands.run import _make_pause_controller
+    pause_ctrl = _make_pause_controller()
+    log_path = explore_dir / "conversation.jsonl"
+
+    while True:
+        result = run_exploration_conversation(
+            explore_dir, ctx.agents, iteration, ctx.model_config,
+            topic=topic, coach=coach, max_turns_override=max_turns,
+            streaming=streaming, model_resolver=ctx.model_resolver,
+            project_context=project_context,
+            project_root=ctx.project_root,
+            file_access=ctx.file_access,
+            pause_controller=pause_ctrl,
+        )
+        if result != "paused" or pause_ctrl is None:
+            break
+
+        from gotg.pause import RESUME, prompt_for_interjection
+        user_input = prompt_for_interjection(f"gotg explore continue {slug}")
+        if user_input is None:
+            store = ConversationStore(log_path)
+            store.append({"from": "system", "content": "(Session paused by user.)",
+                          "user_pause": True, "iteration": slug})
+            break
+        if user_input is not RESUME:
+            msg = {"from": "human", "iteration": slug, "content": user_input}
+            ConversationStore(log_path).append(msg)
+            print(render_message(msg))
+            print()
+        pause_ctrl.reset()
 
 
 def cmd_explore_continue(args):
@@ -185,14 +207,58 @@ def cmd_explore_continue(args):
     from gotg.config import load_streaming_config
     streaming = load_streaming_config(team_dir)
 
-    run_exploration_conversation(
-        explore_dir, ctx.agents, iteration, ctx.model_config,
-        topic=metadata["topic"], coach=coach, max_turns_override=target_total,
-        streaming=streaming, model_resolver=ctx.model_resolver,
-        project_context=project_context,
-        project_root=ctx.project_root,
-        file_access=ctx.file_access,
-    )
+    from gotg.commands.run import _make_pause_controller
+    pause_ctrl = _make_pause_controller()
+    slug = args.slug
+
+    # Detect (but don't consume) stale user_pause marker
+    _pause_marker_pending = False
+    for m in reversed(history):
+        if m.get("user_pause_resolved"):
+            break
+        if m.get("user_pause"):
+            _pause_marker_pending = True
+            break
+        if m.get("from") == "human":
+            break
+        if m.get("from") not in ("system", "human"):
+            break
+
+    while True:
+        result = run_exploration_conversation(
+            explore_dir, ctx.agents, iteration, ctx.model_config,
+            topic=metadata["topic"], coach=coach, max_turns_override=target_total,
+            streaming=streaming, model_resolver=ctx.model_resolver,
+            project_context=project_context,
+            project_root=ctx.project_root,
+            file_access=ctx.file_access,
+            pause_controller=pause_ctrl,
+        )
+
+        # Consume marker AFTER first successful run
+        if _pause_marker_pending:
+            store.append({
+                "from": "system", "content": "",
+                "user_pause_resolved": True, "iteration": slug,
+            })
+            _pause_marker_pending = False
+
+        if result != "paused" or pause_ctrl is None:
+            break
+
+        from gotg.pause import RESUME, prompt_for_interjection
+        user_input = prompt_for_interjection(f"gotg explore continue {slug}")
+        if user_input is None:
+            store = ConversationStore(log_path)
+            store.append({"from": "system", "content": "(Session paused by user.)",
+                          "user_pause": True, "iteration": slug})
+            break
+        if user_input is not RESUME:
+            msg = {"from": "human", "iteration": slug, "content": user_input}
+            ConversationStore(log_path).append(msg)
+            print(render_message(msg))
+            print()
+        pause_ctrl.reset()
 
 
 def cmd_explore_list(args):

@@ -26,6 +26,8 @@ MessageDict = TypedDict(
         "from_phase": NotRequired[str],
         "to_phase": NotRequired[str],
         "layer": NotRequired[int],
+        "user_pause": NotRequired[bool],
+        "user_pause_resolved": NotRequired[bool],
     },
 )
 

@@ -338,6 +338,7 @@ def run_and_persist(setup: SessionSetup) -> Iterator:
             iteration=setup.iteration, iter_dir=setup.iter_dir,
             model_config=setup.model_config, deps=setup.deps,
             history=setup.history, policy=setup.policy,
+            cancel_check=setup.cancel_check,
         )
     else:
         from gotg.engine import run_session

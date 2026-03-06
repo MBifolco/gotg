@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from gotg.config import resolve_model_config
 from gotg.engine import SessionDeps, build_tool_executor
@@ -19,6 +19,7 @@ from gotg.events import (
     SessionStarted,
     TaskBlocked,
     TextDelta,
+    UserPauseComplete,
 )
 from gotg.tools import classify_tool_result, make_tool_progress
 from gotg.policy import SessionPolicy
@@ -453,10 +454,12 @@ def run_implementation(
     history: list[dict],
     policy: SessionPolicy,
     max_tool_rounds: int | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> Iterator[
     SessionStarted | AppendMessage | AppendDebug |
     ToolCallProgress | TaskBlocked | PauseForApprovals |
-    LayerComplete | SessionComplete | TextDelta | AgentTurnComplete
+    LayerComplete | SessionComplete | TextDelta | AgentTurnComplete |
+    UserPauseComplete
 ]:
     """Run implementation phase for a single layer.
 
@@ -533,6 +536,12 @@ def run_implementation(
 
     for agent in active_agents:
         agent_name = agent["name"]
+
+        # Cancel check — only between agent dispatches (not before first)
+        if cancel_check and cancel_check() and dispatched_agents > 0:
+            _clear_state(iter_dir)
+            yield UserPauseComplete(total_turns=dispatched_agents)
+            return
 
         if resume_gate and agent_name != resume_gate:
             continue

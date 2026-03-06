@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gotg.conversation import ConversationStore
@@ -131,6 +131,7 @@ class PauseReason(Enum):
     COACH_QUESTION = auto()
     PHASE_COMPLETE = auto()
     ITERATIONS_PROPOSED = auto()
+    USER_PAUSE = auto()
 
 
 @dataclass
@@ -210,6 +211,7 @@ class SessionSetup:
     approval_store: object | None
     worktree_map: dict | None
     conv_store: ConversationStore | None = None
+    cancel_check: Callable[[], bool] | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -244,6 +246,18 @@ def reconstruct_resume_state(messages: list[dict], phase: str | None) -> ResumeS
         if messages[i].get("phase_boundary"):
             phase_messages = messages[i + 1:]
             break
+
+    # Check for unresolved user_pause marker BEFORE content scan.
+    # Stops on: resolution marker, human message, or any non-system content (agent/coach).
+    for msg in reversed(phase_messages):
+        if msg.get("user_pause_resolved"):
+            break  # explicitly resolved
+        if msg.get("user_pause"):
+            return ResumeState(pause_reason=PauseReason.USER_PAUSE)
+        if msg.get("from") == "human":
+            break  # human message → implicitly resolved
+        if msg.get("from") not in ("system", "human"):
+            break  # any agent/coach content → old marker is stale
 
     # Walk backwards past pass_turn and system messages to find real last content
     last_content_msg = None

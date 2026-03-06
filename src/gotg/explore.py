@@ -163,8 +163,12 @@ def run_exploration_conversation(
     project_context: str | None = None,
     project_root: Path | None = None,
     file_access: dict | None = None,
-) -> None:
-    """Run an exploration conversation. Handles all events from run_session."""
+    pause_controller=None,
+) -> str | None:
+    """Run an exploration conversation. Handles all events from run_session.
+
+    Returns "paused" if user paused, None otherwise.
+    """
     # Late imports to preserve mock targets (bridge pattern)
     from gotg.console_events import handle_console_events
     from gotg.engine import SessionDeps
@@ -189,10 +193,18 @@ def run_exploration_conversation(
     )
 
     slug = iteration["id"]
-    handle_console_events(
-        run_and_persist(setup),
-        on_started=lambda e: _print_exploration_header(e, topic),
-        resume_hint=f"gotg explore continue {slug}",
-        summarize_hint=f"gotg explore summarize {slug}",
-        complete_label="Exploration",
-    )
+
+    if pause_controller:
+        pause_controller.install()
+    try:
+        return handle_console_events(
+            run_and_persist(setup),
+            on_started=lambda e: _print_exploration_header(e, topic),
+            resume_hint=f"gotg explore continue {slug}",
+            summarize_hint=f"gotg explore summarize {slug}",
+            complete_label="Exploration",
+            pause_controller=pause_controller,
+        )
+    finally:
+        if pause_controller:
+            pause_controller.uninstall()

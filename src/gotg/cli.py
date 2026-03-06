@@ -29,7 +29,8 @@ def run_conversation(
     diffs_summary: str | None = None,
     streaming: bool = False,
     model_resolver=None,
-) -> None:
+    pause_controller=None,
+) -> str | None:
     from gotg.session import prepare_session, run_and_persist
 
     # Build deps from module-level imports (bridge pattern — preserves mock targets)
@@ -49,6 +50,10 @@ def run_conversation(
         streaming=streaming,
     )
 
+    # Wire cancel_check for implementation-mode pause
+    if pause_controller:
+        setup.cancel_check = pause_controller.is_pause_requested
+
     team_dir = iter_dir.parent.parent  # .team/iterations/iter-N → .team
 
     def _persist_outcome(events):
@@ -62,10 +67,17 @@ def run_conversation(
                     save_iteration_fields(team_dir, iteration["id"], review_outcome=event.outcome)
             yield event
 
-    handle_console_events(
-        _persist_outcome(run_and_persist(setup)),
-        use_implementation=setup.use_implementation,
-    )
+    if pause_controller:
+        pause_controller.install()
+    try:
+        return handle_console_events(
+            _persist_outcome(run_and_persist(setup)),
+            use_implementation=setup.use_implementation,
+            pause_controller=pause_controller,
+        )
+    finally:
+        if pause_controller:
+            pause_controller.uninstall()
 
 
 # ── Re-exports for external compatibility ──────────────────────────

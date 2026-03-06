@@ -103,6 +103,12 @@ class IterationsProposed:
 
 
 @dataclass
+class UserPauseComplete:
+    """User requested pause; implementation stopped at dispatch boundary."""
+    total_turns: int
+
+
+@dataclass
 class AdvanceProgress:
     """Reports advance progress step to the UI."""
     message: str
