@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Team configuration loading — dotenv, model config, team.json.
+
+Reads .env files, resolves $VAR API key references, builds per-agent model
+resolvers. Also loads streaming, file_access, and worktree settings from
+team.json. Iteration persistence lives in iteration_store.py.
+"""
+
 import json
 import os
 from pathlib import Path

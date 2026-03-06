@@ -1,3 +1,10 @@
+"""File tool definitions and execution for agents.
+
+Defines file_read, file_write, file_list, file_delete, file_rename tool
+schemas. execute_file_tool dispatches calls through FileGuard with optional
+approval routing. Called by engine.py's tool executor.
+"""
+
 from gotg.events import ToolCallProgress
 from gotg.fileguard import (
     FileGuard, SecurityError,

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Prompt template loader — reads from data/default_prompts.toml.
+
+Exports module-level constants (DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS,
+COACH_FACILITATION_PROMPTS, tool descriptions, extraction prompts).
+Used by agent.py, engine.py, transitions.py, and policy.py.
+"""
+
 import tomllib
 from importlib import resources
 

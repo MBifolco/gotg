@@ -1,3 +1,10 @@
+"""File system access control for agent tool calls.
+
+FileGuard enforces hard-deny zones (.team/, .git/, .env*), configurable
+writable/protected paths, and optional approval routing. Used by tools.py
+for real-time writes and approvals.py for deferred approved writes.
+"""
+
 import fnmatch
 from pathlib import Path, PurePath
 

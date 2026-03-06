@@ -1,3 +1,11 @@
+"""Prompt construction for agents and coaches.
+
+build_prompt assembles system message + conversation history for agent turns.
+build_coach_prompt does the same for coach facilitation turns. Injects phase
+guidance, file access info, worktree context, @mention awareness, and filters
+out pass_turn/pause markers. Called by engine.py.
+"""
+
 from gotg.prompts import DEFAULT_SYSTEM_PROMPT, PHASE_PROMPTS, COACH_FACILITATION_PROMPT, COACH_FACILITATION_PROMPTS
 
 

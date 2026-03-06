@@ -1,3 +1,10 @@
+"""Project initialization and prompt re-exports.
+
+init_project creates the .team/ directory structure with default configs.
+Re-exports prompt constants and utility functions (format_phase_kickoff,
+should_inject_kickoff) from prompts.py for backward compatibility.
+"""
+
 import json
 import subprocess
 from pathlib import Path

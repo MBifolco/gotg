@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Session execution policy — frozen configuration per phase.
+
+SessionPolicy bundles turn limits, tool lists, coach settings, and content
+artifacts into an immutable dataclass. iteration_policy and grooming_policy
+factories compute policy from team config + phase. Used by engine.py.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 

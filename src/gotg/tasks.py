@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Task file I/O, dependency layering, and prompt formatting.
+
+load_tasks_file / save_tasks_file handle tasks.json persistence (bare array).
+compute_layers builds execution layers from dependency graphs. TaskRepo wraps
+persistence with an OO interface. Used by implementation.py and policy.py.
+"""
+
 import json
 from pathlib import Path
 

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Session event dataclasses yielded by the engine generator.
+
+Events decouple the engine from I/O: SessionStarted, AppendMessage,
+AppendDebug, PauseForApprovals, PhaseCompleteSignaled, CoachAskedPM,
+SessionComplete, LayerComplete, UserPauseComplete. Consumed by
+console_events.py (CLI) and tui/screens/chat.py (TUI).
+"""
+
 from dataclasses import dataclass
 
 

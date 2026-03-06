@@ -1,3 +1,10 @@
+"""gotg init / gotg new / gotg model — project setup and admin commands.
+
+cmd_init scaffolds a new .team/ directory. cmd_new creates iterations.
+cmd_model configures provider, base_url, model, and API key with interactive
+prompts and dotenv integration.
+"""
+
 import os
 import sys
 from pathlib import Path

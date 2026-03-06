@@ -1,3 +1,9 @@
+"""Git worktree operations for per-agent branch isolation.
+
+Creates, commits, and cleans up worktrees scoped to agent+layer.
+Called by session_setup.py during implementation/code-review phases.
+"""
+
 import subprocess
 from pathlib import Path
 

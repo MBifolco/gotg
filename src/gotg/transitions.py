@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Phase transition logic — artifact extraction and boundary markers.
+
+One-shot LLM calls extract refinement summaries, task lists, implementation
+notes, review feedback, and exploration summaries from conversation history.
+build_transition_messages produces boundary markers for conversation logs.
+Called by session_advance.py and CLI/TUI advance commands.
+"""
+
 import json
 import re
 from pathlib import Path

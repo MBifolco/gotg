@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""Conversation log persistence and terminal rendering.
+
+ConversationStore wraps JSONL read/append for conversation and debug logs.
+render_message produces color-coded terminal output. Called by CLI commands,
+TUI screens, and session setup.
+"""
+
 import json
 from pathlib import Path
 

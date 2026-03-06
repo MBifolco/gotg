@@ -1,3 +1,10 @@
+"""CLI entrypoint — argument parsing, subcommand dispatch, session bridge.
+
+Defines the argparse tree for all gotg commands. run_conversation bridges
+CLI to the engine: builds SessionDeps, calls run_session via run_and_persist,
+passes events to handle_console_events. Thin layer — no business logic.
+"""
+
 import argparse
 import sys
 from pathlib import Path

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""TypedDict shapes for iterations, messages, configs, and tasks.
+
+MessageDict uses functional syntax because 'from' is a reserved word.
+These types are used for documentation and IDE support, not runtime checks.
+"""
+
 from typing import NotRequired, TypedDict
 
 

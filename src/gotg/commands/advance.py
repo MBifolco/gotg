@@ -1,3 +1,9 @@
+"""gotg advance / gotg rework — phase transitions and rework loops.
+
+Thin wrappers calling session_advance.py bridge functions. Validates current
+phase, triggers artifact extraction, and outputs transition messages.
+"""
+
 import sys
 from pathlib import Path
 

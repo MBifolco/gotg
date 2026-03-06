@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""Core session loop — orchestrates agent/coach turns and yields events.
+
+Generator-based: yields SessionStarted, AppendMessage, PauseForApprovals,
+PhaseCompleteSignaled, CoachAskedPM, SessionComplete. Has no I/O, no
+persistence, no prints. Consumers (cli.py, TUI, explore.py) handle display
+and storage. See also: events.py for event types, policy.py for config.
+"""
+
 from dataclasses import dataclass
 from typing import Callable, Iterator
 

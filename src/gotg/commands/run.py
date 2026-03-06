@@ -1,3 +1,11 @@
+"""gotg run / gotg continue — start or resume iteration sessions.
+
+cmd_run validates iteration state, builds session infrastructure, and runs
+the conversation in a pause loop. cmd_continue handles approval injection,
+human message injection, and stale pause marker consumption. Both delegate
+to cli.run_conversation for the actual session.
+"""
+
 import sys
 from pathlib import Path
 

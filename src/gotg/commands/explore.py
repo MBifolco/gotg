@@ -1,3 +1,11 @@
+"""gotg explore — freeform pre-iteration exploration sessions.
+
+cmd_explore_start creates a slug-based exploration directory and runs a
+conversation with no phase constraints. cmd_explore_continue resumes with
+optional message injection and pause marker consumption. Also provides
+list, show, and summarize subcommands.
+"""
+
 import sys
 from pathlib import Path
 

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""TeamContext — frozen bundle of team configuration loaded once per command.
+
+from_team_dir() reads team.json, resolves model config + API keys, builds
+model resolver, and loads file access / worktree settings. Used by CLI
+commands and TUI screens as the single config entry point.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
 
