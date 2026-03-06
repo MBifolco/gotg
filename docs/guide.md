@@ -74,7 +74,7 @@ Any OpenAI-compatible API works — set `base_url` and `model` manually in `team
 
 ## How It Works
 
-You are the **Product Manager**. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. You steer the conversation with feedback and control every transition.
+You are the Product or Engineering Manager. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. You steer the conversation with feedback and control every transition.
 
 ### Phases
 

@@ -45,7 +45,7 @@ For the full walkthrough, see the [User Guide](docs/guide.md).
 
 ## How It Works
 
-GOTG puts you in the role of **Product Manager**. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. Tasks are organized into dependency layers. Each layer cycles through: **implementation → code-review → merge → next-layer**.
+GOTG puts you in the role of a Product or Engineering Manager. AI agents discuss and design based on your task description, guided through structured phases by an AI coach. Tasks are organized into dependency layers. Each layer cycles through: **implementation → code-review → merge → next-layer**.
 
 See the [User Guide](docs/guide.md#how-it-works) for phases, layers, and conversation mechanics.
 
